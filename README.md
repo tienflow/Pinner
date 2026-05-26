@@ -1,22 +1,54 @@
-# Mac 端贴边收藏箱
+# Pinner
 
-一个菜单栏常驻的 macOS 收藏箱，支持拖拽文件/文件夹进入分类 tab，贴边展开，点击快速打开。
+macOS 菜单栏常驻工具——拖拽文件（夹）到分类收藏夹，随时一键打开。
 
-## 技术栈
+## 功能
 
-- Swift 6 / SwiftUI / AppKit
-- Swift Package Manager
-- Security-Scoped Bookmarks
-- macOS 14+ (Sonoma)
+- **拖拽收藏**：从 Finder 拖文件或文件夹到面板，自动收藏
+- **分类管理**：多个 Tab 收藏夹，支持创建、重命名、删除
+- **置顶文件**：右键置顶常用文件，置顶区始终显示在顶部
+- **快速打开**：双击或选中后按空格 / 回车打开文件
+- **列表 / 宫格**：两种视图模式自由切换
+- **排序**：按名称、添加时间、上次打开时间、文件类型排序，后两者带分区标题
+- **搜索**：实时过滤文件
+- **右键菜单**：置顶 / 取消置顶、在 Finder 中显示、移除
+- **贴边触发**：鼠标移至屏幕边缘自动展开面板
+- **多边缘**：支持右侧、左侧、顶部、底部，可多选
+- **置顶面板**：点击图钉按钮锁定面板，点击外部不再自动隐藏
+- **主题**：浅色、深色、自动
 
-## 本地运行
+## 快捷键
+
+| 按键 | 功能 |
+|------|------|
+| ↑ ↓ ← → | 选择文件 |
+| Tab | 切换到下一个收藏夹 |
+| Shift + Tab | 切换到上一个收藏夹 |
+| 空格 / 回车 | 打开选中文件 |
+| Esc | 收起面板 |
+
+## 菜单栏
+
+- **左键点击**：展开 / 收起面板
+- **右键点击**：打开设置菜单（触发边缘、主题、隐藏面板、退出）
+
+## 安装
+
+### 从源码编译
+
+需要 macOS 14+ 和 Xcode Command Line Tools：
 
 ```bash
+git clone <repo-url>
+cd Pinner
 swift build
-swift run CollectionBoxApp
+.build/arm64-apple-macosx/debug/CollectionBoxApp
 ```
 
-> 需要 macOS 14+ 和 Xcode Command Line Tools（或完整 Xcode）。
+### 设为开机自启
+
+1. 打开「系统设置 → 通用 → 登录项与扩展」
+2. 点击「+」添加 Pinner 应用
 
 ## 运行测试
 
@@ -24,25 +56,29 @@ swift run CollectionBoxApp
 swift run CollectionBoxTests
 ```
 
+46 项断言全部通过。
+
+## 技术栈
+
+- Swift 6 / SwiftUI / AppKit
+- Swift Package Manager
+- Security-Scoped Bookmarks（安全持久化文件访问）
+- macOS 14+ (Sonoma)
+
 ## 项目结构
 
 ```
 Sources/
-├── CollectionBox/           # 核心库
-│   ├── Models/              # 数据模型（CollectionTab, BookmarkEntry, WindowState）
-│   ├── Services/            # BookmarkService（bookmark 创建/解析/失效处理）
-│   ├── ViewModels/          # CollectionStore（状态管理 + 持久化）
-│   ├── Views/               # SwiftUI 界面（RootView, EntryRow）
-│   └── AppKit/              # AppKit 集成（MenuBarController, EdgeDockWindowController）
-├── CollectionBoxApp/        # 可执行入口（AppDelegate + NSApplication）
+├── CollectionBox/              # 核心库
+│   ├── Models/                 # 数据模型
+│   ├── Services/               # BookmarkService
+│   ├── ViewModels/             # CollectionStore（状态 + 持久化）
+│   ├── Views/                  # SwiftUI 界面
+│   └── AppKit/                 # AppKit 集成
+├── CollectionBoxApp/           # 应用入口
 Tests/
-└── CollectionBoxTests/      # 测试套件（25 项断言）
-docs/superpowers/            # 设计文档 + 实现计划
+└── CollectionBoxTests/         # 测试套件
 ```
-
-## 截图
-
-> 截图将在完整 Xcode 环境下补充至 `screenshots/` 目录。
 
 ## 许可
 
