@@ -21,7 +21,6 @@ public final class MenuBarController: NSObject {
         }
 
         edgeController = EdgeDockWindowController(store: store)
-        edgeController?.showCollapsed()
     }
 
     @objc private func handleClick(_ sender: NSStatusBarButton) {
