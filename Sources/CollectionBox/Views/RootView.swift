@@ -446,14 +446,23 @@ struct GridEntryItem: View {
     var isFlashing = false
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             FileIconView(fileName: entry.displayName)
-                .frame(width: 48, height: 48).frame(width: 64, height: 64)
-                .background(Color.secondary.opacity(0.08)).cornerRadius(8)
-            Text(entry.displayName).font(.system(size: 10)).lineLimit(2).multilineTextAlignment(.center).frame(width: 76)
+                .frame(width: 40, height: 40)
+                .frame(width: 56, height: 56)
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(8)
+            Text(entry.displayName)
+                .font(.system(size: 10))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(width: 72, height: 28)
         }
-        .padding(4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isFlashing ? Color.accentColor.opacity(0.10) : (isSelected ? Color.accentColor.opacity(0.14) : Color.clear)))
+        .frame(width: 80, height: 100)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isFlashing ? Color.accentColor.opacity(0.10) : (isSelected ? Color.accentColor.opacity(0.14) : Color.clear))
+        )
     }
 }
 
