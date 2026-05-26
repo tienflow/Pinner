@@ -16,14 +16,14 @@ macOS 菜单栏常驻工具——拖拽文件（夹）到分类收藏夹，随�
 ```
 Sources/
 ├── CollectionBox/              # 核心库
-│   ├── Models/                 # 数据模型
-│   ├── Services/               # BookmarkService
-│   ├── ViewModels/             # CollectionStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面
-│   └── AppKit/                 # AppKit 集成
-├── CollectionBoxApp/           # 应用入口
+│   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry）
+│   ├── Services/               # BookmarkService（bookmark 创建/解析/废纸篓检测）
+│   ├── ViewModels/             # CollectionStore（状态 + 持久化 + 自动刷新）
+│   ├── Views/                  # SwiftUI 界面（RootView, EntryRow, GridEntryItem）
+│   └── AppKit/                 # AppKit 集成（MenuBarController, EdgeDockWindowController）
+├── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 Tests/
-└── CollectionBoxTests/         # 测试套件
+└── CollectionBoxTests/         # 测试套件（46 项断言）
 ```
 
 ## 功能
@@ -36,8 +36,9 @@ Tests/
 - **排序**：按名称、添加时间、上次打开时间、文件类型排序，后两者带分区标题
 - **搜索**：实时过滤文件
 - **右键菜单**：置顶 / 取消置顶、在 Finder 中显示、移除
-- **贴边触发**：鼠标移至屏幕边缘自动展开面板
+- **贴边触发**：鼠标移至屏幕边缘自动展开面板，从触发方向展开
 - **多边缘**：支持右侧、左侧、顶部、底部，可多选
+- **自动刷新**：每次展开面板自动验证所有 bookmark，失效文件（含废纸篓）自动移除
 - **置顶面板**：点击图钉按钮锁定面板，点击外部不再自动隐藏
 - **主题**：浅色、深色、自动
 
@@ -61,7 +62,7 @@ Tests/
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.0.0.dmg`
+2. 下载最新版本的 `Pinner-v1.0.1.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 
