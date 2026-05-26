@@ -1,6 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum ViewMode: String, CaseIterable {
+    case list
+    case grid
+}
+
 struct RootView: View {
     @State var store: CollectionStore
     @State private var selectedTabID: UUID?
@@ -9,12 +14,16 @@ struct RootView: View {
     @State private var renamingTabID: UUID?
     @State private var renameText = ""
     @State private var isDropTargeted = false
+    @State private var viewMode: ViewMode = {
+        let raw = UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list"
+        return ViewMode(rawValue: raw) ?? .list
+    }()
 
     var body: some View {
         VStack(spacing: 0) {
             tabBar
             Divider()
-            entryList
+            entryContent
             Divider()
             bottomBar
         }
@@ -35,9 +44,7 @@ struct RootView: View {
                 newTabName = ""
             }
             .disabled(newTabName.trimmingCharacters(in: .whitespaces).isEmpty)
-            Button("取消", role: .cancel) {
-                newTabName = ""
-            }
+            Button("取消", role: .cancel) { newTabName = "" }
         } message: {
             Text("输入收藏夹名称")
         }
@@ -50,16 +57,12 @@ struct RootView: View {
                 if let tabID = renamingTabID,
                    let index = store.tabs.firstIndex(where: { $0.id == tabID }) {
                     let name = renameText.trimmingCharacters(in: .whitespaces)
-                    if !name.isEmpty {
-                        store.renameTab(at: index, to: name)
-                    }
+                    if !name.isEmpty { store.renameTab(at: index, to: name) }
                 }
                 renamingTabID = nil
             }
             .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
-            Button("取消", role: .cancel) {
-                renamingTabID = nil
-            }
+            Button("取消", role: .cancel) { renamingTabID = nil }
         } message: {
             Text("输入新名称")
         }
@@ -88,6 +91,7 @@ struct RootView: View {
                     }
             }
             Spacer()
+            viewModeToggle
             addTabButton
         }
         .padding(.horizontal, 8)
@@ -106,6 +110,18 @@ struct RootView: View {
         .buttonStyle(.plain)
     }
 
+    private var viewModeToggle: some View {
+        Button(action: {
+            viewMode = viewMode == .list ? .grid : .list
+            UserDefaults.standard.set(viewMode.rawValue, forKey: "CollectionBox.viewMode")
+        }) {
+            Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet")
+                .font(.system(size: 12))
+        }
+        .buttonStyle(.plain)
+        .help(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
+    }
+
     private var addTabButton: some View {
         Button(action: {
             newTabName = ""
@@ -117,44 +133,76 @@ struct RootView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Entry List
+    // MARK: - Entry Content
 
-    private var entryList: some View {
-        Group {
-            if let tabID = selectedTabID,
-               let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) {
-                if store.tabs[tabIndex].entries.isEmpty {
-                    emptyState
-                        .overlay(dropOverlay)
-                        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
-                            handleDrop(providers: providers, tabIndex: tabIndex)
-                        }
-                } else {
-                    List {
-                        ForEach(store.tabs[tabIndex].entries) { entry in
-                            EntryRow(entry: entry) {
-                                openEntry(entry)
-                            } onRemove: {
-                                store.removeEntry(entry.id, from: tabIndex)
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
+    @ViewBuilder
+    private var entryContent: some View {
+        if let tabID = selectedTabID,
+           let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) {
+            if store.tabs[tabIndex].entries.isEmpty {
+                emptyState
                     .overlay(dropOverlay)
                     .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
                         handleDrop(providers: providers, tabIndex: tabIndex)
                     }
-                }
             } else {
-                VStack {
-                    Spacer()
-                    Text("点击 + 创建一个收藏夹")
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                Group {
+                    if viewMode == .list {
+                        listView(entries: store.tabs[tabIndex].entries, tabIndex: tabIndex)
+                    } else {
+                        gridView(entries: store.tabs[tabIndex].entries, tabIndex: tabIndex)
+                    }
                 }
+                .overlay(dropOverlay)
+                .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                    handleDrop(providers: providers, tabIndex: tabIndex)
+                }
+            }
+        } else {
+            VStack {
+                Spacer()
+                Text("点击 + 创建一个收藏夹")
+                    .foregroundStyle(.secondary)
+                Spacer()
             }
         }
     }
+
+    // MARK: - List View
+
+    private func listView(entries: [BookmarkEntry], tabIndex: Int) -> some View {
+        List {
+            ForEach(entries) { entry in
+                EntryRow(entry: entry) {
+                    openEntry(entry)
+                } onRemove: {
+                    store.removeEntry(entry.id, from: tabIndex)
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    // MARK: - Grid View
+
+    private func gridView(entries: [BookmarkEntry], tabIndex: Int) -> some View {
+        ScrollView {
+            LazyVGrid(columns: [
+                GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)
+            ], spacing: 12) {
+                ForEach(entries) { entry in
+                    GridEntryItem(entry: entry) {
+                        openEntry(entry)
+                    } onRemove: {
+                        store.removeEntry(entry.id, from: tabIndex)
+                    }
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    // MARK: - Empty State
 
     private var emptyState: some View {
         VStack(spacing: 8) {
@@ -172,10 +220,7 @@ struct RootView: View {
     private var dropOverlay: some View {
         Group {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .background(Color.accentColor.opacity(0.08))
-                    .padding(4)
+                Color.orange.opacity(0.18)
                     .allowsHitTesting(false)
             }
         }
@@ -188,7 +233,6 @@ struct RootView: View {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
                 guard let data = item as? Data,
                       let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-
                 DispatchQueue.main.async {
                     do {
                         let bookmarkData = try BookmarkService.makeBookmark(for: url)
@@ -234,7 +278,7 @@ struct RootView: View {
     }
 }
 
-// MARK: - Entry Row
+// MARK: - Entry Row (List)
 
 struct EntryRow: View {
     let entry: BookmarkEntry
@@ -260,6 +304,54 @@ struct EntryRow: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2, perform: onTap)
+    }
+
+    private var icon: String {
+        entry.displayName.contains(".") ? "doc" : "folder"
+    }
+}
+
+// MARK: - Grid Item
+
+struct GridEntryItem: View {
+    let entry: BookmarkEntry
+    let onTap: () -> Void
+    let onRemove: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: icon)
+                    .font(.system(size: 32))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 64, height: 64)
+                    .background(Color.secondary.opacity(0.08))
+                    .cornerRadius(8)
+
+                if isHovered {
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white)
+                            .background(Circle().fill(Color.red))
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 4, y: -4)
+                }
+            }
+
+            Text(entry.displayName)
+                .font(.system(size: 10))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(width: 76)
+        }
+        .padding(4)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
         .onTapGesture(count: 2, perform: onTap)
     }
 
