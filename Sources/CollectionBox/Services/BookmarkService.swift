@@ -4,7 +4,16 @@ public enum BookmarkService {
     /// Check if a file URL is in the Trash.
     private static func isTrashed(_ url: URL) -> Bool {
         let trash = FileManager.default.urls(for: .trashDirectory, in: .userDomainMask).first
-        return url.path.hasPrefix(trash?.path ?? "/nonexistent/.Trash")
+        let trashPath = trash?.path ?? ""
+        let filePath = url.path
+        let result = !trashPath.isEmpty && filePath.hasPrefix(trashPath)
+        let line = "[isTrashed] file=\(filePath), trash=\(trashPath), result=\(result)\n"
+        if let data = line.data(using: .utf8) {
+            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_trash.log")
+            if let fh = fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
+            else { try? line.write(toFile: "/tmp/pinner_trash.log", atomically: true, encoding: .utf8) }
+        }
+        return result
     }
 
     /// Check if a file exists and is not in the Trash.
