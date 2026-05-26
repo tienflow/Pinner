@@ -1,152 +1,101 @@
 import AppKit
 
-/// Appearance theme options.
 enum AppTheme: Int, CaseIterable, Identifiable {
-    case auto = 0
-    case light = 1
-    case dark = 2
-
+    case auto = 0, light = 1, dark = 2
     var id: Int { rawValue }
-
-    var label: String {
-        switch self {
-        case .auto: return "自动"
-        case .light: return "浅色"
-        case .dark: return "深色"
-        }
-    }
-
+    var label: String { ["自动","浅色","深色"][Self.allCases.firstIndex(of: self)!] }
     var appearance: NSAppearance? {
-        switch self {
-        case .auto: return nil
-        case .light: return NSAppearance(named: .aqua)
-        case .dark: return NSAppearance(named: .darkAqua)
-        }
+        switch self { case .auto: return nil; case .light: return NSAppearance(named: .aqua); case .dark: return NSAppearance(named: .darkAqua) }
     }
 }
 
-/// Manages the NSStatusItem in the system menu bar.
 public final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem?
     private let store: CollectionStore
     private var edgeController: EdgeDockWindowController?
 
-    public init(store: CollectionStore) {
-        self.store = store
-        super.init()
-    }
+    public init(store: CollectionStore) { self.store = store; super.init() }
 
     public func activate() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "收藏箱")
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.action = #selector(handleClick(_:))
-            button.target = self
+        if let b = statusItem?.button {
+            b.image = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "收藏箱")
+            b.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            b.action = #selector(handleClick(_:)); b.target = self
         }
-
         edgeController = EdgeDockWindowController(store: store)
         applyTheme()
     }
 
     @objc private func handleClick(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else { return }
-        if event.type == .rightMouseUp {
-            showSettingsMenu()
-        } else {
-            edgeController?.toggle()
-        }
+        guard let e = NSApp.currentEvent else { return }
+        if e.type == .rightMouseUp { showMenu() } else { edgeController?.toggle() }
     }
 
-    // MARK: - Settings Menu
+    private func showMenu() {
+        let m = NSMenu()
+        let header = NSMenuItem(title: "收藏箱设置", action: nil, keyEquivalent: ""); header.isEnabled = false; m.addItem(header)
+        m.addItem(.separator())
 
-    private func showSettingsMenu() {
-        let menu = NSMenu()
+        // Edge position
+        let edgeItem = NSMenuItem(title: "触发边缘", action: nil, keyEquivalent: "")
+        let edgeSub = NSMenu()
+        let cur = edgeController?.edgePosition ?? .right
+        for p in EdgePosition.allCases {
+            let i = NSMenuItem(title: p.label, action: #selector(setEdge(_:)), keyEquivalent: "")
+            i.target = self; i.tag = p.rawValue; i.state = p == cur ? .on : .off; i.representedObject = p
+            edgeSub.addItem(i)
+        }
+        edgeItem.submenu = edgeSub; m.addItem(edgeItem)
 
-        let headerItem = NSMenuItem(title: "收藏箱设置", action: nil, keyEquivalent: "")
-        headerItem.isEnabled = false
-        menu.addItem(headerItem)
-        menu.addItem(.separator())
-
-        // Theme submenu
+        // Theme
         let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
-        let themeSubmenu = NSMenu()
-        let currentTheme = currentTheme()
-        for option in AppTheme.allCases {
-            let item = NSMenuItem(title: option.label, action: #selector(setTheme(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = option.rawValue
-            item.state = option == currentTheme ? .on : .off
-            item.representedObject = option
-            themeSubmenu.addItem(item)
+        let themeSub = NSMenu()
+        let curTheme = AppTheme(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.theme")) ?? .auto
+        for t in AppTheme.allCases {
+            let i = NSMenuItem(title: t.label, action: #selector(setTheme(_:)), keyEquivalent: "")
+            i.target = self; i.tag = t.rawValue; i.state = t == curTheme ? .on : .off; i.representedObject = t
+            themeSub.addItem(i)
         }
-        themeItem.submenu = themeSubmenu
-        menu.addItem(themeItem)
+        themeItem.submenu = themeSub; m.addItem(themeItem)
 
-        // Auto-hide delay submenu
-        let autoHideItem = NSMenuItem(title: "自动隐藏", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        let currentDelay = edgeController?.autoHideDelay ?? .never
-        for option in AutoHideDelay.allCases {
-            let item = NSMenuItem(title: option.label, action: #selector(setAutoHide(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = option.rawValue
-            item.state = option == currentDelay ? .on : .off
-            item.representedObject = option
-            submenu.addItem(item)
+        // Auto-hide
+        let hideItem = NSMenuItem(title: "自动隐藏", action: nil, keyEquivalent: "")
+        let hideSub = NSMenu()
+        let curDelay = edgeController?.autoHideDelay ?? .never
+        for d in AutoHideDelay.allCases {
+            let i = NSMenuItem(title: d.label, action: #selector(setAutoHide(_:)), keyEquivalent: "")
+            i.target = self; i.tag = d.rawValue; i.state = d == curDelay ? .on : .off; i.representedObject = d
+            hideSub.addItem(i)
         }
-        autoHideItem.submenu = submenu
-        menu.addItem(autoHideItem)
+        hideItem.submenu = hideSub; m.addItem(hideItem)
 
-        menu.addItem(.separator())
+        m.addItem(.separator())
+        let hide = NSMenuItem(title: "隐藏面板", action: #selector(hidePanel), keyEquivalent: "h")
+        hide.target = self; hide.keyEquivalentModifierMask = [.command]; m.addItem(hide)
+        m.addItem(.separator())
+        let quit = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        quit.target = self; quit.keyEquivalentModifierMask = [.command]; m.addItem(quit)
 
-        let hideItem = NSMenuItem(title: "隐藏面板", action: #selector(hidePanel), keyEquivalent: "h")
-        hideItem.target = self
-        hideItem.keyEquivalentModifierMask = [.command]
-        menu.addItem(hideItem)
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.target = self
-        quitItem.keyEquivalentModifierMask = [.command]
-        menu.addItem(quitItem)
-
-        statusItem?.menu = menu
-        statusItem?.button?.performClick(nil)
-        statusItem?.menu = nil
+        statusItem?.menu = m; statusItem?.button?.performClick(nil); statusItem?.menu = nil
     }
 
-    // MARK: - Theme
-
-    private func currentTheme() -> AppTheme {
-        let raw = UserDefaults.standard.integer(forKey: "CollectionBox.theme")
-        return AppTheme(rawValue: raw) ?? .auto
+    @objc private func setEdge(_ s: NSMenuItem) {
+        guard let p = s.representedObject as? EdgePosition else { return }
+        edgeController?.edgePosition = p
     }
-
-    @objc private func setTheme(_ sender: NSMenuItem) {
-        guard let theme = sender.representedObject as? AppTheme else { return }
-        UserDefaults.standard.set(theme.rawValue, forKey: "CollectionBox.theme")
-        applyTheme()
+    @objc private func setTheme(_ s: NSMenuItem) {
+        guard let t = s.representedObject as? AppTheme else { return }
+        UserDefaults.standard.set(t.rawValue, forKey: "CollectionBox.theme"); applyTheme()
     }
-
+    @objc private func setAutoHide(_ s: NSMenuItem) {
+        guard let d = s.representedObject as? AutoHideDelay else { return }
+        edgeController?.autoHideDelay = d
+    }
+    @objc private func hidePanel() { edgeController?.collapse() }
+    @objc private func quitApp() { NSApp.terminate(nil) }
     private func applyTheme() {
-        let theme = currentTheme()
-        NSApp.appearance = theme.appearance
-    }
-
-    // MARK: - Actions
-
-    @objc private func setAutoHide(_ sender: NSMenuItem) {
-        guard let option = sender.representedObject as? AutoHideDelay else { return }
-        edgeController?.autoHideDelay = option
-    }
-
-    @objc private func hidePanel() {
-        edgeController?.collapse()
-    }
-
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
+        let t = AppTheme(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.theme")) ?? .auto
+        NSApp.appearance = t.appearance
     }
 }
