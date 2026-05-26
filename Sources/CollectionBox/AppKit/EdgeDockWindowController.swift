@@ -114,8 +114,9 @@ final class KeyPanel: NSPanel {
     override func keyDown(with event: NSEvent) {
         let key: String?
         switch event.keyCode {
-        case 126: key = "up"; case 125: key = "down"; case 36: key = "return"; case 49: key = "space"
-        case 53: key = "escape"; default: key = nil
+        case 126: key = "up"; case 125: key = "down"; case 124: key = "right"; case 123: key = "left"
+        case 36: key = "return"; case 49: key = "space"; case 53: key = "escape"
+        default: key = nil
         }
         if let key = key { NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": key]) }
         else { super.keyDown(with: event) }

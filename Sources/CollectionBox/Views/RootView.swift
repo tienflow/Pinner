@@ -262,6 +262,10 @@ struct RootView: View {
         case "down":
             if let cur = selectedEntryID, let i = entries.firstIndex(where: { $0.id == cur }), i < entries.count - 1 { selectedEntryID = entries[i+1].id }
             else { selectedEntryID = entries.first?.id }
+        case "left":
+            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }), i > 0 { selectedTabID = store.tabs[i-1].id }
+        case "right":
+            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }), i < store.tabs.count - 1 { selectedTabID = store.tabs[i+1].id }
         case "space", "return":
             if let id = selectedEntryID, let e = entries.first(where: { $0.id == id }), let ti = store.tabs.firstIndex(where: { $0.id == selectedTabID }) {
                 openEntry(e, ti: ti)
