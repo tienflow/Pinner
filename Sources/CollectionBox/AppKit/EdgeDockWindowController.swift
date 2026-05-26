@@ -15,7 +15,7 @@ enum EdgePosition: Int, CaseIterable, Identifiable {
 
 final class EdgeDockWindowController: NSObject {
     private let store: CollectionStore
-    private var triggerPanel: NSPanel?
+    private var triggerPanels: [NSPanel] = []
     private var mainPanel: NSPanel?
     private(set) var isExpanded = false
     private let expandedWidth: CGFloat = 320
@@ -27,27 +27,38 @@ final class EdgeDockWindowController: NSObject {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "CollectionBox.autoHideDelay"); if isExpanded { scheduleCollapse() } }
     }
 
-    var edgePosition: EdgePosition {
-        get { EdgePosition(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.edgePosition")) ?? .right }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "CollectionBox.edgePosition"); rebuildTrigger() }
+    /// Currently active edge positions (multi-select)
+    var edgePositions: Set<EdgePosition> {
+        get {
+            let raw = UserDefaults.standard.array(forKey: "CollectionBox.edgePositions") as? [Int] ?? [EdgePosition.right.rawValue]
+            return Set(raw.compactMap { EdgePosition(rawValue: $0) })
+        }
+        set {
+            UserDefaults.standard.set(Array(newValue.map(\.rawValue)), forKey: "CollectionBox.edgePositions")
+            rebuildTriggers()
+        }
     }
 
     init(store: CollectionStore) {
         self.store = store
         super.init()
-        setupTrigger()
-        // Listen for clicks outside panel
+        setupTriggers()
         collapseObserver = NotificationCenter.default.addObserver(forName: .panelShouldCollapse, object: nil, queue: .main) { [weak self] _ in self?.collapse() }
     }
 
     deinit { if let o = collapseObserver { NotificationCenter.default.removeObserver(o) } }
 
-    // MARK: - Trigger (full-screen edge)
+    // MARK: - Triggers (one per selected edge)
 
-    private func setupTrigger() {
+    private func setupTriggers() {
+        for pos in edgePositions {
+            makeTrigger(for: pos)
+        }
+    }
+
+    private func makeTrigger(for pos: EdgePosition) {
         guard let screen = NSScreen.main else { return }
         let f: NSRect
-        let pos = edgePosition
         switch pos {
         case .right: f = NSRect(x: screen.frame.maxX - 2, y: screen.frame.minY, width: 2, height: screen.frame.height)
         case .left:  f = NSRect(x: screen.frame.minX, y: screen.frame.minY, width: 2, height: screen.frame.height)
@@ -55,24 +66,19 @@ final class EdgeDockWindowController: NSObject {
         case .bottom:f = NSRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: 2)
         }
         let p = NSPanel(contentRect: f, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        p.level = .statusBar - 1  // just below menu bar but above most windows
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = false
-        p.hidesOnDeactivate = false
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        p.ignoresMouseEvents = false
+        p.level = .statusBar - 1
+        p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
+        p.hidesOnDeactivate = false; p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let hv = HoverView(frame: NSRect(x: 0, y: 0, width: f.width, height: f.height))
         hv.onHoverStart = { [weak self] in self?.expand() }
-        p.contentView = hv
-        self.triggerPanel = p
-        p.orderFrontRegardless()
+        p.contentView = hv; p.orderFrontRegardless()
+        triggerPanels.append(p)
     }
 
-    private func rebuildTrigger() {
-        triggerPanel?.orderOut(nil)
-        triggerPanel = nil
-        setupTrigger()
+    private func rebuildTriggers() {
+        triggerPanels.forEach { $0.orderOut(nil) }
+        triggerPanels.removeAll()
+        setupTriggers()
     }
 
     // MARK: - Expand
@@ -80,11 +86,10 @@ final class EdgeDockWindowController: NSObject {
     func expand() {
         collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard !isExpanded, let screen = NSScreen.main else { return }
-        triggerPanel?.orderOut(nil)
+        triggerPanels.forEach { $0.orderOut(nil) }
 
-        let h: CGFloat = 480
-        let w: CGFloat = expandedWidth
-        let pos = edgePosition
+        let h: CGFloat = 480, w: CGFloat = expandedWidth
+        let pos = edgePositions.first ?? .right
         let f: NSRect
         switch pos {
         case .right: f = NSRect(x: screen.frame.maxX - w, y: screen.frame.midY - h/2, width: w, height: h)
@@ -114,7 +119,7 @@ final class EdgeDockWindowController: NSObject {
         collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard isExpanded else { return }
         mainPanel?.delegate = nil; mainPanel?.orderOut(nil); mainPanel = nil; isExpanded = false
-        triggerPanel?.orderFrontRegardless()
+        triggerPanels.forEach { $0.orderFrontRegardless() }
     }
 
     func toggle() { if isExpanded { collapse() } else { expand() } }
@@ -146,10 +151,8 @@ final class KeyPanel: NSPanel {
 extension EdgeDockWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { mainPanel?.delegate = nil; collapse() }
     func windowDidResignKey(_ notification: Notification) {
-        // Auto-collapse when focus leaves the panel
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self = self, self.isExpanded else { return }
-            // Only collapse if no window in our app is key
             if NSApp.keyWindow == nil { self.collapse() }
         }
     }

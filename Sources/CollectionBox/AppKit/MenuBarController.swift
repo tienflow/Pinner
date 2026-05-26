@@ -34,17 +34,18 @@ public final class MenuBarController: NSObject {
 
     private func showMenu() {
         let m = NSMenu()
-        let header = NSMenuItem(title: "收藏箱设置", action: nil, keyEquivalent: ""); header.isEnabled = false; m.addItem(header)
+        let header = NSMenuItem(title: "收藏箱设置", action: nil, keyEquivalent: "")
+        header.isEnabled = false; m.addItem(header)
         m.addItem(.separator())
 
-        // Edge position
+        // Edge positions (multi-select)
         let edgeItem = NSMenuItem(title: "触发边缘", action: nil, keyEquivalent: "")
         let edgeSub = NSMenu()
-        let cur = edgeController?.edgePosition ?? .right
+        let cur = edgeController?.edgePositions ?? [.right]
         for p in EdgePosition.allCases {
-            let i = NSMenuItem(title: p.label, action: #selector(setEdge(_:)), keyEquivalent: "")
-            i.target = self; i.tag = p.rawValue; i.state = p == cur ? .on : .off; i.representedObject = p
-            edgeSub.addItem(i)
+            let i = NSMenuItem(title: p.label, action: #selector(toggleEdge(_:)), keyEquivalent: "")
+            i.target = self; i.tag = p.rawValue; i.state = cur.contains(p) ? .on : .off
+            i.representedObject = p; edgeSub.addItem(i)
         }
         edgeItem.submenu = edgeSub; m.addItem(edgeItem)
 
@@ -80,18 +81,26 @@ public final class MenuBarController: NSObject {
         statusItem?.menu = m; statusItem?.button?.performClick(nil); statusItem?.menu = nil
     }
 
-    @objc private func setEdge(_ s: NSMenuItem) {
-        guard let p = s.representedObject as? EdgePosition else { return }
-        edgeController?.edgePosition = p
+    // MARK: - Actions
+
+    @objc private func toggleEdge(_ s: NSMenuItem) {
+        guard let pos = s.representedObject as? EdgePosition else { return }
+        var cur = edgeController?.edgePositions ?? []
+        if cur.contains(pos) { cur.remove(pos) } else { cur.insert(pos) }
+        if cur.isEmpty { cur = [.right] } // at least one edge must be active
+        edgeController?.edgePositions = cur
     }
+
     @objc private func setTheme(_ s: NSMenuItem) {
         guard let t = s.representedObject as? AppTheme else { return }
         UserDefaults.standard.set(t.rawValue, forKey: "CollectionBox.theme"); applyTheme()
     }
+
     @objc private func setAutoHide(_ s: NSMenuItem) {
         guard let d = s.representedObject as? AutoHideDelay else { return }
         edgeController?.autoHideDelay = d
     }
+
     @objc private func hidePanel() { edgeController?.collapse() }
     @objc private func quitApp() { NSApp.terminate(nil) }
     private func applyTheme() {
