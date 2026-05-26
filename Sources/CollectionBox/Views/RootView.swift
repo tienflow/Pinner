@@ -259,7 +259,25 @@ struct RootView: View {
 
     private func handleKeyDown(_ n: Notification) {
         guard let key = n.userInfo?["key"] as? String else { return }
-        let entries = sortedEntries
+        // Tab/Shift+Tab work regardless of entry count
+        switch key {
+        case "tab":
+            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }) {
+                selectedTabID = store.tabs[(i + 1) % store.tabs.count].id
+            }
+            return
+        case "shiftTab":
+            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }) {
+                selectedTabID = store.tabs[(i - 1 + store.tabs.count) % store.tabs.count].id
+            }
+            return
+        case "escape":
+            NotificationCenter.default.post(name: .panelShouldCollapse, object: nil)
+            return
+        default: break
+        }
+        // Entry navigation uses ALL entries (pinned + unpinned)
+        let entries = allFiltered
         guard !entries.isEmpty else { return }
         switch key {
         case "up":
@@ -274,20 +292,10 @@ struct RootView: View {
         case "right":
             if let cur = selectedEntryID, let i = entries.firstIndex(where: { $0.id == cur }), i < entries.count - 1 { selectedEntryID = entries[i+1].id }
             else { selectedEntryID = entries.first?.id }
-        case "tab":
-            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }) {
-                selectedTabID = store.tabs[(i + 1) % store.tabs.count].id
-            }
-        case "shiftTab":
-            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }) {
-                selectedTabID = store.tabs[(i - 1 + store.tabs.count) % store.tabs.count].id
-            }
         case "space", "return":
             if let id = selectedEntryID, let e = entries.first(where: { $0.id == id }), let ti = store.tabs.firstIndex(where: { $0.id == selectedTabID }) {
                 openEntry(e, ti: ti)
             }
-        case "escape":
-            NotificationCenter.default.post(name: .panelShouldCollapse, object: nil)
         default: break
         }
     }
