@@ -2,7 +2,7 @@
 
 macOS 菜单栏常驻工具——拖拽文件（夹）到分类收藏夹，随时一键打开。
 
-![image-20260526210112501](https://dec.obs.cn-north-4.myhuaweicloud.com/image_bed/image-20260526210112501.png)
+![Pinner](image/image.png)
 
 ## 技术栈
 
