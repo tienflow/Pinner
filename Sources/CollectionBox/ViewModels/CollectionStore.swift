@@ -13,7 +13,6 @@ public final class CollectionStore {
         load()
     }
 
-    /// For testing without hitting persistence
     public init(inMemory: Bool) {
         self.defaults = UserDefaults(suiteName: "in-memory-\(UUID().uuidString)")!
     }
@@ -56,6 +55,15 @@ public final class CollectionStore {
         guard let entryIndex = tabs[sourceTabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
         let entry = tabs[sourceTabIndex].entries.remove(at: entryIndex)
         tabs[destinationTabIndex].entries.append(entry)
+        save()
+    }
+
+    public func pinEntry(_ entryID: UUID, in tabIndex: Int) {
+        guard tabs.indices.contains(tabIndex) else { return }
+        guard let index = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        guard index > 0 else { return }
+        let entry = tabs[tabIndex].entries.remove(at: index)
+        tabs[tabIndex].entries.insert(entry, at: 0)
         save()
     }
 

@@ -13,7 +13,6 @@ struct RootView: View {
     @State private var newTabName = ""
     @State private var renamingTabID: UUID?
     @State private var renameText = ""
-    @State private var isDropTargeted = false
     @State private var viewMode: ViewMode = {
         let raw = UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list"
         return ViewMode(rawValue: raw) ?? .list
@@ -141,8 +140,7 @@ struct RootView: View {
            let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) {
             if store.tabs[tabIndex].entries.isEmpty {
                 emptyState
-                    .overlay(dropOverlay)
-                    .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                         handleDrop(providers: providers, tabIndex: tabIndex)
                     }
             } else {
@@ -153,8 +151,7 @@ struct RootView: View {
                         gridView(entries: store.tabs[tabIndex].entries, tabIndex: tabIndex)
                     }
                 }
-                .overlay(dropOverlay)
-                .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                     handleDrop(providers: providers, tabIndex: tabIndex)
                 }
             }
@@ -175,8 +172,9 @@ struct RootView: View {
             ForEach(entries) { entry in
                 EntryRow(entry: entry) {
                     openEntry(entry)
-                } onRemove: {
-                    store.removeEntry(entry.id, from: tabIndex)
+                }
+                .contextMenu {
+                    entryContextMenu(entry: entry, tabIndex: tabIndex, isFirst: entries.first?.id == entry.id)
                 }
             }
         }
@@ -193,12 +191,35 @@ struct RootView: View {
                 ForEach(entries) { entry in
                     GridEntryItem(entry: entry) {
                         openEntry(entry)
-                    } onRemove: {
-                        store.removeEntry(entry.id, from: tabIndex)
+                    }
+                    .contextMenu {
+                        entryContextMenu(entry: entry, tabIndex: tabIndex, isFirst: entries.first?.id == entry.id)
                     }
                 }
             }
             .padding(12)
+        }
+    }
+
+    // MARK: - Entry Context Menu
+
+    @ViewBuilder
+    private func entryContextMenu(entry: BookmarkEntry, tabIndex: Int, isFirst: Bool) -> some View {
+        if !isFirst {
+            Button {
+                store.pinEntry(entry.id, in: tabIndex)
+            } label: {
+                Label("置顶", systemImage: "pin")
+            }
+        }
+        Button("在 Finder 中显示") {
+            if let url = try? BookmarkService.resolveBookmark(entry.bookmarkData) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        }
+        Divider()
+        Button("移除", role: .destructive) {
+            store.removeEntry(entry.id, from: tabIndex)
         }
     }
 
@@ -214,15 +235,6 @@ struct RootView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
             Spacer()
-        }
-    }
-
-    private var dropOverlay: some View {
-        Group {
-            if isDropTargeted {
-                Color.orange.opacity(0.18)
-                    .allowsHitTesting(false)
-            }
         }
     }
 
@@ -283,7 +295,6 @@ struct RootView: View {
 struct EntryRow: View {
     let entry: BookmarkEntry
     let onTap: () -> Void
-    let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -294,13 +305,6 @@ struct EntryRow: View {
                 .font(.system(size: 13))
                 .lineLimit(1)
             Spacer()
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
-            .opacity(0.5)
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
@@ -317,31 +321,15 @@ struct EntryRow: View {
 struct GridEntryItem: View {
     let entry: BookmarkEntry
     let onTap: () -> Void
-    let onRemove: () -> Void
-
-    @State private var isHovered = false
 
     var body: some View {
         VStack(spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: icon)
-                    .font(.system(size: 32))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 64, height: 64)
-                    .background(Color.secondary.opacity(0.08))
-                    .cornerRadius(8)
-
-                if isHovered {
-                    Button(action: onRemove) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white)
-                            .background(Circle().fill(Color.red))
-                    }
-                    .buttonStyle(.plain)
-                    .offset(x: 4, y: -4)
-                }
-            }
+            Image(systemName: icon)
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+                .frame(width: 64, height: 64)
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(8)
 
             Text(entry.displayName)
                 .font(.system(size: 10))
@@ -351,7 +339,6 @@ struct GridEntryItem: View {
         }
         .padding(4)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
         .onTapGesture(count: 2, perform: onTap)
     }
 
