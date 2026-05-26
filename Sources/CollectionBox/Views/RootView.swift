@@ -38,6 +38,7 @@ struct RootView: View {
     @State private var searchText = ""
     @State private var selectedEntryID: UUID?
     @State private var flashID: UUID?
+    @State private var refreshMessage: String?
     @State private var nameAscending = true
     @State private var sortOrder: SortOrder = {
         let raw = UserDefaults.standard.string(forKey: "CollectionBox.sortOrder") ?? "date_added"
@@ -143,6 +144,7 @@ struct RootView: View {
         .frame(minWidth: 280, idealWidth: 320, minHeight: 400)
         .onAppear {
             if selectedTabID == nil { selectedTabID = store.tabs.first?.id }
+            refreshCurrentTab()
             NotificationCenter.default.addObserver(
                 forName: .collectionBoxKeyDown, object: nil, queue: .main
             ) { handleKeyDown($0) }
@@ -391,8 +393,31 @@ struct RootView: View {
     // MARK: - Bottom Bar
 
     private var bottomBar: some View {
-        HStack { Text("\(sortedEntries.count) 个项目").font(.system(size: 11)).foregroundStyle(.secondary); Spacer() }
-            .padding(.horizontal, 10).padding(.vertical, 6)
+        HStack(spacing: 8) {
+            Text("\(sortedEntries.count) 个项目")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            if let msg = refreshMessage {
+                Text(msg).font(.system(size: 10)).foregroundStyle(.orange)
+            }
+            Spacer()
+            Button(action: refreshCurrentTab) {
+                Image(systemName: "arrow.clockwise").font(.system(size: 11))
+            }
+            .buttonStyle(.plain).help("刷新文件状态")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+    }
+
+    private func refreshCurrentTab() {
+        guard let tabID = selectedTabID,
+              let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let result = store.refreshTab(tabIndex)
+        if result.invalid > 0 {
+            refreshMessage = "\(result.invalid) 个文件已失效"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { refreshMessage = nil }
+        } else {
+            refreshMessage = nil
+        }
     }
 
     // MARK: - Actions

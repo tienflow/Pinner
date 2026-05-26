@@ -27,16 +27,12 @@ final class EdgeDockWindowController: NSObject {
     private let expandedWidth: CGFloat = 320
     private let triggerWidth: CGFloat = 6
     private var collapseWorkItem: DispatchWorkItem?
-    private var eventMonitor: Any?
+    private var localMonitor: Any?
+    private var globalMonitor: Any?
 
     var autoHideDelay: AutoHideDelay {
-        get {
-            AutoHideDelay(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.autoHideDelay")) ?? .never
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "CollectionBox.autoHideDelay")
-            if isExpanded { scheduleCollapseIfNeeded() }
-        }
+        get { AutoHideDelay(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.autoHideDelay")) ?? .never }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "CollectionBox.autoHideDelay"); if isExpanded { scheduleCollapseIfNeeded() } }
     }
 
     init(store: CollectionStore) {
@@ -45,9 +41,7 @@ final class EdgeDockWindowController: NSObject {
         setupTriggerPanel()
     }
 
-    deinit {
-        if let m = eventMonitor { NSEvent.removeMonitor(m) }
-    }
+    deinit { stopMonitors() }
 
     // MARK: - Trigger
 
@@ -73,8 +67,7 @@ final class EdgeDockWindowController: NSObject {
     // MARK: - Expand
 
     func expand() {
-        collapseWorkItem?.cancel()
-        collapseWorkItem = nil
+        collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard !isExpanded else { return }
         guard let screen = NSScreen.main else { return }
         triggerPanel?.orderOut(nil)
@@ -102,54 +95,52 @@ final class EdgeDockWindowController: NSObject {
         self.mainPanel = p
         self.isExpanded = true
 
-        startKeyMonitor()
+        startMonitors()
         scheduleCollapseIfNeeded()
     }
 
     // MARK: - Collapse
 
     func collapse() {
-        collapseWorkItem?.cancel()
-        collapseWorkItem = nil
+        collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard isExpanded else { return }
-        stopKeyMonitor()
+        stopMonitors()
+        mainPanel?.delegate = nil
         mainPanel?.orderOut(nil)
         mainPanel = nil
         isExpanded = false
         triggerPanel?.orderFrontRegardless()
     }
 
-    func toggle() {
-        if isExpanded { collapse() } else { expand() }
-    }
+    func toggle() { if isExpanded { collapse() } else { expand() } }
 
-    // MARK: - Global Key Monitor
+    // MARK: - Key Monitors (local + global to cover all cases)
 
-    private func startKeyMonitor() {
-        guard eventMonitor == nil else { return }
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleGlobalKey(event)
+    private func startMonitors() {
+        guard localMonitor == nil else { return }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKey(event)
             return event
         }
-    }
-
-    private func stopKeyMonitor() {
-        if let m = eventMonitor {
-            NSEvent.removeMonitor(m)
-            eventMonitor = nil
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKey(event)
         }
     }
 
-    private func handleGlobalKey(_ event: NSEvent) {
+    private func stopMonitors() {
+        if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
+        if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
+    }
+
+    private func handleKey(_ event: NSEvent) {
+        guard isExpanded else { return }
         let key: String?
         switch event.keyCode {
         case 126: key = "up"
         case 125: key = "down"
         case 36:  key = "return"
         case 49:  key = "space"
-        case 53:  // Escape
-            collapse()
-            return
+        case 53:  collapse(); return
         default: key = nil
         }
         if let key = key {
@@ -169,15 +160,13 @@ final class EdgeDockWindowController: NSObject {
     }
 }
 
-// MARK: - NSWindowDelegate — intercept close button
+// MARK: - NSWindowDelegate
 
 extension EdgeDockWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        // Prevent actual close; just collapse
-        mainPanel?.delegate = nil // prevent re-entry
+        mainPanel?.delegate = nil
         collapse()
     }
-
     func windowDidResignKey(_ notification: Notification) {}
 }
 
