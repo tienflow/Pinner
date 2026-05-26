@@ -213,7 +213,7 @@ struct RootView: View {
             }
         }
         Button("在 Finder 中显示") {
-            if let url = try? BookmarkService.resolveBookmark(entry.bookmarkData) {
+            BookmarkService.withResolvedBookmark(entry.bookmarkData) { url in
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
         }
@@ -285,8 +285,9 @@ struct RootView: View {
     // MARK: - Actions
 
     private func openEntry(_ entry: BookmarkEntry) {
-        guard let url = try? BookmarkService.resolveBookmark(entry.bookmarkData) else { return }
-        NSWorkspace.shared.open(url)
+        BookmarkService.withResolvedBookmark(entry.bookmarkData) { url in
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
