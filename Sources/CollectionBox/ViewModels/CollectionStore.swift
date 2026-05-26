@@ -77,17 +77,24 @@ public final class CollectionStore {
     public func refreshTab(_ tabIndex: Int) -> (valid: Int, invalid: Int) {
         guard tabs.indices.contains(tabIndex) else { return (0, 0) }
         var valid = 0, invalid = 0
-        for i in tabs[tabIndex].entries.indices {
-            let result = BookmarkService.refreshBookmark(tabs[tabIndex].entries[i].bookmarkData)
+        var toRemove: [UUID] = []
+        for entry in tabs[tabIndex].entries {
+            let result = BookmarkService.refreshBookmark(entry.bookmarkData)
             if let newData = result.newData {
-                tabs[tabIndex].entries[i].bookmarkData = newData
-                if let name = result.currentName, name != tabs[tabIndex].entries[i].displayName {
-                    tabs[tabIndex].entries[i].displayName = name
+                if let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entry.id }) {
+                    tabs[tabIndex].entries[i].bookmarkData = newData
+                    if let name = result.currentName, name != entry.displayName {
+                        tabs[tabIndex].entries[i].displayName = name
+                    }
                 }
                 valid += 1
             } else {
+                toRemove.append(entry.id)
                 invalid += 1
             }
+        }
+        if !toRemove.isEmpty {
+            tabs[tabIndex].entries.removeAll { toRemove.contains($0.id) }
         }
         save()
         return (valid, invalid)

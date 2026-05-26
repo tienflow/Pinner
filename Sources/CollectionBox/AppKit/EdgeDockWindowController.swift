@@ -72,6 +72,7 @@ final class EdgeDockWindowController: NSObject {
 
     func expand() {
         guard !isExpanded, let screen = NSScreen.main else { return }
+        store.refreshAll()
         triggerPanels.forEach { $0.orderOut(nil) }
 
         let h: CGFloat = 480, w: CGFloat = expandedWidth
