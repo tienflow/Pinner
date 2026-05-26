@@ -2,3 +2,8 @@
 .DS_Store
 screenshots/
 *.xcodeproj
+
+# Exclude docs and plan files
+docs/
+mac-收藏箱-app-plan.md
+*.ips
