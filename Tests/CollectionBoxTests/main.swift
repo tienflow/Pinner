@@ -298,9 +298,10 @@ func testCollectionTabEquatable() {
 
 func testBookmarkEntryEquatable() {
     let id = UUID()
-    let a = BookmarkEntry(id: id, displayName: "f.txt", bookmarkData: Data([1]))
-    let b = BookmarkEntry(id: id, displayName: "f.txt", bookmarkData: Data([1]))
-    let c = BookmarkEntry(id: id, displayName: "f.txt", bookmarkData: Data([2]))
+    let fixedDate = Date(timeIntervalSince1970: 1000000)
+    let a = BookmarkEntry(id: id, displayName: "f.txt", bookmarkData: Data([1]), dateAdded: fixedDate)
+    let b = BookmarkEntry(id: id, displayName: "f.txt", bookmarkData: Data([1]), dateAdded: fixedDate)
+    let c = BookmarkEntry(id: id, displayName: "f.txt", bookmarkData: Data([2]), dateAdded: fixedDate)
     assertTrue(a == b, "identical entries should be equal")
     assertTrue(a != c, "entries with different data should not be equal")
 }
