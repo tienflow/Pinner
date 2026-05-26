@@ -2,6 +2,53 @@
 
 macOS 菜单栏常驻工具——拖拽文件（夹）到分类收藏夹，随时一键打开。
 
+## 技术栈
+
+- Swift 6 / SwiftUI / AppKit
+- Swift Package Manager
+- Security-Scoped Bookmarks（安全持久化文件访问）
+- macOS 14+ (Sonoma)
+
+## 项目结构
+
+```
+Sources/
+├── CollectionBox/              # 核心库
+│   ├── Models/                 # 数据模型
+│   ├── Services/               # BookmarkService
+│   ├── ViewModels/             # CollectionStore（状态 + 持久化）
+│   ├── Views/                  # SwiftUI 界面
+│   └── AppKit/                 # AppKit 集成
+├── CollectionBoxApp/           # 应用入口
+Tests/
+└── CollectionBoxTests/         # 测试套件
+```
+
+## 安装
+
+### 方式一：从 Release 下载
+
+1. 前往 [Releases](../../releases) 页面
+2. 下载最新版本的 `Pinner.app.zip`
+3. 解压后将 Pinner.app 拖入「应用程序」文件夹
+4. 首次打开时右键选择「打开」以绕过 Gatekeeper
+
+### 方式二：从源码编译
+
+需要 macOS 14+ 和 Xcode Command Line Tools：
+
+```bash
+git clone <repo-url>
+cd Pinner
+swift build
+.build/arm64-apple-macosx/debug/CollectionBoxApp
+```
+
+### 设为开机自启
+
+1. 打开「系统设置 → 通用 → 登录项与扩展」
+2. 点击「+」添加 Pinner 应用
+
 ## 功能
 
 - **拖拽收藏**：从 Finder 拖文件或文件夹到面板，自动收藏
@@ -31,54 +78,6 @@ macOS 菜单栏常驻工具——拖拽文件（夹）到分类收藏夹，随�
 
 - **左键点击**：展开 / 收起面板
 - **右键点击**：打开设置菜单（触发边缘、主题、隐藏面板、退出）
-
-## 安装
-
-### 从源码编译
-
-需要 macOS 14+ 和 Xcode Command Line Tools：
-
-```bash
-git clone <repo-url>
-cd Pinner
-swift build
-.build/arm64-apple-macosx/debug/CollectionBoxApp
-```
-
-### 设为开机自启
-
-1. 打开「系统设置 → 通用 → 登录项与扩展」
-2. 点击「+」添加 Pinner 应用
-
-## 运行测试
-
-```bash
-swift run CollectionBoxTests
-```
-
-46 项断言全部通过。
-
-## 技术栈
-
-- Swift 6 / SwiftUI / AppKit
-- Swift Package Manager
-- Security-Scoped Bookmarks（安全持久化文件访问）
-- macOS 14+ (Sonoma)
-
-## 项目结构
-
-```
-Sources/
-├── CollectionBox/              # 核心库
-│   ├── Models/                 # 数据模型
-│   ├── Services/               # BookmarkService
-│   ├── ViewModels/             # CollectionStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面
-│   └── AppKit/                 # AppKit 集成
-├── CollectionBoxApp/           # 应用入口
-Tests/
-└── CollectionBoxTests/         # 测试套件
-```
 
 ## 许可
 
