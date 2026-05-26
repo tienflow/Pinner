@@ -151,10 +151,8 @@ final class KeyPanel: NSPanel {
 extension EdgeDockWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { mainPanel?.delegate = nil; collapse() }
     func windowDidResignKey(_ notification: Notification) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self = self, self.isExpanded else { return }
-            if NSApp.keyWindow == nil { self.collapse() }
-        }
+        // Auto-collapse is handled by the auto-hide timer, not focus loss.
+        // This ensures the "auto-hide delay" setting is respected.
     }
 }
 
