@@ -1,8 +1,8 @@
 import Foundation
 
-enum BookmarkService {
+public enum BookmarkService {
     /// Create a security-scoped bookmark for the given file or folder URL.
-    static func makeBookmark(for url: URL) throws -> Data {
+    public static func makeBookmark(for url: URL) throws -> Data {
         try url.bookmarkData(
             options: [.withSecurityScope],
             includingResourceValuesForKeys: nil,
@@ -12,7 +12,7 @@ enum BookmarkService {
 
     /// Resolve a security-scoped bookmark back to its URL.
     /// Throws if the bookmark data is invalid or cannot be resolved.
-    static func resolveBookmark(_ data: Data) throws -> URL {
+    public static func resolveBookmark(_ data: Data) throws -> URL {
         var stale = false
         let url = try URL(
             resolvingBookmarkData: data,
