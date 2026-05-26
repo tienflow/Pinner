@@ -38,6 +38,7 @@ struct RootView: View {
     @State private var sortOrder: SortOrder = {
         SortOrder(rawValue: UserDefaults.standard.string(forKey: "CollectionBox.sortOrder") ?? "date_added") ?? .dateAdded
     }()
+    @State private var observerToken: NSObjectProtocol?
     @State private var viewMode: ViewMode = {
         ViewMode(rawValue: UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list") ?? .list
     }()
@@ -119,7 +120,12 @@ struct RootView: View {
         .onAppear {
             if selectedTabID == nil { selectedTabID = store.tabs.first?.id }
             isPinnedState = UserDefaults.standard.bool(forKey: "CollectionBox.isPinned")
-            NotificationCenter.default.addObserver(forName: .collectionBoxKeyDown, object: nil, queue: .main) { handleKeyDown($0) }
+            if observerToken == nil {
+                observerToken = NotificationCenter.default.addObserver(forName: .collectionBoxKeyDown, object: nil, queue: .main) { [self] in handleKeyDown($0) }
+            }
+        }
+        .onDisappear {
+            if let t = observerToken { NotificationCenter.default.removeObserver(t); observerToken = nil }
         }
         .alert("新建收藏夹", isPresented: $isShowingNewTabAlert) {
             TextField("收藏夹名称", text: $newTabName)
@@ -270,8 +276,11 @@ struct RootView: View {
             else { selectedEntryID = entries.first?.id }
         case "tab":
             if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }) {
-                let next = store.tabs[(i + 1) % store.tabs.count]
-                selectedTabID = next.id
+                selectedTabID = store.tabs[(i + 1) % store.tabs.count].id
+            }
+        case "shiftTab":
+            if let cur = selectedTabID, let i = store.tabs.firstIndex(where: { $0.id == cur }) {
+                selectedTabID = store.tabs[(i - 1 + store.tabs.count) % store.tabs.count].id
             }
         case "space", "return":
             if let id = selectedEntryID, let e = entries.first(where: { $0.id == id }), let ti = store.tabs.firstIndex(where: { $0.id == selectedTabID }) {
