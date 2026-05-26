@@ -25,7 +25,7 @@ struct EntrySection: Identifiable {
 struct RootView: View {
     @State var store: CollectionStore
     var onPinToggle: (() -> Void)?
-    var isPinned: (() -> Bool)?
+    @State private var isPinnedState: Bool = false
     @State private var selectedTabID: UUID?
     @State private var isShowingNewTabAlert = false
     @State private var newTabName = ""
@@ -42,17 +42,26 @@ struct RootView: View {
         ViewMode(rawValue: UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list") ?? .list
     }()
 
-    private var sortedEntries: [BookmarkEntry] {
+    private var allFiltered: [BookmarkEntry] {
         guard let tabID = selectedTabID, let ti = store.tabs.firstIndex(where: { $0.id == tabID }) else { return [] }
         let entries = store.tabs[ti].entries
-        let filtered = searchText.isEmpty ? entries : entries.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
+        return searchText.isEmpty ? entries : entries.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private var pinnedEntries: [BookmarkEntry] {
+        let pinned = allFiltered.filter { $0.isPinned }
+        return pinned.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    private var sortedEntries: [BookmarkEntry] {
+        let unpinned = allFiltered.filter { !$0.isPinned }
         switch sortOrder {
         case .name: return nameAscending
-            ? filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-            : filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedDescending }
-        case .dateAdded: return filtered.sorted { $0.dateAdded > $1.dateAdded }
-        case .lastOpened: return filtered.sorted { ($0.lastOpened ?? .distantPast) > ($1.lastOpened ?? .distantPast) }
-        case .type: return filtered.sorted {
+            ? unpinned.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            : unpinned.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedDescending }
+        case .dateAdded: return unpinned.sorted { $0.dateAdded > $1.dateAdded }
+        case .lastOpened: return unpinned.sorted { ($0.lastOpened ?? .distantPast) > ($1.lastOpened ?? .distantPast) }
+        case .type: return unpinned.sorted {
             let e1 = ($0.displayName as NSString).pathExtension.lowercased()
             let e2 = ($1.displayName as NSString).pathExtension.lowercased()
             return e1 == e2 ? $0.displayName < $1.displayName : e1 < e2
@@ -61,12 +70,19 @@ struct RootView: View {
     }
 
     private var sections: [EntrySection] {
-        switch sortOrder {
-        case .type: return groupByType(sortedEntries)
-        case .dateAdded: return groupByDate(sortedEntries.compactMap { e in (e, e.dateAdded) })
-        case .lastOpened: return groupByDate(sortedEntries.compactMap { e in e.lastOpened.map { (e, $0) } })
-        default: return [EntrySection(id: "all", title: "", entries: sortedEntries)]
+        var result: [EntrySection] = []
+        if !pinnedEntries.isEmpty {
+            result.append(EntrySection(id: "pinned", title: "已置顶", entries: pinnedEntries))
         }
+        let unsorted: [EntrySection]
+        switch sortOrder {
+        case .type: unsorted = groupByType(sortedEntries)
+        case .dateAdded: unsorted = groupByDate(sortedEntries.compactMap { e in (e, e.dateAdded) })
+        case .lastOpened: unsorted = groupByDate(sortedEntries.compactMap { e in e.lastOpened.map { (e, $0) } })
+        default: unsorted = [EntrySection(id: "all", title: "", entries: sortedEntries)]
+        }
+        result.append(contentsOf: unsorted)
+        return result
     }
 
     private func groupByType(_ entries: [BookmarkEntry]) -> [EntrySection] {
@@ -102,6 +118,7 @@ struct RootView: View {
         .frame(minWidth: 280, idealWidth: 320, minHeight: 400)
         .onAppear {
             if selectedTabID == nil { selectedTabID = store.tabs.first?.id }
+            isPinnedState = UserDefaults.standard.bool(forKey: "CollectionBox.isPinned")
             NotificationCenter.default.addObserver(forName: .collectionBoxKeyDown, object: nil, queue: .main) { handleKeyDown($0) }
         }
         .alert("新建收藏夹", isPresented: $isShowingNewTabAlert) {
@@ -132,9 +149,9 @@ struct RootView: View {
                 }
             }
             Spacer()
-            Button(action: { onPinToggle?() }) {
-                Image(systemName: isPinned?() == true ? "pin.fill" : "pin.slash").font(.system(size: 12)).foregroundStyle(isPinned?() == true ? .orange : .secondary)
-            }.buttonStyle(.plain).help(isPinned?() == true ? "取消置顶（点击外部会隐藏）" : "置顶（点击外部不隐藏）")
+            Button(action: { onPinToggle?(); isPinnedState.toggle() }) {
+                Image(systemName: isPinnedState ? "pin.fill" : "pin.slash").font(.system(size: 12)).foregroundStyle(isPinnedState ? .orange : .secondary)
+            }.buttonStyle(.plain).help(isPinnedState ? "取消置顶（点击外部会隐藏）" : "置顶（点击外部不隐藏）")
             Button(action: { viewMode = viewMode == .list ? .grid : .list; UserDefaults.standard.set(viewMode.rawValue, forKey: "CollectionBox.viewMode") }) {
                 Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet").font(.system(size: 12))
             }.buttonStyle(.plain)
@@ -215,7 +232,9 @@ struct RootView: View {
 
     @ViewBuilder
     private func entryMenu(entry: BookmarkEntry, ti: Int) -> some View {
-        if sortedEntries.first?.id != entry.id { Button { store.pinEntry(entry.id, in: ti) } label: { Label("置顶", systemImage: "pin") } }
+        Button { store.pinEntry(entry.id, in: ti) } label: {
+            Label(entry.isPinned ? "取消置顶" : "置顶", systemImage: entry.isPinned ? "pin.slash" : "pin")
+        }
         Button("在 Finder 中显示") { showInFinder(entry.bookmarkData) }
         Divider()
         Button("移除", role: .destructive) { store.removeEntry(entry.id, from: ti); if selectedEntryID == entry.id { selectedEntryID = nil } }

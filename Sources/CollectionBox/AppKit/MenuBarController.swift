@@ -18,11 +18,13 @@ public final class MenuBarController: NSObject {
 
     public func activate() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let b = statusItem?.button {
-            b.image = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "收藏箱")
-            b.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            b.action = #selector(handleClick(_:)); b.target = self
-        }
+        guard let b = statusItem?.button else { return }
+        let img = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "Pinner")
+        img?.isTemplate = true
+        b.image = img
+        b.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        b.action = #selector(handleClick(_:))
+        b.target = self
         edgeController = EdgeDockWindowController(store: store)
         applyTheme()
     }
@@ -34,7 +36,7 @@ public final class MenuBarController: NSObject {
 
     private func showMenu() {
         let m = NSMenu()
-        let header = NSMenuItem(title: "收藏箱设置", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "Pinner 设置", action: nil, keyEquivalent: "")
         header.isEnabled = false; m.addItem(header)
         m.addItem(.separator())
 

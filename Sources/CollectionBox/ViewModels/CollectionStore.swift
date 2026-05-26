@@ -59,9 +59,8 @@ public final class CollectionStore {
 
     public func pinEntry(_ entryID: UUID, in tabIndex: Int) {
         guard tabs.indices.contains(tabIndex) else { return }
-        guard let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }), i > 0 else { return }
-        let entry = tabs[tabIndex].entries.remove(at: i)
-        tabs[tabIndex].entries.insert(entry, at: 0)
+        guard let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        tabs[tabIndex].entries[i].isPinned.toggle()
         save()
     }
 

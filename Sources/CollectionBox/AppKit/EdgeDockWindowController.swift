@@ -88,7 +88,7 @@ final class EdgeDockWindowController: NSObject {
         p.titlebarAppearsTransparent = true; p.titleVisibility = .hidden; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; p.isMovableByWindowBackground = false; p.delegate = self
 
-        let hv = NSHostingView(rootView: RootView(store: store, onPinToggle: { [weak self] in self?.isPinned.toggle() }, isPinned: { [weak self] in self?.isPinned ?? false }))
+        let hv = NSHostingView(rootView: RootView(store: store, onPinToggle: { [weak self] in self?.isPinned.toggle() }))
         hv.frame = p.contentView!.bounds; hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)
 

@@ -18,13 +18,15 @@ public struct BookmarkEntry: Identifiable, Codable, Equatable, Sendable {
     public var bookmarkData: Data
     public var dateAdded: Date
     public var lastOpened: Date?
+    public var isPinned: Bool
 
-    public init(id: UUID, displayName: String, bookmarkData: Data, dateAdded: Date = Date(), lastOpened: Date? = nil) {
+    public init(id: UUID, displayName: String, bookmarkData: Data, dateAdded: Date = Date(), lastOpened: Date? = nil, isPinned: Bool = false) {
         self.id = id
         self.displayName = displayName
         self.bookmarkData = bookmarkData
         self.dateAdded = dateAdded
         self.lastOpened = lastOpened
+        self.isPinned = isPinned
     }
 }
 
