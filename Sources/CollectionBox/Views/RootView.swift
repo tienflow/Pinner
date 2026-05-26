@@ -182,8 +182,8 @@ struct RootView: View {
     private func listRow(entry: BookmarkEntry, ti: Int) -> some View {
         EntryRow(entry: entry, isSelected: selectedEntryID == entry.id, isFlashing: flashID == entry.id)
             .contentShape(Rectangle())
-            .onTapGesture(count: 1) { withAnimation(.easeOut(duration: 0.1)) { selectedEntryID = entry.id } }
             .onTapGesture(count: 2) { openEntry(entry, ti: ti) }
+            .simultaneousGesture(TapGesture(count: 1).onEnded { withAnimation(.easeOut(duration: 0.05)) { selectedEntryID = entry.id } })
             .contextMenu { entryMenu(entry: entry, ti: ti) }
     }
 
@@ -198,8 +198,8 @@ struct RootView: View {
                 ForEach(sec.entries) { entry in
                     GridEntryItem(entry: entry, isSelected: selectedEntryID == entry.id, isFlashing: flashID == entry.id)
                         .contentShape(Rectangle())
-                        .onTapGesture(count: 1) { withAnimation(.easeOut(duration: 0.1)) { selectedEntryID = entry.id } }
                         .onTapGesture(count: 2) { openEntry(entry, ti: ti) }
+                        .simultaneousGesture(TapGesture(count: 1).onEnded { withAnimation(.easeOut(duration: 0.05)) { selectedEntryID = entry.id } })
                         .contextMenu { entryMenu(entry: entry, ti: ti) }
                 }
             }.padding(.horizontal, 12).padding(.bottom, 4)
