@@ -59,7 +59,8 @@ final class EdgeDockWindowController: NSObject {
         p.level = .statusBar - 1; p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
         p.hidesOnDeactivate = false; p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let hv = HoverView(frame: NSRect(x: 0, y: 0, width: f.width, height: f.height))
-        hv.onHoverStart = { [weak self] in self?.expand() }
+        hv.edgePosition = pos
+        hv.onHoverStart = { [weak self] edge in self?.expand(from: edge) }
         p.contentView = hv; p.orderFrontRegardless()
         triggerPanels.append(p)
     }
@@ -70,19 +71,13 @@ final class EdgeDockWindowController: NSObject {
 
     // MARK: - Expand
 
-    func expand() {
+    func expand(from edge: EdgePosition? = nil) {
         guard !isExpanded, let screen = NSScreen.main else { return }
-        let (v, inv) = store.refreshAll()
-        let line = "[expand] refreshAll: valid=\(v), invalid=\(inv)\n"
-        if let data = line.data(using: .utf8) {
-            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_refresh.log")
-            if let fh = fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
-            else { try? line.write(toFile: "/tmp/pinner_refresh.log", atomically: true, encoding: .utf8) }
-        }
+        store.refreshAll()
         triggerPanels.forEach { $0.orderOut(nil) }
 
         let h: CGFloat = 480, w: CGFloat = expandedWidth
-        let pos = edgePositions.first ?? .right
+        let pos = edge ?? edgePositions.first ?? .right
         let f: NSRect
         switch pos {
         case .right: f = NSRect(x: screen.frame.maxX - w, y: screen.frame.midY - h/2, width: w, height: h)
@@ -156,12 +151,13 @@ extension EdgeDockWindowController: NSWindowDelegate {
 // MARK: - HoverView
 
 class HoverView: NSView {
-    var onHoverStart: (() -> Void)?
+    var onHoverStart: ((EdgePosition) -> Void)?
+    var edgePosition: EdgePosition = .right
     override init(frame: NSRect) {
         super.init(frame: frame)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .mouseMoved], owner: self, userInfo: nil))
     }
     required init?(coder: NSCoder) { fatalError() }
-    override func mouseEntered(with event: NSEvent) { onHoverStart?() }
-    override func mouseMoved(with event: NSEvent) { onHoverStart?() }
+    override func mouseEntered(with event: NSEvent) { onHoverStart?(edgePosition) }
+    override func mouseMoved(with event: NSEvent) { onHoverStart?(edgePosition) }
 }
