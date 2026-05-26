@@ -27,8 +27,6 @@ final class EdgeDockWindowController: NSObject {
     private let expandedWidth: CGFloat = 320
     private let triggerWidth: CGFloat = 6
     private var collapseWorkItem: DispatchWorkItem?
-    private var localMonitor: Any?
-    private var globalMonitor: Any?
 
     var autoHideDelay: AutoHideDelay {
         get { AutoHideDelay(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.autoHideDelay")) ?? .never }
@@ -40,8 +38,6 @@ final class EdgeDockWindowController: NSObject {
         super.init()
         setupTriggerPanel()
     }
-
-    deinit { stopMonitors() }
 
     // MARK: - Trigger
 
@@ -74,7 +70,7 @@ final class EdgeDockWindowController: NSObject {
 
         let h: CGFloat = 480
         let f = NSRect(x: screen.frame.maxX - expandedWidth, y: screen.frame.midY - h / 2, width: expandedWidth, height: h)
-        let p = NSPanel(contentRect: f, styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: true)
+        let p = KeyPanel(contentRect: f, styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: true)
         p.level = .floating
         p.isOpaque = true
         p.backgroundColor = NSColor.windowBackgroundColor
@@ -94,8 +90,6 @@ final class EdgeDockWindowController: NSObject {
         p.makeKeyAndOrderFront(nil)
         self.mainPanel = p
         self.isExpanded = true
-
-        startMonitors()
         scheduleCollapseIfNeeded()
     }
 
@@ -104,7 +98,6 @@ final class EdgeDockWindowController: NSObject {
     func collapse() {
         collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard isExpanded else { return }
-        stopMonitors()
         mainPanel?.delegate = nil
         mainPanel?.orderOut(nil)
         mainPanel = nil
@@ -113,40 +106,6 @@ final class EdgeDockWindowController: NSObject {
     }
 
     func toggle() { if isExpanded { collapse() } else { expand() } }
-
-    // MARK: - Key Monitors (local + global to cover all cases)
-
-    private func startMonitors() {
-        guard localMonitor == nil else { return }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKey(event)
-            return event
-        }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKey(event)
-        }
-    }
-
-    private func stopMonitors() {
-        if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
-        if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
-    }
-
-    private func handleKey(_ event: NSEvent) {
-        guard isExpanded else { return }
-        let key: String?
-        switch event.keyCode {
-        case 126: key = "up"
-        case 125: key = "down"
-        case 36:  key = "return"
-        case 49:  key = "space"
-        case 53:  collapse(); return
-        default: key = nil
-        }
-        if let key = key {
-            NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": key])
-        }
-    }
 
     // MARK: - Auto-hide
 
@@ -157,6 +116,29 @@ final class EdgeDockWindowController: NSObject {
         let work = DispatchWorkItem { [weak self] in self?.collapse() }
         collapseWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Double(delay.rawValue), execute: work)
+    }
+}
+
+// MARK: - KeyPanel: intercepts key events only when this panel is key window
+
+final class KeyPanel: NSPanel {
+    override func keyDown(with event: NSEvent) {
+        let key: String?
+        switch event.keyCode {
+        case 126: key = "up"
+        case 125: key = "down"
+        case 36:  key = "return"
+        case 49:  key = "space"
+        case 53:  // Esc
+            NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": "escape"])
+            return
+        default: key = nil
+        }
+        if let key = key {
+            NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": key])
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }
 

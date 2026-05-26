@@ -284,11 +284,14 @@ struct RootView: View {
 
     private func rows(section: EntrySection, tabIndex: Int) -> some View {
         ForEach(section.entries) { entry in
-            EntryRow(entry: entry, isSelected: selectedEntryID == entry.id, isFlashing: flashID == entry.id)
-                .contentShape(Rectangle())
-                .onTapGesture { selectedEntryID = entry.id }
-                .onTapGesture(count: 2) { openEntry(entry, tabIndex: tabIndex) }
-                .contextMenu { entryContextMenu(entry: entry, tabIndex: tabIndex) }
+            ClickableRow(
+                entry: entry,
+                isSelected: selectedEntryID == entry.id,
+                isFlashing: flashID == entry.id,
+                onSelect: { selectedEntryID = entry.id },
+                onOpen: { openEntry(entry, tabIndex: tabIndex) }
+            )
+            .contextMenu { entryContextMenu(entry: entry, tabIndex: tabIndex) }
         }
     }
 
@@ -303,11 +306,14 @@ struct RootView: View {
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)], spacing: 12) {
                     ForEach(section.entries) { entry in
-                        GridEntryItem(entry: entry, isSelected: selectedEntryID == entry.id, isFlashing: flashID == entry.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture { selectedEntryID = entry.id }
-                            .onTapGesture(count: 2) { openEntry(entry, tabIndex: tabIndex) }
-                            .contextMenu { entryContextMenu(entry: entry, tabIndex: tabIndex) }
+                        ClickableGridItem(
+                            entry: entry,
+                            isSelected: selectedEntryID == entry.id,
+                            isFlashing: flashID == entry.id,
+                            onSelect: { selectedEntryID = entry.id },
+                            onOpen: { openEntry(entry, tabIndex: tabIndex) }
+                        )
+                        .contextMenu { entryContextMenu(entry: entry, tabIndex: tabIndex) }
                     }
                 }
                 .padding(.horizontal, 12).padding(.bottom, 4)
@@ -442,6 +448,86 @@ struct RootView: View {
 
 extension Notification.Name {
     static let collectionBoxKeyDown = Notification.Name("CollectionBoxKeyDown")
+}
+
+
+// MARK: - Clickable Row (AppKit-based for instant click response)
+
+struct ClickableRow: View {
+    let entry: BookmarkEntry
+    var isSelected = false
+    var isFlashing = false
+    let onSelect: () -> Void
+    let onOpen: () -> Void
+
+    var body: some View {
+        ClickableContainer(onClick: onSelect, onDoubleClick: onOpen) {
+            EntryRow(entry: entry, isSelected: isSelected, isFlashing: isFlashing)
+        }
+    }
+}
+
+struct ClickableGridItem: View {
+    let entry: BookmarkEntry
+    var isSelected = false
+    var isFlashing = false
+    let onSelect: () -> Void
+    let onOpen: () -> Void
+
+    var body: some View {
+        ClickableContainer(onClick: onSelect, onDoubleClick: onOpen) {
+            GridEntryItem(entry: entry, isSelected: isSelected, isFlashing: isFlashing)
+        }
+    }
+}
+
+/// Wraps any SwiftUI view with AppKit mouse-down handling for instant single-click.
+struct ClickableContainer<Content: View>: NSViewRepresentable {
+    let onClick: () -> Void
+    let onDoubleClick: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    func makeNSView(context: Context) -> ClickableView {
+        let v = ClickableView()
+        v.onClick = onClick
+        v.onDoubleClick = onDoubleClick
+        let hosting = NSHostingView(rootView: content())
+        hosting.frame = v.bounds
+        hosting.autoresizingMask = [.width, .height]
+        v.addSubview(hosting)
+        return v
+    }
+
+    func updateNSView(_ nsView: ClickableView, context: Context) {
+        nsView.onClick = onClick
+        nsView.onDoubleClick = onDoubleClick
+        if let hosting = nsView.subviews.first as? NSHostingView<Content> {
+            hosting.rootView = content()
+        }
+    }
+}
+
+class ClickableView: NSView {
+    var onClick: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Make panel key window so arrow keys work
+        window?.makeKey()
+
+        if event.clickCount == 2 {
+            onDoubleClick?()
+        } else {
+            onClick?()
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        window?.makeKey()
+        super.rightMouseDown(with: event)
+    }
 }
 
 // MARK: - Entry Row
