@@ -1,6 +1,16 @@
 import Foundation
 
 public enum BookmarkService {
+    /// Check if a file URL is in the Trash.
+    private static func isTrashed(_ url: URL) -> Bool {
+        let trash = FileManager.default.urls(for: .trashDirectory, in: .userDomainMask).first
+        return url.path.hasPrefix(trash?.path ?? "/nonexistent/.Trash")
+    }
+
+    /// Check if a file exists and is not in the Trash.
+    private static func isFileValid(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path) && !isTrashed(url)
+    }
     /// Create a bookmark for the given file or folder URL.
     public static func makeBookmark(for url: URL) throws -> Data {
         try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -20,14 +30,14 @@ public enum BookmarkService {
     /// Resolve bookmark and run a closure with access to the resource.
     public static func withResolvedBookmark<T>(_ data: Data, perform: (URL) throws -> T) rethrows -> T? {
         guard let url = try? resolveBookmark(data) else { return nil }
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard isFileValid(url) else { return nil }
         return try? perform(url)
     }
 
     /// Check if a bookmark is still valid and return current filename if available.
     public static func verifyBookmark(_ data: Data) -> (valid: Bool, currentName: String?) {
         guard let url = try? resolveBookmark(data) else { return (false, nil) }
-        if FileManager.default.fileExists(atPath: url.path) {
+        if isFileValid(url) {
             return (true, url.lastPathComponent)
         }
         return (false, nil)
@@ -36,7 +46,7 @@ public enum BookmarkService {
     /// Try to re-create a bookmark from the resolved URL (if file still exists).
     public static func refreshBookmark(_ data: Data) -> (newData: Data?, currentName: String?) {
         guard let url = try? resolveBookmark(data),
-              FileManager.default.fileExists(atPath: url.path) else { return (nil, nil) }
+              isFileValid(url) else { return (nil, nil) }
         let newData = try? makeBookmark(for: url)
         return (newData, url.lastPathComponent)
     }
