@@ -29,7 +29,7 @@ final class EdgeDockWindowController: NSObject {
         let h: CGFloat = 480
         let f = NSRect(x: screen.frame.maxX - triggerWidth, y: screen.frame.midY - h/2, width: triggerWidth, height: h)
         let p = NSPanel(contentRect: f, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        p.level = .floating; p.isOpaque = false; p.backgroundColor = NSColor.black.withAlphaComponent(0.15)
+        p.level = .floating; p.isOpaque = false; p.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.6)
         p.hasShadow = false; p.hidesOnDeactivate = false; p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let hv = HoverView(frame: NSRect(x: 0, y: 0, width: triggerWidth, height: h))
         hv.onHoverStart = { [weak self] in self?.expand() }
