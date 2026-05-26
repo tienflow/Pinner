@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import Quartz
 
 enum ViewMode: String, CaseIterable {
     case list
@@ -30,6 +31,8 @@ struct RootView: View {
     @State private var renamingTabID: UUID?
     @State private var renameText = ""
     @State private var searchText = ""
+    @State private var selectedEntryID: UUID?
+    @State private var clickedEntryID: UUID?
     @State private var sortOrder: SortOrder = {
         let raw = UserDefaults.standard.string(forKey: "CollectionBox.sortOrder") ?? "date_added"
         return SortOrder(rawValue: raw) ?? .dateAdded
@@ -38,9 +41,9 @@ struct RootView: View {
         let raw = UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list"
         return ViewMode(rawValue: raw) ?? .list
     }()
-    @State private var clickedEntryID: UUID?
 
-    private var filteredEntries: [BookmarkEntry] {
+    // Ordered + filtered entries for the current tab
+    private var displayEntries: [BookmarkEntry] {
         guard let tabID = selectedTabID,
               let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) else { return [] }
         let entries = store.tabs[tabIndex].entries
@@ -53,14 +56,17 @@ struct RootView: View {
         case .nameDesc:
             return filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedDescending }
         case .dateAdded:
-            return filtered
+            return filtered.reversed() // newest first (entries are appended)
         case .type:
-            return filtered.sorted { fileExtension($0.displayName).localizedCaseInsensitiveCompare(fileExtension($1.displayName)) == .orderedAscending }
+            return filtered.sorted {
+                let e1 = ($0.displayName as NSString).pathExtension.lowercased()
+                let e2 = ($1.displayName as NSString).pathExtension.lowercased()
+                if e1 == e2 {
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+                return e1 < e2
+            }
         }
-    }
-
-    private func fileExtension(_ name: String) -> String {
-        (name as NSString).pathExtension.lowercased()
     }
 
     var body: some View {
@@ -74,6 +80,19 @@ struct RootView: View {
             bottomBar
         }
         .frame(minWidth: 280, idealWidth: 320, minHeight: 400)
+        .focusable()
+        .onKeyPress(.upArrow) {
+            selectPrevious()
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            selectNext()
+            return .handled
+        }
+        .onKeyPress(.space) {
+            quickLookSelected()
+            return .handled
+        }
         .onAppear {
             if selectedTabID == nil {
                 selectedTabID = store.tabs.first?.id
@@ -233,9 +252,7 @@ struct RootView: View {
            let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) {
             if store.tabs[tabIndex].entries.isEmpty {
                 emptyState
-                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                        handleDrop(providers: providers, tabIndex: tabIndex)
-                    }
+                    .onDrop(of: [.fileURL], isTargeted: nil) { handleDrop(providers: $0, tabIndex: tabIndex) }
             } else {
                 Group {
                     if viewMode == .list {
@@ -244,9 +261,7 @@ struct RootView: View {
                         gridView(tabIndex: tabIndex)
                     }
                 }
-                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                    handleDrop(providers: providers, tabIndex: tabIndex)
-                }
+                .onDrop(of: [.fileURL], isTargeted: nil) { handleDrop(providers: $0, tabIndex: tabIndex) }
             }
         } else {
             VStack {
@@ -261,11 +276,17 @@ struct RootView: View {
     // MARK: - List View
 
     private func listView(tabIndex: Int) -> some View {
-        List {
-            ForEach(filteredEntries) { entry in
-                EntryRow(entry: entry, isClicked: clickedEntryID == entry.id) {
+        List(selection: $selectedEntryID) {
+            ForEach(displayEntries) { entry in
+                EntryRow(entry: entry,
+                         isSelected: selectedEntryID == entry.id,
+                         isClicked: clickedEntryID == entry.id) {
                     openEntry(entry)
                     flashEntry(entry.id)
+                }
+                .tag(entry.id)
+                .onTapGesture {
+                    selectedEntryID = entry.id
                 }
                 .contextMenu {
                     entryContextMenu(entry: entry, tabIndex: tabIndex)
@@ -282,10 +303,15 @@ struct RootView: View {
             LazyVGrid(columns: [
                 GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)
             ], spacing: 12) {
-                ForEach(filteredEntries) { entry in
-                    GridEntryItem(entry: entry, isClicked: clickedEntryID == entry.id) {
+                ForEach(displayEntries) { entry in
+                    GridEntryItem(entry: entry,
+                                  isSelected: selectedEntryID == entry.id,
+                                  isClicked: clickedEntryID == entry.id) {
                         openEntry(entry)
                         flashEntry(entry.id)
+                    }
+                    .onTapGesture {
+                        selectedEntryID = entry.id
                     }
                     .contextMenu {
                         entryContextMenu(entry: entry, tabIndex: tabIndex)
@@ -300,7 +326,7 @@ struct RootView: View {
 
     @ViewBuilder
     private func entryContextMenu(entry: BookmarkEntry, tabIndex: Int) -> some View {
-        let isFirst = filteredEntries.first?.id == entry.id
+        let isFirst = displayEntries.first?.id == entry.id
         if !isFirst {
             Button {
                 store.pinEntry(entry.id, in: tabIndex)
@@ -314,6 +340,7 @@ struct RootView: View {
         Divider()
         Button("移除", role: .destructive) {
             store.removeEntry(entry.id, from: tabIndex)
+            if selectedEntryID == entry.id { selectedEntryID = nil }
         }
     }
 
@@ -332,14 +359,42 @@ struct RootView: View {
         }
     }
 
+    // MARK: - Keyboard Navigation
+
+    private func selectPrevious() {
+        let entries = displayEntries
+        guard !entries.isEmpty else { return }
+        if let current = selectedEntryID, let idx = entries.firstIndex(where: { $0.id == current }), idx > 0 {
+            selectedEntryID = entries[idx - 1].id
+        } else {
+            selectedEntryID = entries.last?.id
+        }
+    }
+
+    private func selectNext() {
+        let entries = displayEntries
+        guard !entries.isEmpty else { return }
+        if let current = selectedEntryID, let idx = entries.firstIndex(where: { $0.id == current }), idx < entries.count - 1 {
+            selectedEntryID = entries[idx + 1].id
+        } else {
+            selectedEntryID = entries.first?.id
+        }
+    }
+
+    private func quickLookSelected() {
+        guard let id = selectedEntryID,
+              let entry = displayEntries.first(where: { $0.id == id }) else { return }
+        BookmarkService.withResolvedBookmark(entry.bookmarkData) { url in
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: - Click Feedback
 
     private func flashEntry(_ id: UUID) {
         clickedEntryID = id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            if clickedEntryID == id {
-                clickedEntryID = nil
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            if clickedEntryID == id { clickedEntryID = nil }
         }
     }
 
@@ -347,17 +402,13 @@ struct RootView: View {
 
     private func handleDrop(providers: [NSItemProvider], tabIndex: Int) -> Bool {
         for provider in providers {
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
                 guard let data = item as? Data,
                       let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
                 DispatchQueue.main.async {
                     do {
                         let bookmarkData = try BookmarkService.makeBookmark(for: url)
-                        let entry = BookmarkEntry(
-                            id: UUID(),
-                            displayName: url.lastPathComponent,
-                            bookmarkData: bookmarkData
-                        )
+                        let entry = BookmarkEntry(id: UUID(), displayName: url.lastPathComponent, bookmarkData: bookmarkData)
                         store.addEntry(entry, to: tabIndex)
                     } catch {
                         print("Failed to create bookmark: \(error)")
@@ -411,6 +462,7 @@ struct RootView: View {
 
 struct EntryRow: View {
     let entry: BookmarkEntry
+    var isSelected: Bool = false
     var isClicked: Bool = false
     let onTap: () -> Void
 
@@ -425,10 +477,19 @@ struct EntryRow: View {
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
-        .background(isClicked ? Color.accentColor.opacity(0.2) : Color.clear)
+        .background(backgroundColor)
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onTap)
+    }
+
+    private var backgroundColor: Color {
+        if isClicked {
+            return Color.accentColor.opacity(0.12)
+        } else if isSelected {
+            return Color.accentColor.opacity(0.18)
+        }
+        return Color.clear
     }
 }
 
@@ -436,6 +497,7 @@ struct EntryRow: View {
 
 struct GridEntryItem: View {
     let entry: BookmarkEntry
+    var isSelected: Bool = false
     var isClicked: Bool = false
     let onTap: () -> Void
 
@@ -448,7 +510,7 @@ struct GridEntryItem: View {
                 .cornerRadius(8)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(isClicked ? Color.accentColor : Color.clear, lineWidth: 2)
+                        .stroke(borderColor, lineWidth: borderWidth)
                 )
 
             Text(entry.displayName)
@@ -458,16 +520,27 @@ struct GridEntryItem: View {
                 .frame(width: 76)
         }
         .padding(4)
+        .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
+        .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onTap)
     }
+
+    private var borderColor: Color {
+        if isClicked { return Color.accentColor.opacity(0.5) }
+        if isSelected { return Color.accentColor.opacity(0.6) }
+        return Color.clear
+    }
+
+    private var borderWidth: CGFloat {
+        (isSelected || isClicked) ? 2 : 0
+    }
 }
 
-// MARK: - File Icon (uses macOS system icons)
+// MARK: - File Icon
 
 struct FileIconView: View {
     let fileName: String
-
     var body: some View {
         FileIconNSImageRepresentable(fileName: fileName)
     }
