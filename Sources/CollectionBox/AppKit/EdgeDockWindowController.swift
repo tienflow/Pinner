@@ -14,6 +14,7 @@ final class EdgeDockWindowController: NSObject {
     private(set) var isExpanded = false
     private let expandedWidth: CGFloat = 320
     private var collapseObserver: NSObjectProtocol?
+    private var keyMonitor: Any?
 
     /// When true, clicking outside won't hide the panel.
     var isPinned = false {
@@ -95,12 +96,21 @@ final class EdgeDockWindowController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         p.makeKeyAndOrderFront(nil)
         self.mainPanel = p; self.isExpanded = true
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 48 && self?.isExpanded == true {
+                let key = event.modifierFlags.contains(.shift) ? "shiftTab" : "tab"
+                NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": key])
+                return nil  // consume the event
+            }
+            return event
+        }
     }
 
     // MARK: - Collapse
 
     func collapse() {
         guard isExpanded else { return }
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
         mainPanel?.delegate = nil; mainPanel?.orderOut(nil); mainPanel = nil; isExpanded = false
         triggerPanels.forEach { $0.orderFrontRegardless() }
     }
@@ -120,16 +130,6 @@ final class KeyPanel: NSPanel {
         }
         if let key = key { NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": key]) }
         else { super.keyDown(with: event) }
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.keyCode == 48 {  // Tab key
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let key = modifiers.contains(.shift) ? "shiftTab" : "tab"
-            NotificationCenter.default.post(name: .collectionBoxKeyDown, object: nil, userInfo: ["key": key])
-            return true
-        }
-        return super.performKeyEquivalent(with: event)
     }
 }
 

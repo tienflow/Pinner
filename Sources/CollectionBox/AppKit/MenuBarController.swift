@@ -19,9 +19,12 @@ public final class MenuBarController: NSObject {
     public func activate() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let b = statusItem?.button else { return }
-        let img = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "Pinner")
-        img?.isTemplate = true
-        b.image = img
+        if let sym = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "Pinner") {
+            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+            let img = sym.withSymbolConfiguration(config) ?? sym
+            img.isTemplate = true
+            b.image = img
+        }
         b.sendAction(on: [.leftMouseUp, .rightMouseUp])
         b.action = #selector(handleClick(_:))
         b.target = self
