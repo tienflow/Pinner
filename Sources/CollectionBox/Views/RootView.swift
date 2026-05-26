@@ -6,6 +6,22 @@ enum ViewMode: String, CaseIterable {
     case grid
 }
 
+enum SortOrder: String, CaseIterable {
+    case nameAsc = "name_asc"
+    case nameDesc = "name_desc"
+    case dateAdded = "date_added"
+    case type = "type"
+
+    var label: String {
+        switch self {
+        case .nameAsc: return "名称 A-Z"
+        case .nameDesc: return "名称 Z-A"
+        case .dateAdded: return "添加时间"
+        case .type: return "文件类型"
+        }
+    }
+}
+
 struct RootView: View {
     @State var store: CollectionStore
     @State private var selectedTabID: UUID?
@@ -13,14 +29,45 @@ struct RootView: View {
     @State private var newTabName = ""
     @State private var renamingTabID: UUID?
     @State private var renameText = ""
+    @State private var searchText = ""
+    @State private var sortOrder: SortOrder = {
+        let raw = UserDefaults.standard.string(forKey: "CollectionBox.sortOrder") ?? "date_added"
+        return SortOrder(rawValue: raw) ?? .dateAdded
+    }()
     @State private var viewMode: ViewMode = {
         let raw = UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list"
         return ViewMode(rawValue: raw) ?? .list
     }()
+    @State private var clickedEntryID: UUID?
+
+    private var filteredEntries: [BookmarkEntry] {
+        guard let tabID = selectedTabID,
+              let tabIndex = store.tabs.firstIndex(where: { $0.id == tabID }) else { return [] }
+        let entries = store.tabs[tabIndex].entries
+        let filtered = searchText.isEmpty ? entries : entries.filter {
+            $0.displayName.localizedCaseInsensitiveContains(searchText)
+        }
+        switch sortOrder {
+        case .nameAsc:
+            return filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        case .nameDesc:
+            return filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedDescending }
+        case .dateAdded:
+            return filtered
+        case .type:
+            return filtered.sorted { fileExtension($0.displayName).localizedCaseInsensitiveCompare(fileExtension($1.displayName)) == .orderedAscending }
+        }
+    }
+
+    private func fileExtension(_ name: String) -> String {
+        (name as NSString).pathExtension.lowercased()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             tabBar
+            Divider()
+            searchBar
             Divider()
             entryContent
             Divider()
@@ -132,6 +179,52 @@ struct RootView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Search Bar
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            TextField("搜索", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+            if !searchText.isEmpty {
+                Button(action: { searchText = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Menu {
+                ForEach(SortOrder.allCases, id: \.self) { order in
+                    Button(action: {
+                        sortOrder = order
+                        UserDefaults.standard.set(order.rawValue, forKey: "CollectionBox.sortOrder")
+                    }) {
+                        HStack {
+                            Text(order.label)
+                            if sortOrder == order {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("排序方式")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
     // MARK: - Entry Content
 
     @ViewBuilder
@@ -146,9 +239,9 @@ struct RootView: View {
             } else {
                 Group {
                     if viewMode == .list {
-                        listView(entries: store.tabs[tabIndex].entries, tabIndex: tabIndex)
+                        listView(tabIndex: tabIndex)
                     } else {
-                        gridView(entries: store.tabs[tabIndex].entries, tabIndex: tabIndex)
+                        gridView(tabIndex: tabIndex)
                     }
                 }
                 .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -167,14 +260,15 @@ struct RootView: View {
 
     // MARK: - List View
 
-    private func listView(entries: [BookmarkEntry], tabIndex: Int) -> some View {
+    private func listView(tabIndex: Int) -> some View {
         List {
-            ForEach(entries) { entry in
-                EntryRow(entry: entry) {
+            ForEach(filteredEntries) { entry in
+                EntryRow(entry: entry, isClicked: clickedEntryID == entry.id) {
                     openEntry(entry)
+                    flashEntry(entry.id)
                 }
                 .contextMenu {
-                    entryContextMenu(entry: entry, tabIndex: tabIndex, isFirst: entries.first?.id == entry.id)
+                    entryContextMenu(entry: entry, tabIndex: tabIndex)
                 }
             }
         }
@@ -183,17 +277,18 @@ struct RootView: View {
 
     // MARK: - Grid View
 
-    private func gridView(entries: [BookmarkEntry], tabIndex: Int) -> some View {
+    private func gridView(tabIndex: Int) -> some View {
         ScrollView {
             LazyVGrid(columns: [
                 GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)
             ], spacing: 12) {
-                ForEach(entries) { entry in
-                    GridEntryItem(entry: entry) {
+                ForEach(filteredEntries) { entry in
+                    GridEntryItem(entry: entry, isClicked: clickedEntryID == entry.id) {
                         openEntry(entry)
+                        flashEntry(entry.id)
                     }
                     .contextMenu {
-                        entryContextMenu(entry: entry, tabIndex: tabIndex, isFirst: entries.first?.id == entry.id)
+                        entryContextMenu(entry: entry, tabIndex: tabIndex)
                     }
                 }
             }
@@ -204,7 +299,8 @@ struct RootView: View {
     // MARK: - Entry Context Menu
 
     @ViewBuilder
-    private func entryContextMenu(entry: BookmarkEntry, tabIndex: Int, isFirst: Bool) -> some View {
+    private func entryContextMenu(entry: BookmarkEntry, tabIndex: Int) -> some View {
+        let isFirst = filteredEntries.first?.id == entry.id
         if !isFirst {
             Button {
                 store.pinEntry(entry.id, in: tabIndex)
@@ -233,6 +329,17 @@ struct RootView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
             Spacer()
+        }
+    }
+
+    // MARK: - Click Feedback
+
+    private func flashEntry(_ id: UUID) {
+        clickedEntryID = id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if clickedEntryID == id {
+                clickedEntryID = nil
+            }
         }
     }
 
@@ -304,25 +411,24 @@ struct RootView: View {
 
 struct EntryRow: View {
     let entry: BookmarkEntry
+    var isClicked: Bool = false
     let onTap: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(.secondary)
+            FileIconView(fileName: entry.displayName)
+                .frame(width: 20, height: 20)
             Text(entry.displayName)
                 .font(.system(size: 13))
                 .lineLimit(1)
             Spacer()
         }
         .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background(isClicked ? Color.accentColor.opacity(0.2) : Color.clear)
+        .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onTap)
-    }
-
-    private var icon: String {
-        entry.displayName.contains(".") ? "doc" : "folder"
     }
 }
 
@@ -330,16 +436,20 @@ struct EntryRow: View {
 
 struct GridEntryItem: View {
     let entry: BookmarkEntry
+    var isClicked: Bool = false
     let onTap: () -> Void
 
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 32))
-                .foregroundStyle(.secondary)
+            FileIconView(fileName: entry.displayName)
+                .frame(width: 48, height: 48)
                 .frame(width: 64, height: 64)
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isClicked ? Color.accentColor : Color.clear, lineWidth: 2)
+                )
 
             Text(entry.displayName)
                 .font(.system(size: 10))
@@ -351,8 +461,48 @@ struct GridEntryItem: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onTap)
     }
+}
 
-    private var icon: String {
-        entry.displayName.contains(".") ? "doc" : "folder"
+// MARK: - File Icon (uses macOS system icons)
+
+struct FileIconView: View {
+    let fileName: String
+
+    var body: some View {
+        FileIconNSImageRepresentable(fileName: fileName)
     }
 }
+
+#if canImport(AppKit)
+struct FileIconNSImageRepresentable: NSViewRepresentable {
+    let fileName: String
+
+    func makeNSView(context: Context) -> NSImageView {
+        let imageView = NSImageView()
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.image = iconForFile(fileName)
+        return imageView
+    }
+
+    func updateNSView(_ nsView: NSImageView, context: Context) {
+        nsView.image = iconForFile(fileName)
+    }
+
+    private func iconForFile(_ name: String) -> NSImage {
+        let ext = (name as NSString).pathExtension
+        if ext.isEmpty {
+            return NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericFolderIcon)))
+        }
+        return NSWorkspace.shared.icon(forFileType: ext)
+    }
+}
+#else
+struct FileIconNSImageRepresentable: View {
+    let fileName: String
+    var body: some View {
+        Image(systemName: fileName.contains(".") ? "doc" : "folder")
+            .font(.system(size: 24))
+            .foregroundStyle(.secondary)
+    }
+}
+#endif

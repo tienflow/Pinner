@@ -1,5 +1,30 @@
 import AppKit
 
+/// Appearance theme options.
+enum AppTheme: Int, CaseIterable, Identifiable {
+    case auto = 0
+    case light = 1
+    case dark = 2
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .auto: return "自动"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    var appearance: NSAppearance? {
+        switch self {
+        case .auto: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 /// Manages the NSStatusItem in the system menu bar.
 public final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem?
@@ -21,17 +46,19 @@ public final class MenuBarController: NSObject {
         }
 
         edgeController = EdgeDockWindowController(store: store)
+        applyTheme()
     }
 
     @objc private func handleClick(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
-
         if event.type == .rightMouseUp {
             showSettingsMenu()
         } else {
             edgeController?.toggle()
         }
     }
+
+    // MARK: - Settings Menu
 
     private func showSettingsMenu() {
         let menu = NSMenu()
@@ -41,10 +68,24 @@ public final class MenuBarController: NSObject {
         menu.addItem(headerItem)
         menu.addItem(.separator())
 
+        // Theme submenu
+        let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
+        let themeSubmenu = NSMenu()
+        let currentTheme = currentTheme()
+        for option in AppTheme.allCases {
+            let item = NSMenuItem(title: option.label, action: #selector(setTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = option.rawValue
+            item.state = option == currentTheme ? .on : .off
+            item.representedObject = option
+            themeSubmenu.addItem(item)
+        }
+        themeItem.submenu = themeSubmenu
+        menu.addItem(themeItem)
+
         // Auto-hide delay submenu
         let autoHideItem = NSMenuItem(title: "自动隐藏", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
-
         let currentDelay = edgeController?.autoHideDelay ?? .never
         for option in AutoHideDelay.allCases {
             let item = NSMenuItem(title: option.label, action: #selector(setAutoHide(_:)), keyEquivalent: "")
@@ -73,9 +114,28 @@ public final class MenuBarController: NSObject {
 
         statusItem?.menu = menu
         statusItem?.button?.performClick(nil)
-        // Reset so left-click still toggles
         statusItem?.menu = nil
     }
+
+    // MARK: - Theme
+
+    private func currentTheme() -> AppTheme {
+        let raw = UserDefaults.standard.integer(forKey: "CollectionBox.theme")
+        return AppTheme(rawValue: raw) ?? .auto
+    }
+
+    @objc private func setTheme(_ sender: NSMenuItem) {
+        guard let theme = sender.representedObject as? AppTheme else { return }
+        UserDefaults.standard.set(theme.rawValue, forKey: "CollectionBox.theme")
+        applyTheme()
+    }
+
+    private func applyTheme() {
+        let theme = currentTheme()
+        NSApp.appearance = theme.appearance
+    }
+
+    // MARK: - Actions
 
     @objc private func setAutoHide(_ sender: NSMenuItem) {
         guard let option = sender.representedObject as? AutoHideDelay else { return }
