@@ -22,11 +22,34 @@ enum AutoHideDelay: Int, CaseIterable, Identifiable {
     }
 }
 
+/// Keyboard-forwarding panel that intercepts arrow keys and space.
+final class KeyPanel: NSPanel {
+    override func keyDown(with event: NSEvent) {
+        let key: String?
+        switch event.keyCode {
+        case 126: key = "up"
+        case 125: key = "down"
+        case 36:  key = "return"
+        case 49:  key = "space"
+        default:  key = nil
+        }
+        if let key = key {
+            NotificationCenter.default.post(
+                name: .collectionBoxKeyDown,
+                object: nil,
+                userInfo: ["key": key]
+            )
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+}
+
 /// Controls the edge-docked panel with configurable auto-hide.
 final class EdgeDockWindowController: NSObject {
     private let store: CollectionStore
-    private var triggerPanel: NSPanel?   // thin strip for hover detection
-    private var mainPanel: NSPanel?      // the actual expanded panel
+    private var triggerPanel: NSPanel?
+    private var mainPanel: NSPanel?
     private(set) var isExpanded = false
 
     private let expandedWidth: CGFloat = 320
@@ -55,32 +78,19 @@ final class EdgeDockWindowController: NSObject {
     private func setupTriggerPanel() {
         guard let screen = NSScreen.main else { return }
         let h: CGFloat = 480
-        let frame = NSRect(
-            x: screen.frame.maxX - triggerWidth,
-            y: screen.frame.midY - h / 2,
-            width: triggerWidth,
-            height: h
-        )
+        let frame = NSRect(x: screen.frame.maxX - triggerWidth, y: screen.frame.midY - h / 2, width: triggerWidth, height: h)
 
-        let panel = NSPanel(
-            contentRect: frame,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: true
-        )
+        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = NSColor.black.withAlphaComponent(0.15)
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = false
         panel.ignoresMouseEvents = false
 
         let hoverView = HoverView(frame: NSRect(x: 0, y: 0, width: triggerWidth, height: h))
-        hoverView.onHoverStart = { [weak self] in
-            self?.expand()
-        }
+        hoverView.onHoverStart = { [weak self] in self?.expand() }
         panel.contentView = hoverView
 
         self.triggerPanel = panel
@@ -95,23 +105,12 @@ final class EdgeDockWindowController: NSObject {
         guard !isExpanded else { return }
         guard let screen = NSScreen.main else { return }
 
-        // Hide trigger
         triggerPanel?.orderOut(nil)
 
         let h: CGFloat = 480
-        let frame = NSRect(
-            x: screen.frame.maxX - expandedWidth,
-            y: screen.frame.midY - h / 2,
-            width: expandedWidth,
-            height: h
-        )
+        let frame = NSRect(x: screen.frame.maxX - expandedWidth, y: screen.frame.midY - h / 2, width: expandedWidth, height: h)
 
-        let panel = NSPanel(
-            contentRect: frame,
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
-            backing: .buffered,
-            defer: true
-        )
+        let panel = KeyPanel(contentRect: frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.level = .floating
         panel.isOpaque = true
         panel.backgroundColor = NSColor.windowBackgroundColor
@@ -122,13 +121,14 @@ final class EdgeDockWindowController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = false
         panel.delegate = self
+        panel.makeKey()
 
         let hostingView = NSHostingView(rootView: RootView(store: store))
         hostingView.frame = panel.contentView!.bounds
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView?.addSubview(hostingView)
 
-        panel.orderFrontRegardless()
+        panel.makeKeyAndOrderFront(nil)
         self.mainPanel = panel
         self.isExpanded = true
 
@@ -146,7 +146,6 @@ final class EdgeDockWindowController: NSObject {
         mainPanel = nil
         isExpanded = false
 
-        // Re-show trigger
         triggerPanel?.orderFrontRegardless()
     }
 
@@ -169,9 +168,7 @@ final class EdgeDockWindowController: NSObject {
 // MARK: - NSWindowDelegate
 
 extension EdgeDockWindowController: NSWindowDelegate {
-    func windowDidResignKey(_ notification: Notification) {
-        // Don't auto-collapse on focus loss
-    }
+    func windowDidResignKey(_ notification: Notification) {}
 }
 
 // MARK: - HoverView
@@ -181,24 +178,11 @@ class HoverView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .mouseMoved],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .mouseMoved], owner: self, userInfo: nil))
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not implemented")
-    }
+    required init?(coder: NSCoder) { fatalError() }
 
-    override func mouseEntered(with event: NSEvent) {
-        onHoverStart?()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        onHoverStart?()
-    }
+    override func mouseEntered(with event: NSEvent) { onHoverStart?() }
+    override func mouseMoved(with event: NSEvent) { onHoverStart?() }
 }
