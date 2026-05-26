@@ -1,21 +1,21 @@
 import Foundation
 
 public enum BookmarkService {
-    /// Create a security-scoped bookmark for the given file or folder URL.
+    /// Create a bookmark for the given file or folder URL.
     public static func makeBookmark(for url: URL) throws -> Data {
         try url.bookmarkData(
-            options: [.withSecurityScope],
+            options: [],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
     }
 
-    /// Resolve a security-scoped bookmark back to its URL.
+    /// Resolve a bookmark back to its URL.
     public static func resolveBookmark(_ data: Data) throws -> URL {
         var stale = false
         let url = try URL(
             resolvingBookmarkData: data,
-            options: [.withSecurityScope],
+            options: [],
             relativeTo: nil,
             bookmarkDataIsStale: &stale
         )
@@ -27,13 +27,17 @@ public enum BookmarkService {
     }
 
     /// Resolve bookmark and run a closure with access to the resource.
-    /// Automatically starts/stops security-scoped access.
     public static func withResolvedBookmark<T>(_ data: Data, perform: (URL) throws -> T) rethrows -> T? {
-        guard let url = try? resolveBookmark(data) else { return nil }
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess { url.stopAccessingSecurityScopedResource() }
+        guard let url = try? resolveBookmark(data) else {
+            print("[BookmarkService] Failed to resolve bookmark")
+            return nil
         }
-        return try? perform(url)
+
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        print("[BookmarkService] Resolved URL: \(url.path), exists: \(exists)")
+
+        guard exists else { return nil }
+        return try perform(url)
     }
+
 }

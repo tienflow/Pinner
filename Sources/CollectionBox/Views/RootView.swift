@@ -213,9 +213,7 @@ struct RootView: View {
             }
         }
         Button("在 Finder 中显示") {
-            BookmarkService.withResolvedBookmark(entry.bookmarkData) { url in
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            }
+            showInFinder(entry.bookmarkData)
         }
         Divider()
         Button("移除", role: .destructive) {
@@ -283,6 +281,17 @@ struct RootView: View {
     }
 
     // MARK: - Actions
+
+    private func showInFinder(_ bookmarkData: Data) {
+        BookmarkService.withResolvedBookmark(bookmarkData) { url in
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                NSWorkspace.shared.open(url)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        }
+    }
 
     private func openEntry(_ entry: BookmarkEntry) {
         BookmarkService.withResolvedBookmark(entry.bookmarkData) { url in
