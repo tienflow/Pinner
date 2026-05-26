@@ -50,20 +50,26 @@ public final class CollectionStore {
         save()
     }
 
-    public func moveEntry(_ entryID: UUID, from sourceTabIndex: Int, to destinationTabIndex: Int) {
-        guard tabs.indices.contains(sourceTabIndex), tabs.indices.contains(destinationTabIndex) else { return }
-        guard let entryIndex = tabs[sourceTabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
-        let entry = tabs[sourceTabIndex].entries.remove(at: entryIndex)
-        tabs[destinationTabIndex].entries.append(entry)
+    public func moveEntry(_ entryID: UUID, from src: Int, to dst: Int) {
+        guard tabs.indices.contains(src), tabs.indices.contains(dst) else { return }
+        guard let i = tabs[src].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let entry = tabs[src].entries.remove(at: i)
+        tabs[dst].entries.append(entry)
         save()
     }
 
     public func pinEntry(_ entryID: UUID, in tabIndex: Int) {
         guard tabs.indices.contains(tabIndex) else { return }
-        guard let index = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
-        guard index > 0 else { return }
-        let entry = tabs[tabIndex].entries.remove(at: index)
+        guard let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }), i > 0 else { return }
+        let entry = tabs[tabIndex].entries.remove(at: i)
         tabs[tabIndex].entries.insert(entry, at: 0)
+        save()
+    }
+
+    public func recordOpen(_ entryID: UUID, in tabIndex: Int) {
+        guard tabs.indices.contains(tabIndex) else { return }
+        guard let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        tabs[tabIndex].entries[i].lastOpened = Date()
         save()
     }
 

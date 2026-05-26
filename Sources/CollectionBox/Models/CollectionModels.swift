@@ -16,15 +16,18 @@ public struct BookmarkEntry: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var displayName: String
     public var bookmarkData: Data
+    public var dateAdded: Date
+    public var lastOpened: Date?
 
-    public init(id: UUID, displayName: String, bookmarkData: Data) {
+    public init(id: UUID, displayName: String, bookmarkData: Data, dateAdded: Date = Date(), lastOpened: Date? = nil) {
         self.id = id
         self.displayName = displayName
         self.bookmarkData = bookmarkData
+        self.dateAdded = dateAdded
+        self.lastOpened = lastOpened
     }
 }
 
-/// Persisted window geometry and expand/collapse state.
 public struct WindowState: Codable, Equatable, Sendable {
     public var originX: Double
     public var originY: Double
