@@ -72,7 +72,13 @@ final class EdgeDockWindowController: NSObject {
 
     func expand() {
         guard !isExpanded, let screen = NSScreen.main else { return }
-        store.refreshAll()
+        let (v, inv) = store.refreshAll()
+        let line = "[expand] refreshAll: valid=\(v), invalid=\(inv)\n"
+        if let data = line.data(using: .utf8) {
+            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_refresh.log")
+            if let fh = fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
+            else { try? line.write(toFile: "/tmp/pinner_refresh.log", atomically: true, encoding: .utf8) }
+        }
         triggerPanels.forEach { $0.orderOut(nil) }
 
         let h: CGFloat = 480, w: CGFloat = expandedWidth

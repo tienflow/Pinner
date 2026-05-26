@@ -73,6 +73,15 @@ public final class CollectionStore {
 
     // MARK: - Refresh / Verify
 
+    private func log(_ msg: String) {
+        let line = msg + "\n"
+        if let data = line.data(using: .utf8) {
+            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_refresh.log")
+            if let fh = fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
+            else { try? line.write(toFile: "/tmp/pinner_refresh.log", atomically: true, encoding: .utf8) }
+        }
+    }
+
     @discardableResult
     public func refreshTab(_ tabIndex: Int) -> (valid: Int, invalid: Int) {
         guard tabs.indices.contains(tabIndex) else { return (0, 0) }
@@ -88,11 +97,14 @@ public final class CollectionStore {
                     }
                 }
                 valid += 1
+                log("[refresh] VALID: \(entry.displayName)")
             } else {
                 toRemove.append(entry.id)
                 invalid += 1
+                log("[refresh] INVALID (will remove): \(entry.displayName)")
             }
         }
+        log("[refresh] tab \(tabIndex): valid=\(valid), invalid=\(invalid), removing=\(toRemove.count)")
         if !toRemove.isEmpty {
             tabs[tabIndex].entries.removeAll { toRemove.contains($0.id) }
         }
