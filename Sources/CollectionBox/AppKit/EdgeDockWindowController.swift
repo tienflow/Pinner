@@ -1,12 +1,6 @@
 import AppKit
 import SwiftUI
 
-enum AutoHideDelay: Int, CaseIterable, Identifiable {
-    case never = 0, threeSeconds = 3, fiveSeconds = 5, tenSeconds = 10, thirtySeconds = 30
-    var id: Int { rawValue }
-    var label: String { ["不自动隐藏","3 秒后隐藏","5 秒后隐藏","10 秒后隐藏","30 秒后隐藏"][Self.allCases.firstIndex(of: self)!] }
-}
-
 enum EdgePosition: Int, CaseIterable, Identifiable {
     case right = 0, left = 1, top = 2, bottom = 3
     var id: Int { rawValue }
@@ -19,15 +13,13 @@ final class EdgeDockWindowController: NSObject {
     private var mainPanel: NSPanel?
     private(set) var isExpanded = false
     private let expandedWidth: CGFloat = 320
-    private var collapseWorkItem: DispatchWorkItem?
     private var collapseObserver: NSObjectProtocol?
 
-    var autoHideDelay: AutoHideDelay {
-        get { AutoHideDelay(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.autoHideDelay")) ?? .never }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "CollectionBox.autoHideDelay"); if isExpanded { scheduleCollapse() } }
+    /// When true, clicking outside won't hide the panel.
+    var isPinned = false {
+        didSet { UserDefaults.standard.set(isPinned, forKey: "CollectionBox.isPinned") }
     }
 
-    /// Currently active edge positions (multi-select)
     var edgePositions: Set<EdgePosition> {
         get {
             let raw = UserDefaults.standard.array(forKey: "CollectionBox.edgePositions") as? [Int] ?? [EdgePosition.right.rawValue]
@@ -41,6 +33,7 @@ final class EdgeDockWindowController: NSObject {
 
     init(store: CollectionStore) {
         self.store = store
+        self.isPinned = UserDefaults.standard.bool(forKey: "CollectionBox.isPinned")
         super.init()
         setupTriggers()
         collapseObserver = NotificationCenter.default.addObserver(forName: .panelShouldCollapse, object: nil, queue: .main) { [weak self] _ in self?.collapse() }
@@ -48,13 +41,9 @@ final class EdgeDockWindowController: NSObject {
 
     deinit { if let o = collapseObserver { NotificationCenter.default.removeObserver(o) } }
 
-    // MARK: - Triggers (one per selected edge)
+    // MARK: - Triggers
 
-    private func setupTriggers() {
-        for pos in edgePositions {
-            makeTrigger(for: pos)
-        }
-    }
+    private func setupTriggers() { for pos in edgePositions { makeTrigger(for: pos) } }
 
     private func makeTrigger(for pos: EdgePosition) {
         guard let screen = NSScreen.main else { return }
@@ -66,8 +55,7 @@ final class EdgeDockWindowController: NSObject {
         case .bottom:f = NSRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: 2)
         }
         let p = NSPanel(contentRect: f, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        p.level = .statusBar - 1
-        p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
+        p.level = .statusBar - 1; p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
         p.hidesOnDeactivate = false; p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let hv = HoverView(frame: NSRect(x: 0, y: 0, width: f.width, height: f.height))
         hv.onHoverStart = { [weak self] in self?.expand() }
@@ -76,15 +64,12 @@ final class EdgeDockWindowController: NSObject {
     }
 
     private func rebuildTriggers() {
-        triggerPanels.forEach { $0.orderOut(nil) }
-        triggerPanels.removeAll()
-        setupTriggers()
+        triggerPanels.forEach { $0.orderOut(nil) }; triggerPanels.removeAll(); setupTriggers()
     }
 
     // MARK: - Expand
 
     func expand() {
-        collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard !isExpanded, let screen = NSScreen.main else { return }
         triggerPanels.forEach { $0.orderOut(nil) }
 
@@ -103,33 +88,24 @@ final class EdgeDockWindowController: NSObject {
         p.titlebarAppearsTransparent = true; p.titleVisibility = .hidden; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; p.isMovableByWindowBackground = false; p.delegate = self
 
-        let hv = NSHostingView(rootView: RootView(store: store))
+        let hv = NSHostingView(rootView: RootView(store: store, onPinToggle: { [weak self] in self?.isPinned.toggle() }, isPinned: { [weak self] in self?.isPinned ?? false }))
         hv.frame = p.contentView!.bounds; hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)
 
         NSApp.activate(ignoringOtherApps: true)
         p.makeKeyAndOrderFront(nil)
         self.mainPanel = p; self.isExpanded = true
-        scheduleCollapse()
     }
 
     // MARK: - Collapse
 
     func collapse() {
-        collapseWorkItem?.cancel(); collapseWorkItem = nil
         guard isExpanded else { return }
         mainPanel?.delegate = nil; mainPanel?.orderOut(nil); mainPanel = nil; isExpanded = false
         triggerPanels.forEach { $0.orderFrontRegardless() }
     }
 
     func toggle() { if isExpanded { collapse() } else { expand() } }
-
-    private func scheduleCollapse() {
-        collapseWorkItem?.cancel()
-        let d = autoHideDelay; guard d != .never else { return }
-        let w = DispatchWorkItem { [weak self] in self?.collapse() }; collapseWorkItem = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + Double(d.rawValue), execute: w)
-    }
 }
 
 // MARK: - KeyPanel
@@ -151,11 +127,9 @@ final class KeyPanel: NSPanel {
 extension EdgeDockWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { mainPanel?.delegate = nil; collapse() }
     func windowDidResignKey(_ notification: Notification) {
-        // Click outside = collapse immediately.
-        // Auto-hide timer handles "mouse leaves panel" scenario separately.
+        guard isExpanded, !isPinned else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self, self.isExpanded else { return }
-            // Don't collapse if another panel window became key (shouldn't happen, but safety)
+            guard let self = self, self.isExpanded, !self.isPinned else { return }
             if NSApp.keyWindow == nil { self.collapse() }
         }
     }

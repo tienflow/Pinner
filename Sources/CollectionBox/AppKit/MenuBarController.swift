@@ -60,17 +60,6 @@ public final class MenuBarController: NSObject {
         }
         themeItem.submenu = themeSub; m.addItem(themeItem)
 
-        // Auto-hide
-        let hideItem = NSMenuItem(title: "自动隐藏", action: nil, keyEquivalent: "")
-        let hideSub = NSMenu()
-        let curDelay = edgeController?.autoHideDelay ?? .never
-        for d in AutoHideDelay.allCases {
-            let i = NSMenuItem(title: d.label, action: #selector(setAutoHide(_:)), keyEquivalent: "")
-            i.target = self; i.tag = d.rawValue; i.state = d == curDelay ? .on : .off; i.representedObject = d
-            hideSub.addItem(i)
-        }
-        hideItem.submenu = hideSub; m.addItem(hideItem)
-
         m.addItem(.separator())
         let hide = NSMenuItem(title: "隐藏面板", action: #selector(hidePanel), keyEquivalent: "h")
         hide.target = self; hide.keyEquivalentModifierMask = [.command]; m.addItem(hide)
@@ -81,24 +70,17 @@ public final class MenuBarController: NSObject {
         statusItem?.menu = m; statusItem?.button?.performClick(nil); statusItem?.menu = nil
     }
 
-    // MARK: - Actions
-
     @objc private func toggleEdge(_ s: NSMenuItem) {
         guard let pos = s.representedObject as? EdgePosition else { return }
         var cur = edgeController?.edgePositions ?? []
         if cur.contains(pos) { cur.remove(pos) } else { cur.insert(pos) }
-        if cur.isEmpty { cur = [.right] } // at least one edge must be active
+        if cur.isEmpty { cur = [.right] }
         edgeController?.edgePositions = cur
     }
 
     @objc private func setTheme(_ s: NSMenuItem) {
         guard let t = s.representedObject as? AppTheme else { return }
         UserDefaults.standard.set(t.rawValue, forKey: "CollectionBox.theme"); applyTheme()
-    }
-
-    @objc private func setAutoHide(_ s: NSMenuItem) {
-        guard let d = s.representedObject as? AutoHideDelay else { return }
-        edgeController?.autoHideDelay = d
     }
 
     @objc private func hidePanel() { edgeController?.collapse() }

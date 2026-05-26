@@ -24,6 +24,8 @@ struct EntrySection: Identifiable {
 
 struct RootView: View {
     @State var store: CollectionStore
+    var onPinToggle: (() -> Void)?
+    var isPinned: (() -> Bool)?
     @State private var selectedTabID: UUID?
     @State private var isShowingNewTabAlert = false
     @State private var newTabName = ""
@@ -130,6 +132,9 @@ struct RootView: View {
                 }
             }
             Spacer()
+            Button(action: { onPinToggle?() }) {
+                Image(systemName: isPinned?() == true ? "pin.fill" : "pin").font(.system(size: 12)).foregroundStyle(isPinned?() == true ? .primary : .secondary)
+            }.buttonStyle(.plain).help(isPinned?() == true ? "取消置顶（点击外部会隐藏）" : "置顶（点击外部不隐藏）")
             Button(action: { viewMode = viewMode == .list ? .grid : .list; UserDefaults.standard.set(viewMode.rawValue, forKey: "CollectionBox.viewMode") }) {
                 Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet").font(.system(size: 12))
             }.buttonStyle(.plain)
