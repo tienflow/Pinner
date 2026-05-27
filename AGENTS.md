@@ -28,13 +28,14 @@
 ### 4.1 发布 checklist
 
 ```
-1. 构建/编译 → 验证: 构建成功
-2. 打包产物（DMG/app/zip 等）→ 验证: 产物生成
-3. 更新 README.md → 验证: 功能列表与代码一致
-4. git add + commit → 验证: git status 干净
-5. git push → 验证: 远程分支已同步
-6. 创建 Release（gh release create 或平台发布）→ 验证: Release 页面正确
-7. 更新项目记忆 → 验证: Obsidian vault 已同步
+1. swift build -c release --product CollectionBoxApp → 验证: 构建成功
+2. 打包 .app bundle（Pinner.app/Contents/MacOS/Pinner + Info.plist + Resources/AppIcon.png）→ 验证: ls Pinner.app/Contents/MacOS/Pinner
+3. hdiutil create -volname "Pinner" -srcfolder Pinner.app -ov -format UDZO Pinner-vX.X.X.dmg → 验证: DMG 文件生成
+4. 更新 README.md → 验证: 功能列表与代码一致
+5. git add + commit → 验证: git status 干净
+6. git push + git tag -a vX.X.X → 验证: 远程分支和 tag 已同步
+7. gh release create vX.X.X + gh release upload vX.X.X Pinner-vX.X.X.dmg → 验证: Release 页面有 DMG 下载
+8. 更新项目记忆 → 验证: Obsidian vault 已同步
 ```
 
 ### 4.2 常见遗漏（必须检查）
