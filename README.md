@@ -104,6 +104,14 @@ OTP 快捷键          ← 子菜单配置
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 
+### 修复「已损坏，无法打开」
+
+macOS 从网上下载的 app 首次打开时可能提示「Pinner 已损坏，无法打开」。在终端执行以下命令即可修复：
+
+```bash
+xattr -cr /Applications/Pinner.app
+```
+
 ### 方式二：从源码编译
 
 需要 macOS 14+ 和 Xcode Command Line Tools：
