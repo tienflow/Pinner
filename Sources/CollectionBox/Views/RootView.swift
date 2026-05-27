@@ -242,7 +242,19 @@ struct RootView: View {
             Label(entry.isPinned ? "取消置顶" : "置顶", systemImage: entry.isPinned ? "pin.slash" : "pin")
         }
         Button("在 Finder 中显示") { showInFinder(entry.bookmarkData) }
-        Divider()
+        if store.tabs.count > 1 {
+            Divider()
+            Menu("移动到…") {
+                ForEach(Array(store.tabs.enumerated()), id: \.element.id) { dstIndex, dstTab in
+                    if dstIndex != ti {
+                        Button(dstTab.name) {
+                            store.moveEntry(entry.id, from: ti, to: dstIndex)
+                        }
+                    }
+                }
+            }
+            Divider()
+        }
         Button("移除", role: .destructive) { store.removeEntry(entry.id, from: ti); if selectedEntryID == entry.id { selectedEntryID = nil } }
     }
 

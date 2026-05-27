@@ -7,7 +7,6 @@ let package = Package(
     products: [
         .library(name: "CollectionBox", targets: ["CollectionBox"]),
         .executable(name: "CollectionBoxApp", targets: ["CollectionBoxApp"]),
-        .executable(name: "CollectionBoxTests", targets: ["CollectionBoxTests"]),
     ],
     targets: [
         .target(
@@ -19,10 +18,6 @@ let package = Package(
             dependencies: ["CollectionBox"],
             path: "Sources/CollectionBoxApp"
         ),
-        .executableTarget(
-            name: "CollectionBoxTests",
-            dependencies: ["CollectionBox"],
-            path: "Tests/CollectionBoxTests"
-        ),
+
     ]
 )

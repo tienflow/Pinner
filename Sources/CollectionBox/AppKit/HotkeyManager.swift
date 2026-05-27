@@ -121,7 +121,10 @@ final class HotkeyManager {
 }
 
 private func hotkeyCallback(_ nextHandler: EventHandlerCallRef?, _ event: EventRef?, _ userData: UnsafeMutableRawPointer?) -> OSStatus {
-    guard let userData = userData else { return OSStatus(eventNotHandledErr) }
+    guard let userData = userData, let event = event else { return OSStatus(eventNotHandledErr) }
+    var hotKeyID = EventHotKeyID()
+    GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+    guard hotKeyID.signature == OSType(0x504E_4E52), hotKeyID.id == 1 else { return OSStatus(eventNotHandledErr) }
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
     manager.handleEvent()
     return noErr
