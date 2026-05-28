@@ -1,7 +1,5 @@
 # 项目约定
 
-> 通用规则见全局 `~/.codex/AGENTS.md`，本文件只记录项目特有约定。
-
 ## 1. 凭据安全（🔴 红线）
 
 - 密钥、token、密码绝不进代码
@@ -30,7 +28,7 @@
 ```
 1. swift build -c release --product CollectionBoxApp → 验证: 构建成功
 2. 打包 .app bundle（Pinner.app/Contents/MacOS/Pinner + Info.plist + Resources/AppIcon.icns）→ 验证: ls Pinner.app/Contents/MacOS/Pinner
-3. hdiutil create -volname "Pinner" -srcfolder Pinner.app -ov -format UDZO Pinner-vX.X.X.dmg → 验证: DMG 文件生成
+3. 打包 DMG（含拖拽安装布局）：创建临时目录放入 Pinner.app + Applications 符号链接 → hdiutil create 读写 DMG → osascript 设置 Finder 窗口布局（图标视图、96px、左右排列）→ hdiutil convert 转压缩只读 → 验证: DMG 文件生成并可拖拽安装
 4. 更新 README.md → 验证: 功能列表与代码一致
 5. git add + commit → 验证: git status 干净
 6. git push + git tag -a vX.X.X → 验证: 远程分支和 tag 已同步
