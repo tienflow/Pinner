@@ -17,6 +17,8 @@ public final class MenuBarController: NSObject {
     private let otpStore = OTPStore()
     private var otpController: OTPWindowController?
     private var otpHotkeyManager: OTPHotkeyManager?
+    private var codexStatsController: CodexStatsWindowController?
+    private var codexStatsHotkeyManager: CodexStatsHotkeyManager?
 
     public init(store: CollectionStore) { self.store = store; super.init() }
 
@@ -41,6 +43,11 @@ public final class MenuBarController: NSObject {
         otpHotkeyManager = OTPHotkeyManager()
         otpHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.otpController?.toggle(autoCopy: true) }
         otpHotkeyManager?.register()
+
+        codexStatsController = CodexStatsWindowController()
+        codexStatsHotkeyManager = CodexStatsHotkeyManager()
+        codexStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showCodexStats() }
+        codexStatsHotkeyManager?.register()
 
         applyTheme()
     }
@@ -95,6 +102,23 @@ public final class MenuBarController: NSObject {
         let clearOTPItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearOTPHotkey), keyEquivalent: "")
         clearOTPItem.target = self; otpHotkeySub.addItem(clearOTPItem)
         otpHotkeyItem.submenu = otpHotkeySub; m.addItem(otpHotkeyItem)
+
+        m.addItem(.separator())
+
+        // Codex Stats
+        let codexStatsItem = NSMenuItem(title: "Codex 统计", action: #selector(showCodexStatsFromMenu), keyEquivalent: "")
+        codexStatsItem.target = self; m.addItem(codexStatsItem)
+        let codexStatsHotkeyItem = NSMenuItem(title: "Codex 统计快捷键", action: nil, keyEquivalent: "")
+        let codexStatsHotkeySub = NSMenu()
+        let curCodexCombo = codexStatsHotkeyManager?.currentCombo ?? CodexStatsHotkeyManager.defaultCombo
+        let showCodexCurrent = NSMenuItem(title: "当前: \(curCodexCombo.displayString)", action: nil, keyEquivalent: "")
+        showCodexCurrent.isEnabled = false; codexStatsHotkeySub.addItem(showCodexCurrent)
+        codexStatsHotkeySub.addItem(.separator())
+        let recordCodexItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordCodexStatsHotkey), keyEquivalent: "")
+        recordCodexItem.target = self; codexStatsHotkeySub.addItem(recordCodexItem)
+        let clearCodexItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearCodexStatsHotkey), keyEquivalent: "")
+        clearCodexItem.target = self; codexStatsHotkeySub.addItem(clearCodexItem)
+        codexStatsHotkeyItem.submenu = codexStatsHotkeySub; m.addItem(codexStatsHotkeyItem)
 
         m.addItem(.separator())
 
@@ -191,6 +215,24 @@ public final class MenuBarController: NSObject {
         }
     }
 
+    @objc private func showCodexStatsFromMenu() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            codexStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            codexStatsController?.showAtMouse()
+        }
+    }
+
+    private func showCodexStats() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            codexStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            codexStatsController?.showAtMouse()
+        }
+    }
+
     @objc private func recordOTPHotkey() {
         let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
                              styleMask: [.titled, .nonactivatingPanel],
@@ -239,6 +281,56 @@ public final class MenuBarController: NSObject {
 
     @objc private func clearOTPHotkey() {
         otpHotkeyManager?.clear()
+    }
+
+    @objc private func recordCodexStatsHotkey() {
+        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
+                             styleMask: [.titled, .nonactivatingPanel],
+                             backing: .buffered, defer: false)
+        window.level = .floating
+        window.title = "设置 Codex 统计快捷键"
+        window.isReleasedWhenClosed = false
+        window.center()
+
+        let label = NSTextField(labelWithString: "请按下快捷键组合")
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.alignment = .center
+        label.frame = NSRect(x: 20, y: 80, width: 260, height: 20)
+
+        let keyLabel = NSTextField(labelWithString: "等待按键...")
+        keyLabel.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .medium)
+        keyLabel.alignment = .center
+        keyLabel.frame = NSRect(x: 20, y: 30, width: 260, height: 40)
+
+        window.contentView?.addSubview(label)
+        window.contentView?.addSubview(keyLabel)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        var monitor: Any?
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {
+                if let m = monitor { NSEvent.removeMonitor(m) }
+                window.close()
+                return nil
+            }
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if mods.isEmpty {
+                keyLabel.stringValue = "请先按住修饰键"
+                return event
+            }
+            let carbonMods = carbonModifiers(from: event.modifierFlags)
+            let combo = HotkeyCombo(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
+            keyLabel.stringValue = combo.displayString
+            if let m = monitor { NSEvent.removeMonitor(m) }
+            self.codexStatsHotkeyManager?.save(combo: combo)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { window.close() }
+            return nil
+        }
+    }
+
+    @objc private func clearCodexStatsHotkey() {
+        codexStatsHotkeyManager?.clear()
     }
 
     @objc private func hidePanel() { edgeController?.collapse() }

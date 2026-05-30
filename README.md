@@ -24,8 +24,13 @@
 - **倒计时**：进度条实时显示验证码剩余有效时间，≤10 秒变红提醒
 - **添加账户**：粘贴 `otpauth://` URI 自动解析，支持从本地图片识别二维码
 
+**Codex 统计**（开发中）
+- **Token 用量**：查询本地 Codex 数据库，按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
+- **趋势对比**：每个维度显示与上一周期的环比变化
+- **快捷键**：默认 `⌘⇧I`，可自定义
+
 **通用**
-- **全局快捷键**：收藏夹默认 `⌘⇧P`，OTP 默认 `⌘⇧O`，均可自定义
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`，均可自定义
 - **主题**：浅色、深色、自动
 
 ## 技术栈
@@ -51,7 +56,9 @@ Sources/
 │       ├── EdgeDockWindowController.swift # 收藏面板管理
 │       ├── OTPWindowController.swift      # OTP 面板管理
 │       ├── HotkeyManager.swift            # 收藏夹快捷键
-│       └── OTPHotkeyManager.swift         # OTP 快捷键
+│       ├── OTPHotkeyManager.swift         # OTP 快捷键
+│       ├── CodexStatsWindowController.swift  # Codex 统计面板（WIP）
+│       └── CodexStatsHotkeyManager.swift     # Codex 统计快捷键（WIP）
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
 
@@ -63,8 +70,9 @@ Sources/
 |------|------|
 | `⌘⇧P`（默认） | 在鼠标位置展开收藏面板 |
 | `⌘⇧O`（默认） | 在鼠标位置展开 OTP 面板并自动复制验证码 |
+| `⌘⇧I`（默认） | 打开 Codex 统计面板 |
 
-可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 → 设置快捷键 中自定义。
+可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 → 设置快捷键 中自定义。
 
 ### 面板内快捷键
 
@@ -89,6 +97,9 @@ Pinner 设置
 ──────────
 OTP 验证码          ← 打开 OTP 面板
 OTP 快捷键          ← 子菜单配置
+──────────
+Codex 统计          ← 打开统计面板
+Codex 统计快捷键     ← 子菜单配置
 ──────────
 主题                ← 自动 / 浅色 / 深色
 ──────────

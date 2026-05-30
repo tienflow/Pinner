@@ -6,24 +6,45 @@
 - 不要在 commit message 中包含凭据
 - 使用环境变量或 .env 文件管理凭据
 
-## 2. 质量验证（🔴 改完必须跑）
+## 2. 本地启动（🔴 必须用 open）
+
+macOS GUI 应用不能用 `./app &` 后台启动——shell 会话结束时子进程会被 SIGHUP 杀掉，表现为启动后几秒就崩溃。正确方式：
+
+```
+# 杀掉旧进程 + ad-hoc 签名（解决 Gatekeeper 每次弹窗问题）
+pkill -f CollectionBoxApp 2>/dev/null
+codesign --force --deep --sign - .build/debug/CollectionBoxApp  # 或 release 路径
+
+# 构建 + 启动
+swift build -c release --product CollectionBoxApp && open .build/release/CollectionBoxApp
+
+# debug 模式
+swift build --product CollectionBoxApp && open .build/debug/CollectionBoxApp
+
+# 杀掉进程
+pkill -f CollectionBoxApp
+```
+
+`open` 通过 LaunchServices 启动应用，进程独立于终端。每次 `swift build` 后必须重新 `codesign`，否则 macOS Gatekeeper 会弹窗拦截。
+
+## 3. 质量验证（🔴 改完必须跑）
 
 - 改完跑项目的构建命令（`npm run build` / `swift build` / `cargo build` / `make` 等）
 - 改完跑项目的测试命令（`npm test` / `swift run xxTests` / `cargo test` / `make test` 等）
 - 不要为了让代码跑起来而注释掉报错
 
-## 3. Git 规范
+## 4. Git 规范
 
 - commit message 用英文
 - git push 前等用户确认（除非用户明确说"直接推"）
 - README.md、Release notes、docs/ 等文档使用中文撰写
 - 代码、变量名、命令保持英文
 
-## 4. 发布流程（🔴 必须完整执行）
+## 5. 发布流程（🔴 必须完整执行）
 
 **发布新版本时，代码、文档、Release 必须同步完成。**
 
-### 4.1 发布 checklist
+### 5.1 发布 checklist
 
 ```
 1. swift build -c release --product CollectionBoxApp → 验证: 构建成功
@@ -36,14 +57,14 @@
 8. 更新项目记忆 → 验证: Obsidian vault 已同步
 ```
 
-### 4.2 常见遗漏（必须检查）
+### 5.2 常见遗漏（必须检查）
 
 - ✅ 代码已 commit 并 push（不要只创建 release 忘了 push）
 - ✅ README.md 功能列表已更新（不要保留已删除的功能描述）
 - ✅ 版本号已更新
 - ✅ 项目记忆已同步
 
-## 5. 文档同步（🔴 功能变更时必须执行）
+## 6. 文档同步（🔴 功能变更时必须执行）
 
 | 变更类型 | 必须更新的文档 |
 |---------|---------------|

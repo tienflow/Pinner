@@ -12,6 +12,7 @@ final class OTPWindowController: NSObject {
     private var panel: NSPanel?
     private var addPanel: NSWindow?
     private(set) var isShowing = false
+    private var mouseMonitor: Any?
 
     init(store: OTPStore) {
         self.store = store
@@ -79,10 +80,21 @@ final class OTPWindowController: NSObject {
         p.makeKeyAndOrderFront(nil)
         self.panel = p
         self.isShowing = true
+
+        // Dismiss when clicking outside the app (e.g. on a browser window)
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            self?.hide()
+        }
     }
 
     func hide() {
         guard isShowing else { return }
+        if let monitor = mouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseMonitor = nil
+        }
+        addPanel?.close()
+        addPanel = nil
         panel?.delegate = nil
         panel?.orderOut(nil)
         panel = nil
