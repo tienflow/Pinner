@@ -6,20 +6,23 @@
 
 ## 当前状态
 
-**代码已集成但未提交。Release 构建崩溃待排查。**
+**功能已完成，代码已集成但未提交。**
 
 ### 已完成
 
-- SQLite 查询层（CodexStatsService.swift）— 查询 `~/.codex/state_5.sqlite`
+- SQLite 查询层（CodexStatsService.swift）— 查询 `~/.codex/sqlite/state_5.sqlite`
 - 面板视图（CodexStatsView.swift）— 4 维度 + 趋势图表
 - 浮动面板管理器（CodexStatsWindowController.swift）
 - 快捷键管理（CodexStatsHotkeyManager.swift）— 默认 ⌘⇧I
 - MenuBarController 菜单项集成
+- Release 构建已稳定（已验证 `swift build -c release` + 本地安装运行正常）
+- SQL 查询使用 `updated_at` 而非 `created_at`，正确统计跨时间窗口的活跃会话
+- `openDB()` 重试机制，覆盖 Codex Desktop WAL checkpoint 导致的短暂锁库
 
 ### 待解决
 
-1. **Release 构建崩溃** — `swift build -c release` 运行 5-10 秒后崩溃，debug 模式稳定。可能与 SQLite 优化行为有关。
-2. **功能验证** — 趋势图表、维度切换、快捷键均未经过完整测试。
+1. **代码清理 + 提交** — 功能已验证通过，待 commit
+2. **完整功能验证** — 趋势图表、维度切换、快捷键的边界场景测试
 
 ## 文件变更（未提交）
 
@@ -34,13 +37,16 @@
 
 ## 技术要点
 
-- 数据库：`~/.codex/state_5.sqlite`，表 `threads`，字段 `tokens_used`（Token）、`created_at`（Unix 秒）、`id`（会话数）
+- 数据库：`~/.codex/sqlite/state_5.sqlite`，表 `threads`，字段 `tokens_used`（Token）、`updated_at`（Unix 秒）、`id`（会话数）
 - 时间维度：5 小时 / 今天 / 7 天 / 30 天，均为滑动窗口 + 上一周期对比
 - 快捷键：Carbon API，签名 `0x504E_4358` ("PNCX")，ID 3
-- 已修复 bug：`SQLITE_READONLY`（值 8）→ `SQLITE_OPEN_READONLY`（值 1）
+- 已修复 bug：
+  - `SQLITE_READONLY`（值 8）→ `SQLITE_OPEN_READONLY`（值 1）
+  - SQL 查询从 `created_at` 改为 `updated_at`，修复 5 小时窗口显示 0 的问题
+  - `openDB()` 重试 3 次（间隔 100ms），覆盖 WAL checkpoint 短暂锁库
 
 ## 下次接手重点
 
-1. 排查 release 构建崩溃（debug 稳定，可能与编译器优化相关）
+1. 代码清理 + 提交
 2. 完整功能验证
-3. 代码清理 + 提交
+3. 考虑发布新版本

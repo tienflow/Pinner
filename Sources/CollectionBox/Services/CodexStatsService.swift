@@ -49,7 +49,7 @@ final class CodexStatsService {
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        dbPath = home.appendingPathComponent(".codex/state_5.sqlite").path
+        dbPath = home.appendingPathComponent(".codex/sqlite/state_5.sqlite").path
     }
 
     func fetchStats(for range: StatsTimeRange) -> CodexStats {
@@ -135,18 +135,12 @@ final class CodexStatsService {
             labelFmt = "M/d"
         }
 
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
-              let db = db else {
-            if let db = db { sqlite3_close(db) }
-            return []
-        }
+        guard let db = openDB() else { return [] }
         defer { sqlite3_close(db) }
-        sqlite3_busy_timeout(db, 5000)
 
         // Single GROUP BY query using SQLite strftime with local timezone offset
         let tzSeconds = Int(tzOffset)
-        let sql = "SELECT (created_at + \(tzSeconds)) / \(bucketSeconds) as bucket, SUM(tokens_used) FROM threads WHERE created_at >= ? AND created_at < ? GROUP BY bucket ORDER BY bucket"
+        let sql = "SELECT (updated_at + \(tzSeconds)) / \(bucketSeconds) as bucket, SUM(tokens_used) FROM threads WHERE updated_at >= ? AND updated_at < ? GROUP BY bucket ORDER BY bucket"
 
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [] }
@@ -193,18 +187,25 @@ final class CodexStatsService {
         return points
     }
 
-    private func queryRange(start: Int, end: Int) -> (tokens: Int, sessions: Int) {
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
-              let db = db else {
+    /// Open the database with retry — WAL checkpoints by Codex Desktop can briefly lock the file.
+    private func openDB(retries: Int = 3) -> OpaquePointer? {
+        for _ in 0..<retries {
+            var db: OpaquePointer?
+            if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db = db {
+                sqlite3_busy_timeout(db, 5000)
+                return db
+            }
             if let db = db { sqlite3_close(db) }
-            return (0, 0)
+            Thread.sleep(forTimeInterval: 0.1)
         }
+        return nil
+    }
+
+    private func queryRange(start: Int, end: Int) -> (tokens: Int, sessions: Int) {
+        guard let db = openDB() else { return (0, 0) }
         defer { sqlite3_close(db) }
 
-        sqlite3_busy_timeout(db, 5000)
-
-        let sql = "SELECT COALESCE(SUM(tokens_used), 0), COUNT(*) FROM threads WHERE created_at >= ? AND created_at < ?"
+        let sql = "SELECT COALESCE(SUM(tokens_used), 0), COUNT(*) FROM threads WHERE updated_at >= ? AND updated_at < ?"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return (0, 0) }
         defer { sqlite3_finalize(stmt) }
