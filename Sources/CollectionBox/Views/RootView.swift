@@ -45,6 +45,7 @@ struct RootView: View {
     @State private var selectedEntryID: UUID?
     @State private var selectedEntryIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
+    @State private var hoveredEntryID: UUID?
     @State private var flashID: UUID?
     @State private var nameAscending = true
     @State private var sortOrder: SortOrder = {
@@ -286,7 +287,7 @@ struct RootView: View {
     private var searchBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
-            TextField("搜索（空时仅当前收藏夹，输入后跨收藏夹搜索）", text: $searchText).textFieldStyle(.plain).font(.system(size: 12))
+            TextField("搜索", text: $searchText).textFieldStyle(.plain).font(.system(size: 12))
             if !searchText.isEmpty { Button(action: { searchText = "" }) { Image(systemName: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(.plain).help("清除搜索").accessibilityLabel("清除搜索") }
             if sortOrder == .name && !isSearching { Button(action: { nameAscending.toggle() }) { Image(systemName: nameAscending ? "arrow.up" : "arrow.down").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(.plain).help("切换名称排序方向").accessibilityLabel("切换名称排序方向") }
             Menu { ForEach(SortOrder.allCases, id: \.self) { o in Button { sortOrder = o; UserDefaults.standard.set(o.rawValue, forKey: "CollectionBox.sortOrder") } label: { HStack { Text(o.label); if sortOrder == o { Image(systemName: "checkmark") } } } } }
@@ -305,9 +306,16 @@ struct RootView: View {
             } else if isSearching && flatDisplay.isEmpty {
                 VStack { Spacer(); Text("所有收藏夹中都没有匹配“\(searchText)”的文件").font(.system(size: 13)).foregroundStyle(.secondary); Spacer() }
             } else {
-                Group {
-                    if viewMode == .list { sectionedList() } else { sectionedGrid() }
-                }.onDrop(of: [.fileURL], isTargeted: nil) { dropHandler(providers: $0, ti: ti) }
+                ScrollViewReader { proxy in
+                    Group {
+                        if viewMode == .list { sectionedList() } else { sectionedGrid() }
+                    }
+                    .onChange(of: selectedEntryID) { _, id in
+                        guard let id else { return }
+                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                }
+                .onDrop(of: [.fileURL], isTargeted: nil) { dropHandler(providers: $0, ti: ti) }
             }
         } else { VStack { Spacer(); Text("点击 + 创建一个收藏夹").foregroundStyle(.secondary); Spacer() } }
     }
@@ -327,12 +335,17 @@ struct RootView: View {
     }
 
     private func listRow(_ entry: BookmarkEntry) -> some View {
-        EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id)
+        EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { openEntry(entry) }
             .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
             .contextMenu { entryMenu(entry) }
             .onDrag { dragProvider(for: entry) }
+            .onHover { hovering in
+                if hovering { hoveredEntryID = entry.id }
+                else if hoveredEntryID == entry.id { hoveredEntryID = nil }
+            }
+            .id(entry.id)
     }
 
     // MARK: - Grid
@@ -346,12 +359,17 @@ struct RootView: View {
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)], spacing: 12) {
                     ForEach(sec.entries) { entry in
-                        GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id)
+                        GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) { openEntry(entry) }
                             .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
                             .contextMenu { entryMenu(entry) }
                             .onDrag { dragProvider(for: entry) }
+                            .onHover { hovering in
+                                if hovering { hoveredEntryID = entry.id }
+                                else if hoveredEntryID == entry.id { hoveredEntryID = nil }
+                            }
+                            .id(entry.id)
                     }
                 }.padding(.horizontal, 12).padding(.bottom, 4)
             }}
@@ -619,7 +637,7 @@ extension Notification.Name { static let collectionBoxKeyDown = Notification.Nam
 
 struct EntryRow: View {
     let entry: BookmarkEntry
-    var isSelected = false; var isFlashing = false
+    var isSelected = false; var isFlashing = false; var isHovered = false
     var body: some View {
         HStack(spacing: 8) {
             FileIconView(entry: entry).frame(width: 20, height: 20).opacity(entry.isMissing ? 0.4 : 1)
@@ -630,7 +648,7 @@ struct EntryRow: View {
             }
             Spacer()
         }.padding(.vertical, 3).padding(.horizontal, 6)
-        .background(isFlashing ? Color.accentColor.opacity(0.10) : isSelected ? Color.accentColor.opacity(0.14) : Color.clear).cornerRadius(4)
+        .background(isFlashing ? Color.accentColor.opacity(0.10) : isSelected ? Color.accentColor.opacity(0.14) : isHovered ? Color.secondary.opacity(0.06) : Color.clear).cornerRadius(4)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.isMissing ? "\(entry.displayName)，未找到" : entry.displayName)
     }
@@ -640,7 +658,7 @@ struct EntryRow: View {
 
 struct GridEntryItem: View {
     let entry: BookmarkEntry
-    var isSelected = false; var isFlashing = false
+    var isSelected = false; var isFlashing = false; var isHovered = false
     var body: some View {
         VStack(spacing: 4) {
             FileIconView(entry: entry).frame(width: 40, height: 40).frame(width: 56, height: 56)
@@ -655,7 +673,7 @@ struct GridEntryItem: View {
                 .foregroundStyle(entry.isMissing ? .secondary : .primary)
                 .frame(width: 72, height: 28, alignment: .top)
         }.frame(width: 80, height: 100)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isFlashing ? Color.accentColor.opacity(0.10) : isSelected ? Color.accentColor.opacity(0.14) : Color.clear))
+        .background(RoundedRectangle(cornerRadius: 6).fill(isFlashing ? Color.accentColor.opacity(0.10) : isSelected ? Color.accentColor.opacity(0.14) : isHovered ? Color.secondary.opacity(0.06) : Color.clear))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.isMissing ? "\(entry.displayName)，未找到" : entry.displayName)
     }
