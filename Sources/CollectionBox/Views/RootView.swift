@@ -33,6 +33,19 @@ extension UTType {
     static let pinnerEntry = UTType(exportedAs: "com.pinner.entry")
 }
 
+/// Temporary drag diagnostics — remove once drag-to-reorder is confirmed
+/// working.
+enum DragLog {
+    static func log(_ message: String) {
+        let line = "[drag] \(message)\n"
+        if let data = line.data(using: .utf8) {
+            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_drag.log")
+            if let fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
+            else { try? line.write(toFile: "/tmp/pinner_drag.log", atomically: true, encoding: .utf8) }
+        }
+    }
+}
+
 struct RootView: View {
     @State var store: CollectionStore
     var onPinToggle: (() -> Void)?
@@ -49,7 +62,6 @@ struct RootView: View {
     @State private var selectedEntryID: UUID?
     @State private var selectedEntryIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
-    @State private var hoveredEntryID: UUID?
     @State private var flashID: UUID?
     @State private var nameAscending = true
     @State private var sortOrder: SortOrder = {
@@ -62,7 +74,6 @@ struct RootView: View {
     @State private var gridColumns = 3
     @State private var isShowingImporter = false
     @State private var dropTargeted = false
-    @State private var reorderTargetID: UUID?
 
     // MARK: - Derived Data
 
@@ -352,37 +363,14 @@ struct RootView: View {
         }}.listStyle(.plain)
     }
 
-    /// Insertion line shown above the row an internal reorder drag hovers over.
-    @ViewBuilder
-    private func reorderIndicator(for entry: BookmarkEntry) -> some View {
-        if reorderTargetID == entry.id {
-            Rectangle().fill(Color.accentColor).frame(height: 2)
-                .padding(.horizontal, 6)
-        }
-    }
-
-    private func entryReorderTargetBinding(_ entry: BookmarkEntry) -> Binding<Bool> {
-        Binding(
-            get: { reorderTargetID == entry.id },
-            set: { targeted in
-                reorderTargetID = targeted ? entry.id : (reorderTargetID == entry.id ? nil : reorderTargetID)
-            }
-        )
-    }
-
     private func listRow(_ entry: BookmarkEntry) -> some View {
-        EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
+        EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id,
+                 onReorderDrop: { handleEntryReorderDrop(providers: $0, onto: entry) })
             .contentShape(Rectangle())
-            .overlay(alignment: .top) { reorderIndicator(for: entry) }
             .onTapGesture(count: 2) { openEntry(entry) }
             .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
             .contextMenu { entryMenu(entry) }
             .onDrag { dragProvider(for: entry) }
-            .onDrop(of: [.pinnerEntry], isTargeted: entryReorderTargetBinding(entry)) { handleEntryReorderDrop(providers: $0, onto: entry) }
-            .onHover { hovering in
-                if hovering { hoveredEntryID = entry.id }
-                else if hoveredEntryID == entry.id { hoveredEntryID = nil }
-            }
             .id(entry.id)
     }
 
@@ -413,18 +401,13 @@ struct RootView: View {
     }
 
     private func gridCell(_ entry: BookmarkEntry) -> some View {
-        GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
+        GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id,
+                      onReorderDrop: { handleEntryReorderDrop(providers: $0, onto: entry) })
             .contentShape(Rectangle())
-            .overlay(alignment: .top) { reorderIndicator(for: entry) }
             .onTapGesture(count: 2) { openEntry(entry) }
             .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
             .contextMenu { entryMenu(entry) }
             .onDrag { dragProvider(for: entry) }
-            .onDrop(of: [.pinnerEntry], isTargeted: entryReorderTargetBinding(entry)) { handleEntryReorderDrop(providers: $0, onto: entry) }
-            .onHover { hovering in
-                if hovering { hoveredEntryID = entry.id }
-                else if hoveredEntryID == entry.id { hoveredEntryID = nil }
-            }
             .id(entry.id)
     }
 
@@ -612,14 +595,18 @@ struct RootView: View {
         return true
     }
 
-    /// Entries drag with two representations: a file URL (drag out to other
-    /// apps) and an internal entry ID (in-panel reorder drops).
+    /// Entries drag with multiple representations: a file URL (drag out to
+    /// other apps), an internal entry ID data blob, and a plain-text ID
+    /// fallback (some pasteboard matching paths only surface text types).
     private func dragProvider(for entry: BookmarkEntry) -> NSItemProvider {
+        DragLog.log("lift: \(entry.displayName)")
         var provider = NSItemProvider()
         if let url = BookmarkService.resolveURL(entry.bookmarkData) {
             provider = NSItemProvider(object: url as NSURL)
         }
-        let data = entry.id.uuidString.data(using: .utf8)
+        let id = entry.id.uuidString
+        provider.registerObject(id as NSString, visibility: .all)
+        let data = id.data(using: .utf8)
         provider.registerDataRepresentation(forTypeIdentifier: UTType.pinnerEntry.identifier, visibility: .all) { completion in
             completion(data, nil)
             return nil
@@ -627,27 +614,50 @@ struct RootView: View {
         return provider
     }
 
+    private static func entryID(fromItem item: Any?) -> UUID? {
+        let str: String?
+        if let s = item as? String { str = s }
+        else if let d = item as? Data { str = String(data: d, encoding: .utf8) }
+        else { str = nil }
+        return str.flatMap(UUID.init(uuidString:))
+    }
+
+    private func loadDraggedEntryID(_ provider: NSItemProvider, completion: @escaping (UUID?) -> Void) {
+        if provider.hasItemConformingToTypeIdentifier(UTType.pinnerEntry.identifier) {
+            DragLog.log("load via pinnerEntry")
+            provider.loadItem(forTypeIdentifier: UTType.pinnerEntry.identifier, options: nil) { item, _ in
+                completion(Self.entryID(fromItem: item))
+            }
+        } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+            DragLog.log("load via plainText fallback")
+            provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
+                completion(Self.entryID(fromItem: item))
+            }
+        } else {
+            DragLog.log("load failed: no matching type")
+            completion(nil)
+        }
+    }
+
     /// Drop an entry onto another one: insert above the target. Switches the
     /// tab to manual ordering first so the new arrangement sticks. Reordering
     /// is restricted to the same section (pinned / unpinned).
     private func handleEntryReorderDrop(providers: [NSItemProvider], onto target: BookmarkEntry) -> Bool {
         guard let p = providers.first else { return false }
-        p.loadItem(forTypeIdentifier: UTType.pinnerEntry.identifier, options: nil) { item, _ in
-            let str: String?
-            if let s = item as? String { str = s }
-            else if let d = item as? Data { str = String(data: d, encoding: .utf8) }
-            else { str = nil }
-            guard let idStr = str, let id = UUID(uuidString: idStr) else { return }
+        DragLog.log("drop onto: \(target.displayName)")
+        loadDraggedEntryID(p) { id in
             DispatchQueue.main.async {
-                guard id != target.id,
-                      let ti = tabIndex(of: target.id),
-                      let dragged = store.tabs[ti].entries.first(where: { $0.id == id }),
-                      dragged.isPinned == target.isPinned else { return }
+                guard let id else { DragLog.log("drop abort: unparsable payload"); return }
+                guard id != target.id else { DragLog.log("drop abort: same row"); return }
+                guard let ti = tabIndex(of: target.id) else { DragLog.log("drop abort: no tab"); return }
+                guard let dragged = store.tabs[ti].entries.first(where: { $0.id == id }) else { DragLog.log("drop abort: entry gone"); return }
+                guard dragged.isPinned == target.isPinned else { DragLog.log("drop abort: cross-section"); return }
                 if sortOrder != .manual {
                     sortOrder = .manual
                     UserDefaults.standard.set(SortOrder.manual.rawValue, forKey: "CollectionBox.sortOrder")
                 }
                 store.reorderEntry(id, before: target.id, in: ti)
+                DragLog.log("reordered \(dragged.displayName) above \(target.displayName)")
             }
         }
         return true
@@ -729,7 +739,12 @@ extension Notification.Name { static let collectionBoxKeyDown = Notification.Nam
 
 struct EntryRow: View {
     let entry: BookmarkEntry
-    var isSelected = false; var isFlashing = false; var isHovered = false
+    var isSelected = false
+    var isFlashing = false
+    var onReorderDrop: ([NSItemProvider]) -> Bool = { _ in false }
+    @State private var isHovered = false
+    @State private var isDropTargeted = false
+
     var body: some View {
         HStack(spacing: 8) {
             FileIconView(entry: entry).frame(width: 20, height: 20).opacity(entry.isMissing ? 0.4 : 1)
@@ -743,9 +758,16 @@ struct EntryRow: View {
         .background(isFlashing ? Color.accentColor.opacity(Design.flashAlpha)
             : isSelected ? Color.accentColor.opacity(Design.selectedAlpha)
             : isHovered ? Color.secondary.opacity(Design.hoverAlpha) : Color.clear)
+        .overlay(alignment: .top) {
+            if isDropTargeted {
+                Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
+            }
+        }
         .overlay(RoundedRectangle(cornerRadius: Design.radiusS)
             .strokeBorder(Color.accentColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: Design.radiusS))
+        .onDrop(of: [.pinnerEntry, .plainText], isTargeted: $isDropTargeted) { onReorderDrop($0) }
+        .onHover { isHovered = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.isMissing ? "\(entry.displayName)，未找到" : entry.displayName)
     }
@@ -755,7 +777,12 @@ struct EntryRow: View {
 
 struct GridEntryItem: View {
     let entry: BookmarkEntry
-    var isSelected = false; var isFlashing = false; var isHovered = false
+    var isSelected = false
+    var isFlashing = false
+    var onReorderDrop: ([NSItemProvider]) -> Bool = { _ in false }
+    @State private var isHovered = false
+    @State private var isDropTargeted = false
+
     var body: some View {
         VStack(spacing: 4) {
             FileIconView(entry: entry).frame(width: 48, height: 48).frame(width: 56, height: 56)
@@ -776,6 +803,13 @@ struct GridEntryItem: View {
             : isHovered ? Color.secondary.opacity(Design.hoverAlpha) : Color.clear))
         .overlay(RoundedRectangle(cornerRadius: Design.radiusM)
             .strokeBorder(Color.accentColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1))
+        .overlay(alignment: .top) {
+            if isDropTargeted {
+                Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
+            }
+        }
+        .onDrop(of: [.pinnerEntry, .plainText], isTargeted: $isDropTargeted) { onReorderDrop($0) }
+        .onHover { isHovered = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.isMissing ? "\(entry.displayName)，未找到" : entry.displayName)
     }
@@ -790,6 +824,17 @@ struct FileIconWrap: NSViewRepresentable {
     let entry: BookmarkEntry
     static let iconCache = NSCache<NSString, NSImage>()
     private static let thumbnailableExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "pdf"]
+    /// Bookmark resolution touches the filesystem (milliseconds each), so
+    /// results are cached per entry and invalidated when the bookmark data
+    /// changes. Main-thread only, like every caller below.
+    private static var resolvedPathCache: [UUID: (bookmark: Data, path: String?)] = [:]
+
+    static func cachedResolvedPath(for entry: BookmarkEntry) -> String? {
+        if let hit = resolvedPathCache[entry.id], hit.bookmark == entry.bookmarkData { return hit.path }
+        let path = BookmarkService.resolvedPath(entry.bookmarkData)
+        resolvedPathCache[entry.id] = (entry.bookmarkData, path)
+        return path
+    }
 
     func makeNSView(context: Context) -> NSImageView {
         let v = NSImageView(); v.imageScaling = .scaleProportionallyUpOrDown
@@ -813,24 +858,26 @@ struct FileIconWrap: NSViewRepresentable {
         let fallback = ext.isEmpty
             ? NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericFolderIcon)))
             : NSWorkspace.shared.icon(forFileType: ext)
-        guard let url = BookmarkService.resolveURL(entry.bookmarkData) else { return fallback }
-        let key = url.standardizedFileURL.path as NSString
+        guard let path = cachedResolvedPath(for: entry) else { return fallback }
+        let key = path as NSString
         if let cached = iconCache.object(forKey: key) { return cached }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        let image = NSWorkspace.shared.icon(forFile: path)
+        iconCache.setObject(image, forKey: key)
+        return image
     }
 
     /// Decodes an image/PDF thumbnail off the main thread and caches it by path.
     static func loadThumbnailIfAvailable(for entry: BookmarkEntry, completion: @escaping (NSImage) -> Void) {
         let ext = (entry.displayName as NSString).pathExtension.lowercased()
         guard thumbnailableExtensions.contains(ext),
-              let url = BookmarkService.resolveURL(entry.bookmarkData) else { return }
-        let pathKey = url.standardizedFileURL.path as NSString
+              let path = cachedResolvedPath(for: entry) else { return }
+        let pathKey = path as NSString
         if let cached = iconCache.object(forKey: pathKey) {
             completion(cached)
             return
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let thumb = Self.thumbnail(at: url.path, ext: ext, maxPixel: 256) else { return }
+            guard let thumb = Self.thumbnail(at: path, ext: ext, maxPixel: 256) else { return }
             iconCache.setObject(thumb, forKey: pathKey)
             DispatchQueue.main.async { completion(thumb) }
         }
