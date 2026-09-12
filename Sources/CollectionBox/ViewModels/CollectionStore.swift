@@ -116,6 +116,20 @@ public final class CollectionStore {
         save()
     }
 
+    /// Move an entry to sit directly before another one within the same tab.
+    /// The array order is the manual ("自定义") sort order.
+    public func reorderEntry(_ entryID: UUID, before targetID: UUID, in tabIndex: Int) {
+        guard tabs.indices.contains(tabIndex), entryID != targetID else { return }
+        guard let from = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let entry = tabs[tabIndex].entries.remove(at: from)
+        if let to = tabs[tabIndex].entries.firstIndex(where: { $0.id == targetID }) {
+            tabs[tabIndex].entries.insert(entry, at: to)
+        } else {
+            tabs[tabIndex].entries.insert(entry, at: from)
+        }
+        save()
+    }
+
     public func pinEntry(_ entryID: UUID, in tabIndex: Int) {
         guard tabs.indices.contains(tabIndex) else { return }
         guard let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }

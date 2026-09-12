@@ -5,12 +5,14 @@ import PDFKit
 
 enum ViewMode: String, CaseIterable { case list, grid }
 enum SortOrder: String, CaseIterable {
+    case manual = "manual"
     case name = "name"
     case dateAdded = "date_added"
     case lastOpened = "last_opened"
     case type = "type"
     var label: String {
         switch self {
+        case .manual: return "自定义"
         case .name: return "名称"
         case .dateAdded: return "添加时间"
         case .lastOpened: return "上次打开时间"
@@ -27,6 +29,8 @@ struct EntrySection: Identifiable {
 extension UTType {
     /// Internal drag type for reordering collection tabs.
     static let pinnerTab = UTType(exportedAs: "com.pinner.tab")
+    /// Internal drag type for reordering entries within a tab.
+    static let pinnerEntry = UTType(exportedAs: "com.pinner.entry")
 }
 
 struct RootView: View {
@@ -58,6 +62,7 @@ struct RootView: View {
     @State private var gridColumns = 3
     @State private var isShowingImporter = false
     @State private var dropTargeted = false
+    @State private var reorderTargetID: UUID?
 
     // MARK: - Derived Data
 
@@ -89,12 +94,15 @@ struct RootView: View {
 
     private var pinnedEntries: [BookmarkEntry] {
         let pinned = allFiltered.filter { $0.isPinned }
+        // Manual order preserves the stored array order; other modes sort by name.
+        guard sortOrder != .manual else { return pinned }
         return pinned.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
     private var sortedEntries: [BookmarkEntry] {
         let unpinned = allFiltered.filter { !$0.isPinned }
         switch sortOrder {
+        case .manual: return unpinned
         case .name: return nameAscending
             ? unpinned.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
             : unpinned.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedDescending }
@@ -344,13 +352,33 @@ struct RootView: View {
         }}.listStyle(.plain)
     }
 
+    /// Insertion line shown above the row an internal reorder drag hovers over.
+    @ViewBuilder
+    private func reorderIndicator(for entry: BookmarkEntry) -> some View {
+        if reorderTargetID == entry.id {
+            Rectangle().fill(Color.accentColor).frame(height: 2)
+                .padding(.horizontal, 6)
+        }
+    }
+
+    private func entryReorderTargetBinding(_ entry: BookmarkEntry) -> Binding<Bool> {
+        Binding(
+            get: { reorderTargetID == entry.id },
+            set: { targeted in
+                reorderTargetID = targeted ? entry.id : (reorderTargetID == entry.id ? nil : reorderTargetID)
+            }
+        )
+    }
+
     private func listRow(_ entry: BookmarkEntry) -> some View {
         EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
             .contentShape(Rectangle())
+            .overlay(alignment: .top) { reorderIndicator(for: entry) }
             .onTapGesture(count: 2) { openEntry(entry) }
             .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
             .contextMenu { entryMenu(entry) }
             .onDrag { dragProvider(for: entry) }
+            .onDrop(of: [.pinnerEntry], isTargeted: entryReorderTargetBinding(entry)) { handleEntryReorderDrop(providers: $0, onto: entry) }
             .onHover { hovering in
                 if hovering { hoveredEntryID = entry.id }
                 else if hoveredEntryID == entry.id { hoveredEntryID = nil }
@@ -369,17 +397,7 @@ struct RootView: View {
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)], spacing: 12) {
                     ForEach(sec.entries) { entry in
-                        GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { openEntry(entry) }
-                            .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
-                            .contextMenu { entryMenu(entry) }
-                            .onDrag { dragProvider(for: entry) }
-                            .onHover { hovering in
-                                if hovering { hoveredEntryID = entry.id }
-                                else if hoveredEntryID == entry.id { hoveredEntryID = nil }
-                            }
-                            .id(entry.id)
+                        gridCell(entry)
                     }
                 }.padding(.horizontal, 12).padding(.bottom, 4)
             }}
@@ -392,6 +410,22 @@ struct RootView: View {
 
     private func isRowSelected(_ entry: BookmarkEntry) -> Bool {
         selectedEntryIDs.contains(entry.id) || selectedEntryID == entry.id
+    }
+
+    private func gridCell(_ entry: BookmarkEntry) -> some View {
+        GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id, isHovered: hoveredEntryID == entry.id)
+            .contentShape(Rectangle())
+            .overlay(alignment: .top) { reorderIndicator(for: entry) }
+            .onTapGesture(count: 2) { openEntry(entry) }
+            .simultaneousGesture(TapGesture(count: 1).onEnded { handleRowTap(entry) })
+            .contextMenu { entryMenu(entry) }
+            .onDrag { dragProvider(for: entry) }
+            .onDrop(of: [.pinnerEntry], isTargeted: entryReorderTargetBinding(entry)) { handleEntryReorderDrop(providers: $0, onto: entry) }
+            .onHover { hovering in
+                if hovering { hoveredEntryID = entry.id }
+                else if hoveredEntryID == entry.id { hoveredEntryID = nil }
+            }
+            .id(entry.id)
     }
 
     private func handleRowTap(_ entry: BookmarkEntry) {
@@ -578,9 +612,45 @@ struct RootView: View {
         return true
     }
 
+    /// Entries drag with two representations: a file URL (drag out to other
+    /// apps) and an internal entry ID (in-panel reorder drops).
     private func dragProvider(for entry: BookmarkEntry) -> NSItemProvider {
-        guard let url = BookmarkService.resolveURL(entry.bookmarkData) else { return NSItemProvider() }
-        return NSItemProvider(object: url as NSURL)
+        var provider = NSItemProvider()
+        if let url = BookmarkService.resolveURL(entry.bookmarkData) {
+            provider = NSItemProvider(object: url as NSURL)
+        }
+        let data = entry.id.uuidString.data(using: .utf8)
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.pinnerEntry.identifier, visibility: .all) { completion in
+            completion(data, nil)
+            return nil
+        }
+        return provider
+    }
+
+    /// Drop an entry onto another one: insert above the target. Switches the
+    /// tab to manual ordering first so the new arrangement sticks. Reordering
+    /// is restricted to the same section (pinned / unpinned).
+    private func handleEntryReorderDrop(providers: [NSItemProvider], onto target: BookmarkEntry) -> Bool {
+        guard let p = providers.first else { return false }
+        p.loadItem(forTypeIdentifier: UTType.pinnerEntry.identifier, options: nil) { item, _ in
+            let str: String?
+            if let s = item as? String { str = s }
+            else if let d = item as? Data { str = String(data: d, encoding: .utf8) }
+            else { str = nil }
+            guard let idStr = str, let id = UUID(uuidString: idStr) else { return }
+            DispatchQueue.main.async {
+                guard id != target.id,
+                      let ti = tabIndex(of: target.id),
+                      let dragged = store.tabs[ti].entries.first(where: { $0.id == id }),
+                      dragged.isPinned == target.isPinned else { return }
+                if sortOrder != .manual {
+                    sortOrder = .manual
+                    UserDefaults.standard.set(SortOrder.manual.rawValue, forKey: "CollectionBox.sortOrder")
+                }
+                store.reorderEntry(id, before: target.id, in: ti)
+            }
+        }
+        return true
     }
 
     // MARK: - Bottom Bar

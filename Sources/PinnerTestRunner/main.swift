@@ -232,6 +232,27 @@ func testLegacyJSONCompatibility() throws {
 }
 
 @MainActor
+func testReorderEntry() throws {
+    let suite = UserDefaults(suiteName: "test-reorder-\(UUID().uuidString)")!
+    let store = CollectionStore(defaults: suite)
+    store.createTab(named: "T")
+    let urls = (1...3).map { makeTempFile(named: "reorder-\($0).txt") }
+    defer { urls.forEach { try? FileManager.default.removeItem(at: $0) } }
+    try store.addEntries(from: urls, to: 0)
+    let ids = store.tabs[0].entries.map(\.id)
+
+    store.reorderEntry(ids[2], before: ids[0], in: 0)
+    check(store.tabs[0].entries.map(\.id) == [ids[2], ids[0], ids[1]], "reorderEntry inserts before target")
+
+    // Array order must survive save/load — it IS the manual order.
+    let reloaded = CollectionStore(defaults: suite)
+    check(reloaded.tabs[0].entries.map(\.id) == [ids[2], ids[0], ids[1]], "manual order survives save/load")
+
+    store.reorderEntry(ids[0], before: ids[0], in: 0)
+    check(store.tabs[0].entries.map(\.id) == [ids[2], ids[0], ids[1]], "self-reorder ignored")
+}
+
+@MainActor
 func testBookmarkServiceHelpers() throws {
     let url = makeTempFile()
     defer { try? FileManager.default.removeItem(at: url) }
@@ -252,6 +273,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     await testRefreshMarksMissingInsteadOfRemoving()
     try? await testRefreshClearsMissingForValidFile()
     try? testBatchOperations()
+    try? testReorderEntry()
     try? testUndo()
     try? testPersistenceRoundtrip()
     try? testLegacyJSONCompatibility()
