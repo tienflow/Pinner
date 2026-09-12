@@ -1,6 +1,7 @@
 import AppKit
 import CollectionBox
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private let store = CollectionStore()
@@ -44,8 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// Entry point
+// Entry point — the process starts on the main thread, so the main-actor
+// AppDelegate can be constructed before the run loop starts.
 let app = NSApplication.shared
-let delegate = AppDelegate()
+let delegate = MainActor.assumeIsolated { AppDelegate() }
 app.delegate = delegate
 app.run()

@@ -16,8 +16,15 @@ let package = Package(
         .executableTarget(
             name: "CollectionBoxApp",
             dependencies: ["CollectionBox"],
-            path: "Sources/CollectionBoxApp"
+            path: "Sources/CollectionBoxApp",
+            exclude: ["Assets.xcassets", "Resources"]
         ),
-
+        // Test runner: the pure-CommandLineTools toolchain has no XCTest /
+        // Swift Testing, so tests run via `swift run PinnerTestRunner`.
+        .executableTarget(
+            name: "PinnerTestRunner",
+            dependencies: ["CollectionBox"],
+            path: "Sources/PinnerTestRunner"
+        ),
     ]
 )

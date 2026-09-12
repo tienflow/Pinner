@@ -31,6 +31,7 @@ pkill -f CollectionBoxApp
 
 - 改完跑项目的构建命令（`npm run build` / `swift build` / `cargo build` / `make` 等）
 - 改完跑项目的测试命令（`npm test` / `swift run xxTests` / `cargo test` / `make test` 等）
+- 本项目测试命令：`swift run PinnerTestRunner`（全部断言通过时退出码 0）。⚠️ 纯 CommandLineTools 环境无 XCTest，`swift test` 无法构建，不要使用
 - 不要为了让代码跑起来而注释掉报错
 
 ## 4. Git 规范

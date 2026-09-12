@@ -19,6 +19,8 @@ public final class MenuBarController: NSObject {
     private var otpHotkeyManager: OTPHotkeyManager?
     private var codexStatsController: CodexStatsWindowController?
     private var codexStatsHotkeyManager: CodexStatsHotkeyManager?
+    private var geminiStatsController: GeminiStatsWindowController?
+    private var geminiStatsHotkeyManager: GeminiStatsHotkeyManager?
 
     public init(store: CollectionStore) { self.store = store; super.init() }
 
@@ -48,6 +50,11 @@ public final class MenuBarController: NSObject {
         codexStatsHotkeyManager = CodexStatsHotkeyManager()
         codexStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showCodexStats() }
         codexStatsHotkeyManager?.register()
+
+        geminiStatsController = GeminiStatsWindowController()
+        geminiStatsHotkeyManager = GeminiStatsHotkeyManager()
+        geminiStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showGeminiStats() }
+        geminiStatsHotkeyManager?.register()
 
         applyTheme()
     }
@@ -122,6 +129,23 @@ public final class MenuBarController: NSObject {
 
         m.addItem(.separator())
 
+        // Gemini Stats
+        let geminiStatsItem = NSMenuItem(title: "Gemini 统计", action: #selector(showGeminiStatsFromMenu), keyEquivalent: "")
+        geminiStatsItem.target = self; m.addItem(geminiStatsItem)
+        let geminiStatsHotkeyItem = NSMenuItem(title: "Gemini 统计快捷键", action: nil, keyEquivalent: "")
+        let geminiStatsHotkeySub = NSMenu()
+        let curGeminiCombo = geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo
+        let showGeminiCurrent = NSMenuItem(title: "当前: \(curGeminiCombo.displayString)", action: nil, keyEquivalent: "")
+        showGeminiCurrent.isEnabled = false; geminiStatsHotkeySub.addItem(showGeminiCurrent)
+        geminiStatsHotkeySub.addItem(.separator())
+        let recordGeminiItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordGeminiStatsHotkey), keyEquivalent: "")
+        recordGeminiItem.target = self; geminiStatsHotkeySub.addItem(recordGeminiItem)
+        let clearGeminiItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearGeminiStatsHotkey), keyEquivalent: "")
+        clearGeminiItem.target = self; geminiStatsHotkeySub.addItem(clearGeminiItem)
+        geminiStatsHotkeyItem.submenu = geminiStatsHotkeySub; m.addItem(geminiStatsHotkeyItem)
+
+        m.addItem(.separator())
+
         // Theme
         let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
         let themeSub = NSMenu()
@@ -141,50 +165,8 @@ public final class MenuBarController: NSObject {
     }
 
     @objc private func recordHotkey() {
-        // Use a simple window to capture key events
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
-                             styleMask: [.titled, .nonactivatingPanel],
-                             backing: .buffered, defer: false)
-        window.level = .floating
-        window.title = "设置快捷键"
-        window.isReleasedWhenClosed = false
-        window.center()
-
-        let label = NSTextField(labelWithString: "请按下快捷键组合")
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.alignment = .center
-        label.frame = NSRect(x: 20, y: 80, width: 260, height: 20)
-
-        let keyLabel = NSTextField(labelWithString: "等待按键...")
-        keyLabel.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .medium)
-        keyLabel.alignment = .center
-        keyLabel.frame = NSRect(x: 20, y: 30, width: 260, height: 40)
-
-        window.contentView?.addSubview(label)
-        window.contentView?.addSubview(keyLabel)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        var monitor: Any?
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 { // Esc
-                if let m = monitor { NSEvent.removeMonitor(m) }
-                window.close()
-                return nil
-            }
-            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if mods.isEmpty {
-                keyLabel.stringValue = "请先按住修饰键"
-                return event
-            }
-            let carbonMods = carbonModifiers(from: event.modifierFlags)
-            let combo = HotkeyCombo(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
-            keyLabel.stringValue = combo.displayString
-            // Save and close
-            if let m = monitor { NSEvent.removeMonitor(m) }
-            self.hotkeyManager?.save(combo: combo)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { window.close() }
-            return nil
+        HotkeyRecorder.present(title: "设置快捷键") { [weak self] combo in
+            self?.hotkeyManager?.save(combo: combo)
         }
     }
 
@@ -233,49 +215,27 @@ public final class MenuBarController: NSObject {
         }
     }
 
+    @objc private func showGeminiStatsFromMenu() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            geminiStatsController?.showAtMouse()
+        }
+    }
+
+    private func showGeminiStats() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            geminiStatsController?.showAtMouse()
+        }
+    }
+
     @objc private func recordOTPHotkey() {
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
-                             styleMask: [.titled, .nonactivatingPanel],
-                             backing: .buffered, defer: false)
-        window.level = .floating
-        window.title = "设置 OTP 快捷键"
-        window.isReleasedWhenClosed = false
-        window.center()
-
-        let label = NSTextField(labelWithString: "请按下快捷键组合")
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.alignment = .center
-        label.frame = NSRect(x: 20, y: 80, width: 260, height: 20)
-
-        let keyLabel = NSTextField(labelWithString: "等待按键...")
-        keyLabel.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .medium)
-        keyLabel.alignment = .center
-        keyLabel.frame = NSRect(x: 20, y: 30, width: 260, height: 40)
-
-        window.contentView?.addSubview(label)
-        window.contentView?.addSubview(keyLabel)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        var monitor: Any?
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 {
-                if let m = monitor { NSEvent.removeMonitor(m) }
-                window.close()
-                return nil
-            }
-            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if mods.isEmpty {
-                keyLabel.stringValue = "请先按住修饰键"
-                return event
-            }
-            let carbonMods = carbonModifiers(from: event.modifierFlags)
-            let combo = HotkeyCombo(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
-            keyLabel.stringValue = combo.displayString
-            if let m = monitor { NSEvent.removeMonitor(m) }
-            self.otpHotkeyManager?.save(combo: combo)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { window.close() }
-            return nil
+        HotkeyRecorder.present(title: "设置 OTP 快捷键") { [weak self] combo in
+            self?.otpHotkeyManager?.save(combo: combo)
         }
     }
 
@@ -284,53 +244,23 @@ public final class MenuBarController: NSObject {
     }
 
     @objc private func recordCodexStatsHotkey() {
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
-                             styleMask: [.titled, .nonactivatingPanel],
-                             backing: .buffered, defer: false)
-        window.level = .floating
-        window.title = "设置 Codex 统计快捷键"
-        window.isReleasedWhenClosed = false
-        window.center()
-
-        let label = NSTextField(labelWithString: "请按下快捷键组合")
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.alignment = .center
-        label.frame = NSRect(x: 20, y: 80, width: 260, height: 20)
-
-        let keyLabel = NSTextField(labelWithString: "等待按键...")
-        keyLabel.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .medium)
-        keyLabel.alignment = .center
-        keyLabel.frame = NSRect(x: 20, y: 30, width: 260, height: 40)
-
-        window.contentView?.addSubview(label)
-        window.contentView?.addSubview(keyLabel)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        var monitor: Any?
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 {
-                if let m = monitor { NSEvent.removeMonitor(m) }
-                window.close()
-                return nil
-            }
-            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if mods.isEmpty {
-                keyLabel.stringValue = "请先按住修饰键"
-                return event
-            }
-            let carbonMods = carbonModifiers(from: event.modifierFlags)
-            let combo = HotkeyCombo(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
-            keyLabel.stringValue = combo.displayString
-            if let m = monitor { NSEvent.removeMonitor(m) }
-            self.codexStatsHotkeyManager?.save(combo: combo)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { window.close() }
-            return nil
+        HotkeyRecorder.present(title: "设置 Codex 统计快捷键") { [weak self] combo in
+            self?.codexStatsHotkeyManager?.save(combo: combo)
         }
     }
 
     @objc private func clearCodexStatsHotkey() {
         codexStatsHotkeyManager?.clear()
+    }
+
+    @objc private func recordGeminiStatsHotkey() {
+        HotkeyRecorder.present(title: "设置 Gemini 统计快捷键") { [weak self] combo in
+            self?.geminiStatsHotkeyManager?.save(combo: combo)
+        }
+    }
+
+    @objc private func clearGeminiStatsHotkey() {
+        geminiStatsHotkeyManager?.clear()
     }
 
     @objc private func hidePanel() { edgeController?.collapse() }

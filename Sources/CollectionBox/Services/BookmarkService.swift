@@ -2,44 +2,43 @@ import Foundation
 
 public enum BookmarkService {
     /// Check if a file URL is in the Trash.
-    private static func isTrashed(_ url: URL) -> Bool {
+    static func isTrashed(_ url: URL) -> Bool {
         let trash = FileManager.default.urls(for: .trashDirectory, in: .userDomainMask).first
         let trashPath = trash?.path ?? ""
-        let filePath = url.path
-        let result = !trashPath.isEmpty && filePath.hasPrefix(trashPath)
-        let line = "[isTrashed] file=\(filePath), trash=\(trashPath), result=\(result)\n"
-        if let data = line.data(using: .utf8) {
-            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_trash.log")
-            if let fh = fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
-            else { try? line.write(toFile: "/tmp/pinner_trash.log", atomically: true, encoding: .utf8) }
-        }
-        return result
+        return !trashPath.isEmpty && url.path.hasPrefix(trashPath)
     }
 
     /// Check if a file exists and is not in the Trash.
-    private static func isFileValid(_ url: URL) -> Bool {
+    static func isFileValid(_ url: URL) -> Bool {
         FileManager.default.fileExists(atPath: url.path) && !isTrashed(url)
     }
+
     /// Create a bookmark for the given file or folder URL.
     public static func makeBookmark(for url: URL) throws -> Data {
         try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    /// Resolve a bookmark back to its URL.
+    /// Resolve a bookmark back to its URL. Stale bookmarks are left to
+    /// `refreshBookmark`, which persists regenerated data.
     public static func resolveBookmark(_ data: Data) throws -> URL {
         var stale = false
-        let url = try URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
-        if stale {
-            // Refresh the bookmark data (caller should persist)
-            _ = try? makeBookmark(for: url)
-        }
-        return url
+        return try URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
+    }
+
+    /// Resolve a bookmark to a URL without validating existence.
+    public static func resolveURL(_ data: Data) -> URL? {
+        try? resolveBookmark(data)
+    }
+
+    /// Standardized filesystem path for a bookmark, used for de-duplication.
+    public static func resolvedPath(_ data: Data) -> String? {
+        guard let url = try? resolveBookmark(data) else { return nil }
+        return url.standardizedFileURL.path
     }
 
     /// Resolve bookmark and run a closure with access to the resource.
     public static func withResolvedBookmark<T>(_ data: Data, perform: (URL) throws -> T) rethrows -> T? {
-        guard let url = try? resolveBookmark(data) else { return nil }
-        guard isFileValid(url) else { return nil }
+        guard let url = try? resolveBookmark(data), isFileValid(url) else { return nil }
         return try? perform(url)
     }
 
@@ -53,6 +52,7 @@ public enum BookmarkService {
     }
 
     /// Try to re-create a bookmark from the resolved URL (if file still exists).
+    /// Callers are responsible for persisting `newData`.
     public static func refreshBookmark(_ data: Data) -> (newData: Data?, currentName: String?) {
         guard let url = try? resolveBookmark(data),
               isFileValid(url) else { return (nil, nil) }

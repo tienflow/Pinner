@@ -49,7 +49,22 @@ final class CodexStatsService {
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        dbPath = home.appendingPathComponent(".codex/sqlite/state_5.sqlite").path
+        // Probe known paths; use whichever has the newest mtime
+        let candidates = [
+            ".codex/state_5.sqlite",           // Current (Jun 2026)
+            ".codex/sqlite/state_5.sqlite",    // Previous
+        ]
+        var bestPath = home.appendingPathComponent(candidates[0]).path
+        var bestMtime = Date.distantPast
+        for rel in candidates {
+            let url = home.appendingPathComponent(rel)
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let mt = attrs[.modificationDate] as? Date, mt > bestMtime {
+                bestMtime = mt
+                bestPath = url.path
+            }
+        }
+        dbPath = bestPath
     }
 
     func fetchStats(for range: StatsTimeRange) -> CodexStats {
@@ -191,7 +206,8 @@ final class CodexStatsService {
     private func openDB(retries: Int = 3) -> OpaquePointer? {
         for _ in 0..<retries {
             var db: OpaquePointer?
-            if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db = db {
+            let rc = sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil)
+            if rc == SQLITE_OK, let db = db {
                 sqlite3_busy_timeout(db, 5000)
                 return db
             }

@@ -1,21 +1,26 @@
 # Pinner
 
-你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示和 Codex 用量统计，三个常用工具合一。
+你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示、Codex 用量统计以及 Gemini (Antigravity) 用量统计。
 
 运行截图见 `image/` 目录。
 
 ## 功能
 
 **收藏夹**
-- **拖拽收藏**：从 Finder 拖文件或文件夹到面板，自动收藏
-- **分类管理**：多个 Tab 收藏夹，支持创建、重命名、删除、在收藏夹之间移动文件
+- **拖拽收藏**：从 Finder 拖文件或文件夹到面板，自动收藏（同一路径自动去重）；也可点击面板底部 + 按钮选择文件添加
+- **分类管理**：多个 Tab 收藏夹，支持创建、重命名、删除、拖拽调整顺序、在收藏夹之间移动文件
 - **置顶文件**：右键置顶常用文件，置顶区始终显示在顶部
 - **快速打开**：双击或选中后按空格 / 回车打开文件
-- **列表 / 宫格**：两种视图模式自由切换
+- **快速预览**：选中文件后按 ⌘Y 使用 Quick Look 预览
+- **多选操作**：⌘ 点击逐个加选、⇧ 点击范围选择，支持批量移动 / 移除，Delete 键删除选中项
+- **拖出文件**：把面板中的条目拖到其他应用（邮件、聊天窗口等）直接作为文件使用
+- **列表 / 宫格**：两种视图模式自由切换，宫格模式下图片 / PDF 显示缩略图
 - **排序**：按名称、添加时间、上次打开时间、文件类型排序，后两者带分区标题
-- **搜索**：实时过滤文件
-- **右键菜单**：置顶 / 取消置顶、移动到其他收藏夹、在 Finder 中显示、移除
-- **自动刷新**：每次展开面板自动验证所有 bookmark，失效文件（含废纸篓）自动移除
+- **搜索**：实时过滤当前收藏夹；输入关键词后自动跨所有收藏夹搜索并按收藏夹分组
+- **右键菜单**：置顶 / 取消置顶、快速预览、拷贝路径、在终端中打开、在 Finder 中显示、重命名、移动到其他收藏夹、移除
+- **自动刷新**：每次展开面板自动验证所有 bookmark，失效文件（含废纸篓）标灰显示「未找到」并保留，文件恢复后自动清除标记
+- **撤销**：⌘Z 撤销移除文件、删除收藏夹等破坏性操作
+- **面板记忆**：记住上次调整后的面板大小
 - **置顶面板**：点击图钉按钮锁定面板，点击外部不再自动隐藏
 
 **OTP 验证码**
@@ -24,13 +29,18 @@
 - **倒计时**：进度条实时显示验证码剩余有效时间，≤10 秒变红提醒
 - **添加账户**：粘贴 `otpauth://` URI 自动解析，支持从本地图片识别二维码
 
-**Codex 统计**（开发中）
+**Codex 统计**
 - **Token 用量**：查询本地 Codex 数据库，按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
 - **趋势对比**：每个维度显示与上一周期的环比变化
 - **快捷键**：默认 `⌘⇧I`，可自定义
 
+**Gemini 统计**
+- **Token 用量**：查询本地 Antigravity 数据库，按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
+- **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
+- **快捷键**：默认 `⌘⇧G`，可自定义
+
 **通用**
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`，均可自定义
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Gemini 统计 `⌘⇧G`，均可自定义
 - **主题**：浅色、深色、自动
 
 ## 技术栈
@@ -48,19 +58,24 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount）
-│   ├── Services/               # BookmarkService + OTPService（TOTP 算法）
+│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, AddOTPView, QRScannerView）
+│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView 等）
 │   └── AppKit/                 # AppKit 集成
-│       ├── MenuBarController.swift        # 菜单栏交互
-│       ├── EdgeDockWindowController.swift # 收藏面板管理
-│       ├── OTPWindowController.swift      # OTP 面板管理
-│       ├── HotkeyManager.swift            # 收藏夹快捷键
-│       ├── OTPHotkeyManager.swift         # OTP 快捷键
-│       ├── CodexStatsWindowController.swift  # Codex 统计面板（WIP）
-│       └── CodexStatsHotkeyManager.swift     # Codex 统计快捷键（WIP）
+│       ├── MenuBarController.swift           # 菜单栏交互
+│       ├── EdgeDockWindowController.swift    # 收藏面板管理
+│       ├── HotkeyRecorder.swift              # 快捷键录制面板（通用组件）
+│       ├── OTPWindowController.swift         # OTP 面板管理
+│       ├── HotkeyManager.swift               # 收藏夹快捷键
+│       ├── OTPHotkeyManager.swift            # OTP 快捷键
+│       ├── CodexStatsWindowController.swift  # Codex 统计面板
+│       ├── CodexStatsHotkeyManager.swift     # Codex 统计快捷键
+│       ├── GeminiStatsWindowController.swift # Gemini 统计面板
+│       └── GeminiStatsHotkeyManager.swift    # Gemini 统计快捷键
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
+
+测试：本仓库使用独立测试运行器（CommandLineTools 环境无 XCTest），运行 `swift run PinnerTestRunner`，全部断言通过时退出码为 0。
 
 ## 快捷键
 
@@ -71,17 +86,21 @@ Sources/
 | `⌘⇧P`（默认） | 在鼠标位置展开收藏面板 |
 | `⌘⇧O`（默认） | 在鼠标位置展开 OTP 面板并自动复制验证码 |
 | `⌘⇧I`（默认） | 打开 Codex 统计面板 |
+| `⌘⇧G`（默认） | 打开 Gemini 统计面板 |
 
-可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 → 设置快捷键 中自定义。
+可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 / Gemini 统计快捷键 → 设置快捷键 中自定义。
 
 ### 面板内快捷键
 
 | 按键 | 功能 |
 |------|------|
-| ↑ ↓ ← → | 选择文件 |
+| ↑ ↓ ← → | 选择文件（宫格模式下左右键按列移动） |
 | Tab | 切换到下一个收藏夹 |
 | Shift + Tab | 切换到上一个收藏夹 |
 | 空格 / 回车 | 打开选中文件 |
+| ⌘Y | Quick Look 预览选中文件 |
+| ⌘Z | 撤销移除 / 删除操作 |
+| Delete | 移除选中的文件 |
 | Esc | 收起面板 |
 
 ## 菜单栏
@@ -100,6 +119,9 @@ OTP 快捷键          ← 子菜单配置
 ──────────
 Codex 统计          ← 打开统计面板
 Codex 统计快捷键     ← 子菜单配置
+──────────
+Gemini 统计         ← 打开统计面板
+Gemini 统计快捷键    ← 子菜单配置
 ──────────
 主题                ← 自动 / 浅色 / 深色
 ──────────

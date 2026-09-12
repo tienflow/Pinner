@@ -8,3 +8,7 @@ docs/
 mac-收藏箱-app-plan.md
 *.ips
 build/
+
+# Build artifacts (built at release time)
+Pinner.app/
+*.dmg
