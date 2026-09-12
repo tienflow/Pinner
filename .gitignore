@@ -12,3 +12,6 @@ build/
 # Build artifacts (built at release time)
 Pinner.app/
 *.dmg
+
+# Session handoff artifact (kept locally, not in repo)
+HANDOFF.md
