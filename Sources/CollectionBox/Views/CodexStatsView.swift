@@ -70,8 +70,8 @@ struct CodexStatsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.secondary.opacity(0.06))
-        .cornerRadius(6)
+        .background(Color.secondary.opacity(Design.slotAlpha))
+        .cornerRadius(Design.radiusM)
     }
 
     private func trendView(_ value: Double) -> some View {
@@ -114,13 +114,13 @@ struct CodexStatsView: View {
                     VStack(alignment: .trailing, spacing: 0) {
                         Spacer().frame(height: 4)
                         Text(fmtToken(maxTokens))
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                         Spacer()
                         Text(fmtToken(maxTokens / 2))
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                         Spacer()
                         Text("0")
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                         Spacer().frame(height: 4)
                     }
                     .frame(width: 34)
@@ -224,7 +224,7 @@ struct CodexStatsView: View {
                 HStack(spacing: 0) {
                     ForEach(trend) { pt in
                         Text(pt.label)
-                            .font(.system(size: 7))
+                            .font(.system(size: Design.micro))
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity)
                             .lineLimit(1)
@@ -237,7 +237,7 @@ struct CodexStatsView: View {
                 HStack(spacing: 0) {
                     ForEach(Array(trend.enumerated()), id: \.element.id) { i, pt in
                         Text((i % 5 == 0 || i == trend.count - 1) ? pt.label : "")
-                            .font(.system(size: 7))
+                            .font(.system(size: Design.micro))
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity)
                             .lineLimit(1)

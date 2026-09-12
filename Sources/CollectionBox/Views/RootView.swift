@@ -57,6 +57,7 @@ struct RootView: View {
     }()
     @State private var gridColumns = 3
     @State private var isShowingImporter = false
+    @State private var dropTargeted = false
 
     // MARK: - Derived Data
 
@@ -225,25 +226,34 @@ struct RootView: View {
             }
             .layoutPriority(1)
             Button(action: { onPinToggle?(); isPinnedState.toggle() }) {
-                Image(systemName: isPinnedState ? "pin.fill" : "pin.slash").font(.system(size: 12)).foregroundStyle(isPinnedState ? .orange : .secondary)
+                Image(systemName: isPinnedState ? "pin.fill" : "pin.slash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isPinnedState ? .orange : .secondary)
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
             }.buttonStyle(.plain).fixedSize()
                 .help(isPinnedState ? "取消置顶（点击外部会隐藏）" : "置顶（点击外部不隐藏）")
                 .accessibilityLabel(isPinnedState ? "取消置顶面板" : "置顶面板")
             Button(action: { viewMode = viewMode == .list ? .grid : .list; UserDefaults.standard.set(viewMode.rawValue, forKey: "CollectionBox.viewMode") }) {
-                Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet").font(.system(size: 12))
+                Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
             }.buttonStyle(.plain).fixedSize()
                 .help(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
                 .accessibilityLabel(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
-            Button(action: { newTabName = ""; isShowingNewTabAlert = true }) { Image(systemName: "plus").font(.system(size: 12)) }.buttonStyle(.plain).fixedSize()
+            Button(action: { newTabName = ""; isShowingNewTabAlert = true }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain).fixedSize()
                 .help("新建收藏夹").accessibilityLabel("新建收藏夹")
-        }.padding(.horizontal, 8).padding(.vertical, 6)
+        }.padding(.horizontal, 12).padding(.vertical, 6)
     }
 
     private func tabButton(for tab: CollectionTab) -> some View {
         Button(action: { selectTab(tab.id) }) {
-            Text(tab.name).font(.system(size: 12, weight: tab.id == selectedTabID ? .semibold : .regular))
+            Text(tab.name).font(.system(size: Design.ui, weight: tab.id == selectedTabID ? .semibold : .regular))
                 .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(tab.id == selectedTabID ? Color.accentColor.opacity(0.15) : Color.clear).cornerRadius(4)
+                .background(tab.id == selectedTabID ? Color.accentColor.opacity(Design.selectedAlpha) : Color.clear, in: Capsule())
         }.buttonStyle(.plain).contextMenu {
             Button("重命名") { renameText = tab.name; renamingTabID = tab.id }; Divider()
             Button("删除", role: .destructive) { if let i = store.tabs.firstIndex(where: { $0.id == tab.id }) { store.deleteTab(at: i); if selectedTabID == tab.id { selectedTabID = store.tabs.first?.id }; clearSelection() } }
@@ -287,13 +297,13 @@ struct RootView: View {
     private var searchBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
-            TextField("搜索", text: $searchText).textFieldStyle(.plain).font(.system(size: 12))
+            TextField("搜索", text: $searchText).textFieldStyle(.plain).font(.system(size: Design.body))
             if !searchText.isEmpty { Button(action: { searchText = "" }) { Image(systemName: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(.plain).help("清除搜索").accessibilityLabel("清除搜索") }
             if sortOrder == .name && !isSearching { Button(action: { nameAscending.toggle() }) { Image(systemName: nameAscending ? "arrow.up" : "arrow.down").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(.plain).help("切换名称排序方向").accessibilityLabel("切换名称排序方向") }
             Menu { ForEach(SortOrder.allCases, id: \.self) { o in Button { sortOrder = o; UserDefaults.standard.set(o.rawValue, forKey: "CollectionBox.sortOrder") } label: { HStack { Text(o.label); if sortOrder == o { Image(systemName: "checkmark") } } } } }
-            label: { Image(systemName: "arrow.up.arrow.down").font(.system(size: 11)).foregroundStyle(.secondary) }.menuStyle(.borderlessButton).fixedSize()
+            label: { Image(systemName: "arrow.up.arrow.down").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary) }.menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("排序方式")
-        }.padding(.horizontal, 10).padding(.vertical, 6)
+        }.padding(.horizontal, 12).padding(.vertical, 6)
     }
 
     // MARK: - Entry Content
@@ -302,7 +312,7 @@ struct RootView: View {
     private var entryContent: some View {
         if let ti = currentTabIndex {
             if store.tabs[ti].entries.isEmpty && !isSearching {
-                emptyState.onDrop(of: [.fileURL], isTargeted: nil) { dropHandler(providers: $0, ti: ti) }
+                emptyState.onDrop(of: [.fileURL], isTargeted: $dropTargeted) { dropHandler(providers: $0, ti: ti) }
             } else if isSearching && flatDisplay.isEmpty {
                 VStack { Spacer(); Text("所有收藏夹中都没有匹配“\(searchText)”的文件").font(.system(size: 13)).foregroundStyle(.secondary); Spacer() }
             } else {
@@ -325,7 +335,7 @@ struct RootView: View {
     private func sectionedList() -> some View {
         List { ForEach(sections) { sec in
             if !sec.title.isEmpty {
-                Section(header: Text(sec.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)) {
+                Section(header: Text(sec.title).font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)) {
                     ForEach(sec.entries) { entry in listRow(entry) }
                 }
             } else {
@@ -355,7 +365,7 @@ struct RootView: View {
             let cols = max(1, Int((geo.size.width - 24) / 92))
             ScrollView { ForEach(sections) { sec in
                 if !sec.title.isEmpty {
-                    HStack { Text(sec.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary); Spacer() }.padding(.horizontal, 12).padding(.top, 8)
+                    HStack { Text(sec.title).font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary); Spacer() }.padding(.horizontal, 12).padding(.top, 8)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 80, maximum: 100), spacing: 12)], spacing: 12) {
                     ForEach(sec.entries) { entry in
@@ -478,8 +488,16 @@ struct RootView: View {
     private var emptyState: some View {
         VStack(spacing: 8) { Spacer()
             Image(systemName: "tray.and.arrow.down").font(.system(size: 32)).foregroundStyle(.tertiary)
-            Text("拖拽文件到此处，或点击下方 + 添加").font(.system(size: 13)).foregroundStyle(.secondary)
+            Text("拖拽文件到此处收藏，或点击下方 +").font(.system(size: Design.body)).foregroundStyle(.secondary)
         Spacer() }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.radiusM)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.25))
+                .padding(6)
+        )
+        .padding(6)
     }
 
     // MARK: - Keyboard
@@ -583,13 +601,17 @@ struct RootView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 8) {
-            countText.font(.system(size: 11)).foregroundStyle(.secondary)
+            countText.font(.system(size: Design.caption)).foregroundStyle(.secondary)
             Spacer()
-            Button(action: { isShowingImporter = true }) { Image(systemName: "folder.badge.plus").font(.system(size: 11)) }
-                .buttonStyle(.plain).help("添加文件或文件夹").accessibilityLabel("添加文件或文件夹")
-            Button(action: refreshCurrentTab) { Image(systemName: "arrow.clockwise").font(.system(size: 11)) }
-                .buttonStyle(.plain).help("刷新文件状态").accessibilityLabel("刷新文件状态")
-        }.padding(.horizontal, 10).padding(.vertical, 6)
+            Button(action: { isShowingImporter = true }) {
+                Image(systemName: "folder.badge.plus").font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("添加文件或文件夹").accessibilityLabel("添加文件或文件夹")
+            Button(action: refreshCurrentTab) {
+                Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("刷新文件状态").accessibilityLabel("刷新文件状态")
+        }.padding(.horizontal, 12).padding(.vertical, 6)
     }
 
     private func refreshCurrentTab() {
@@ -641,14 +663,19 @@ struct EntryRow: View {
     var body: some View {
         HStack(spacing: 8) {
             FileIconView(entry: entry).frame(width: 20, height: 20).opacity(entry.isMissing ? 0.4 : 1)
-            Text(entry.displayName).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
+            Text(entry.displayName).font(.system(size: Design.body)).lineLimit(1).truncationMode(.middle)
                 .foregroundStyle(entry.isMissing ? .secondary : .primary)
             if entry.isMissing {
-                Text("未找到").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: Design.micro)).foregroundStyle(.orange)
             }
             Spacer()
         }.padding(.vertical, 3).padding(.horizontal, 6)
-        .background(isFlashing ? Color.accentColor.opacity(0.10) : isSelected ? Color.accentColor.opacity(0.14) : isHovered ? Color.secondary.opacity(0.06) : Color.clear).cornerRadius(4)
+        .background(isFlashing ? Color.accentColor.opacity(Design.flashAlpha)
+            : isSelected ? Color.accentColor.opacity(Design.selectedAlpha)
+            : isHovered ? Color.secondary.opacity(Design.hoverAlpha) : Color.clear)
+        .overlay(RoundedRectangle(cornerRadius: Design.radiusS)
+            .strokeBorder(Color.accentColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Design.radiusS))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.isMissing ? "\(entry.displayName)，未找到" : entry.displayName)
     }
@@ -661,30 +688,26 @@ struct GridEntryItem: View {
     var isSelected = false; var isFlashing = false; var isHovered = false
     var body: some View {
         VStack(spacing: 4) {
-            FileIconView(entry: entry).frame(width: 40, height: 40).frame(width: 56, height: 56)
-                .background(Color.secondary.opacity(0.08)).cornerRadius(8)
+            FileIconView(entry: entry).frame(width: 48, height: 48).frame(width: 56, height: 56)
+                .background(Color.secondary.opacity(Design.wellAlpha)).cornerRadius(Design.radiusM)
                 .overlay(alignment: .topTrailing) {
                     if entry.isMissing {
                         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundStyle(.orange)
                             .offset(x: 3, y: -3)
                     }
                 }
-            Text(truncatedName).font(.system(size: 10)).lineLimit(2).multilineTextAlignment(.center)
+            Text(entry.displayName).font(.system(size: Design.ui)).lineLimit(1).truncationMode(.middle)
                 .foregroundStyle(entry.isMissing ? .secondary : .primary)
-                .frame(width: 72, height: 28, alignment: .top)
-        }.frame(width: 80, height: 100)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isFlashing ? Color.accentColor.opacity(0.10) : isSelected ? Color.accentColor.opacity(0.14) : isHovered ? Color.secondary.opacity(0.06) : Color.clear))
+                .frame(width: 76, height: 14, alignment: .top)
+        }
+        .frame(width: 80, height: 86)
+        .background(RoundedRectangle(cornerRadius: Design.radiusM).fill(isFlashing ? Color.accentColor.opacity(Design.flashAlpha)
+            : isSelected ? Color.accentColor.opacity(Design.selectedAlpha)
+            : isHovered ? Color.secondary.opacity(Design.hoverAlpha) : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: Design.radiusM)
+            .strokeBorder(Color.accentColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.isMissing ? "\(entry.displayName)，未找到" : entry.displayName)
-    }
-    /// Show ext + first few chars if name is long
-    private var truncatedName: String {
-        let name = entry.displayName
-        let ext = (name as NSString).pathExtension
-        if ext.isEmpty { return name }
-        let base = (name as NSString).deletingPathExtension
-        if base.count <= 10 { return name }
-        return String(base.prefix(6)) + "…." + ext
     }
 }
 

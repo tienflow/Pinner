@@ -65,7 +65,7 @@ struct OTPView: View {
                     if !account.issuer.isEmpty {
                         Text(account.issuer).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
-                    Text(account.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    Text(account.name).font(.system(size: Design.body, weight: .medium)).lineLimit(1)
                 }
                 Spacer()
                 Button(action: { copyCode(code, id: account.id) }) {
@@ -80,13 +80,15 @@ struct OTPView: View {
                 }.buttonStyle(.plain)
             }
             HStack {
-                Text("\(countdown)s").font(.system(size: 9)).foregroundStyle(.secondary)
+                Text("\(countdown)s").font(.system(size: Design.micro)).foregroundStyle(.secondary)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5).fill(Color.secondary.opacity(0.12)).frame(height: 3)
-                        RoundedRectangle(cornerRadius: 1.5).fill(isUrgent ? Color.red : Color.accentColor).frame(width: geo.size.width * progress, height: 3)
+                        RoundedRectangle(cornerRadius: 2).fill(Color.secondary.opacity(0.12)).frame(height: 4)
+                        RoundedRectangle(cornerRadius: 2).fill(isUrgent ? Color.red : Color.accentColor)
+                            .frame(width: geo.size.width * progress, height: 4)
+                            .animation(.linear(duration: 1), value: progress)
                     }
-                }.frame(height: 3)
+                }.frame(height: 4)
             }
         }
         .padding(.vertical, 4).padding(.horizontal, 4)

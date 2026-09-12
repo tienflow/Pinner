@@ -71,8 +71,8 @@ struct GeminiStatsView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .frame(maxWidth: .infinity)
-                .background(Color.secondary.opacity(0.04))
-                .cornerRadius(5)
+                .background(Color.secondary.opacity(Design.slotAlpha))
+                .clipShape(Capsule())
                 .help("Token 明细：\n净输入: \(formatExact(stats.inputTokens))\n缓存命中: \(formatExact(stats.cacheReadTokens)) (\(String(format: "%.1f%%", stats.cacheHitRate)))\n模型生成: \(formatExact(stats.outputTokens))\n上下文吞吐: \(formatExact(stats.currentTokens))")
             }
             .padding(.horizontal, 12)
@@ -100,8 +100,8 @@ struct GeminiStatsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.secondary.opacity(0.06))
-        .cornerRadius(6)
+        .background(Color.secondary.opacity(Design.slotAlpha))
+        .cornerRadius(Design.radiusM)
     }
 
     private func trendView(_ value: Double) -> some View {
@@ -144,13 +144,13 @@ struct GeminiStatsView: View {
                     VStack(alignment: .trailing, spacing: 0) {
                         Spacer().frame(height: 4)
                         Text(fmtToken(maxTokens))
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                         Spacer()
                         Text(fmtToken(maxTokens / 2))
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                         Spacer()
                         Text("0")
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                         Spacer().frame(height: 4)
                     }
                     .frame(width: 34)
