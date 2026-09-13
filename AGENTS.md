@@ -27,6 +27,8 @@ pkill -f CollectionBoxApp
 
 `open` 通过 LaunchServices 启动应用，进程独立于终端。每次 `swift build` 后必须重新 `codesign`，否则 macOS Gatekeeper 会弹窗拦截。
 
+构建依赖：DSH 统计需要 Homebrew 的 zstd（`brew install zstd`），缺失时链接阶段报 `-lzstd` 找不到。
+
 ## 3. 质量验证（🔴 改完必须跑）
 
 - 改完跑项目的构建命令（`npm run build` / `swift build` / `cargo build` / `make` 等）

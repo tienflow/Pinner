@@ -51,6 +51,8 @@
 - **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义
 - **主题**：浅色、深色、自动
 
+产品落地页位于 `landing/`（单文件静态页，字体已内联，可部署到任意静态托管）。
+
 ## 技术栈
 
 - Swift 6 / SwiftUI / AppKit
