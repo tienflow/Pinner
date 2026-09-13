@@ -35,7 +35,7 @@ struct StatsDashboardView: View {
             Divider()
             mainArea
         }
-        .frame(minWidth: 1040, idealWidth: 1120, minHeight: 680, idealHeight: 760)
+        .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
         .onAppear { reload() }
         .onChange(of: range) { _, newRange in
             if newRange != .custom { reload() }
@@ -204,72 +204,81 @@ struct StatsDashboardView: View {
     }
 
     private var contributionGrid: some View {
-        let cal = Calendar.current
-        let maxWeeks = 26
-        let today = cal.startOfDay(for: Date())
-        let weekday = cal.component(.weekday, from: today)
-        let daysToWeekEnd = (7 - weekday) % 7
-        let gridEnd = cal.date(byAdding: .day, value: daysToWeekEnd, to: today)!
-        let gridStart = cal.date(byAdding: .day, value: -(maxWeeks * 7 - 1), to: gridEnd)!
+        GeometryReader { geo in
+            let cal = Calendar.current
+            let maxWeeks = 26
+            let rowLabelWidth: CGFloat = 16
+            let gap: CGFloat = 2
+            let usable = max(120, geo.size.width - rowLabelWidth)
+            let cell = max(5, floor((usable - CGFloat(maxWeeks - 1) * gap) / CGFloat(maxWeeks)))
+            let today = cal.startOfDay(for: Date())
+            let weekday = cal.component(.weekday, from: today)
+            let daysToWeekEnd = (7 - weekday) % 7
+            let gridEnd = cal.date(byAdding: .day, value: daysToWeekEnd, to: today)!
+            let gridStart = cal.date(byAdding: .day, value: -(maxWeeks * 7 - 1), to: gridEnd)!
 
-        var daily: [Date: Int] = [:]
-        for r in allRecords {
-            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
-            daily[day, default: 0] += r.tokens
-        }
-        let maxDay = daily.values.max() ?? 0
-
-        var columns: [[Date]] = []
-        var cursor = gridStart
-        while cursor <= gridEnd {
-            var week: [Date] = []
-            for offset in 0..<7 {
-                if let d = cal.date(byAdding: .day, value: offset, to: cursor) { week.append(d) }
+            var daily: [Date: Int] = [:]
+            for r in allRecords {
+                let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
+                daily[day, default: 0] += r.tokens
             }
-            columns.append(week)
-            cursor = cal.date(byAdding: .day, value: 7, to: cursor) ?? gridEnd
-        }
+            let maxDay = daily.values.max() ?? 0
 
-        let dayFormatter = DateFormatter(); dayFormatter.dateFormat = "M/d"
-        let monthFormatter = DateFormatter(); monthFormatter.dateFormat = "M月"
-        let rowNames = ["日", "一", "二", "三", "四", "五", "六"]  // columns[ci][ri]: ri 0 = gridStart's weekday; gridStart is a Sunday by construction
+            var columns: [[Date]] = []
+            var cursor = gridStart
+            while cursor <= gridEnd {
+                var week: [Date] = []
+                for offset in 0..<7 {
+                    if let d = cal.date(byAdding: .day, value: offset, to: cursor) { week.append(d) }
+                }
+                columns.append(week)
+                cursor = cal.date(byAdding: .day, value: 7, to: cursor) ?? gridEnd
+            }
 
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 2) {
-                Text("").frame(width: 16)
-                ForEach(columns.indices, id: \.self) { ci in
-                    VStack(spacing: 0) {
-                        if ci == 0 || cal.component(.month, from: columns[ci][0]) != cal.component(.month, from: columns[ci - 1][0]) {
-                            Text(monthFormatter.string(from: columns[ci][0]))
-                                .font(.system(size: 8)).foregroundStyle(.tertiary)
+            let dayFormatter = DateFormatter(); dayFormatter.dateFormat = "M/d"
+            let monthFormatter = DateFormatter(); monthFormatter.dateFormat = "M月"
+            let rowNames = ["日", "一", "二", "三", "四", "五", "六"]  // gridStart is a Sunday by construction
+
+            return VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: gap) {
+                    Text("").frame(width: rowLabelWidth)
+                    ForEach(columns.indices, id: \.self) { ci in
+                        VStack(spacing: 0) {
+                            if ci == 0 || cal.component(.month, from: columns[ci][0]) != cal.component(.month, from: columns[ci - 1][0]) {
+                                Text(monthFormatter.string(from: columns[ci][0]))
+                                    .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .frame(width: cell, alignment: .leading)
+                    }
+                }
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(spacing: gap) {
+                        ForEach(0..<7, id: \.self) { ri in
+                            Text(rowNames[ri]).font(.system(size: 8)).foregroundStyle(.tertiary)
+                                .frame(width: rowLabelWidth, height: cell, alignment: .trailing)
                         }
                     }
-                    .frame(width: 12, alignment: .leading)
-                }
-            }
-            HStack(alignment: .top, spacing: 0) {
-                VStack(spacing: 2) {
-                    ForEach(0..<7, id: \.self) { ri in
-                        Text(rowNames[ri]).font(.system(size: 8)).foregroundStyle(.tertiary)
-                            .frame(width: 16, height: 12, alignment: .trailing)
-                    }
-                }
-                HStack(alignment: .top, spacing: 2) {
-                    ForEach(columns.indices, id: \.self) { ci in
-                        VStack(spacing: 2) {
-                            ForEach(0..<7, id: \.self) { ri in
-                                let day = columns[ci][ri]
-                                let tokens = daily[day] ?? 0
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(heatColor(tokens: tokens, maxDay: maxDay))
-                                    .frame(width: 12, height: 12)
-                                    .help(tokens > 0 ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens" : dayFormatter.string(from: day))
+                    HStack(alignment: .top, spacing: gap) {
+                        ForEach(columns.indices, id: \.self) { ci in
+                            VStack(spacing: gap) {
+                                ForEach(0..<7, id: \.self) { ri in
+                                    let day = columns[ci][ri]
+                                    let tokens = daily[day] ?? 0
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(heatColor(tokens: tokens, maxDay: maxDay))
+                                        .frame(width: cell, height: cell)
+                                        .help(tokens > 0 ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens" : dayFormatter.string(from: day))
+                                }
                             }
                         }
                     }
                 }
             }
         }
+        // Sidebar is a fixed 300pt: usable = 300 − 20 (card padding) − 16
+        // (row labels), cell = floor((264 − 25×2) / 26) = 8 → grid ≈ 7×8 + 6×2.
+        .frame(height: 86)
     }
 
     private func heatColor(tokens: Int, maxDay: Int) -> Color {
@@ -448,8 +457,13 @@ struct StatsDashboardView: View {
                     }
                     Text(String(format: "%.1f%%", share))
                         .font(.system(size: 22, weight: .bold, design: .rounded))
-                    Text("\(models) 模型")
-                        .font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text("\(WorkBuddyStats.formatTokens(tokens)) tokens")
+                            .font(.system(size: Design.caption, weight: .semibold))
+                            .foregroundStyle(agentColor[agent] ?? .secondary)
+                        Text("· \(models) 模型")
+                            .font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
