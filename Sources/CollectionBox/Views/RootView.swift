@@ -33,19 +33,6 @@ extension UTType {
     static let pinnerEntry = UTType(exportedAs: "com.pinner.entry")
 }
 
-/// Temporary drag diagnostics — remove once drag-to-reorder is confirmed
-/// working.
-enum DragLog {
-    static func log(_ message: String) {
-        let line = "[drag] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            let fh = FileHandle(forWritingAtPath: "/tmp/pinner_drag.log")
-            if let fh { fh.seekToEndOfFile(); fh.write(data); fh.closeFile() }
-            else { try? line.write(toFile: "/tmp/pinner_drag.log", atomically: true, encoding: .utf8) }
-        }
-    }
-}
-
 struct RootView: View {
     @State var store: CollectionStore
     var onPinToggle: (() -> Void)?
@@ -599,7 +586,6 @@ struct RootView: View {
     /// other apps), an internal entry ID data blob, and a plain-text ID
     /// fallback (some pasteboard matching paths only surface text types).
     private func dragProvider(for entry: BookmarkEntry) -> NSItemProvider {
-        DragLog.log("lift: \(entry.displayName)")
         var provider = NSItemProvider()
         if let url = BookmarkService.resolveURL(entry.bookmarkData) {
             provider = NSItemProvider(object: url as NSURL)
@@ -624,17 +610,14 @@ struct RootView: View {
 
     private func loadDraggedEntryID(_ provider: NSItemProvider, completion: @escaping (UUID?) -> Void) {
         if provider.hasItemConformingToTypeIdentifier(UTType.pinnerEntry.identifier) {
-            DragLog.log("load via pinnerEntry")
             provider.loadItem(forTypeIdentifier: UTType.pinnerEntry.identifier, options: nil) { item, _ in
                 completion(Self.entryID(fromItem: item))
             }
         } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-            DragLog.log("load via plainText fallback")
             provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
                 completion(Self.entryID(fromItem: item))
             }
         } else {
-            DragLog.log("load failed: no matching type")
             completion(nil)
         }
     }
@@ -644,20 +627,18 @@ struct RootView: View {
     /// is restricted to the same section (pinned / unpinned).
     private func handleEntryReorderDrop(providers: [NSItemProvider], onto target: BookmarkEntry) -> Bool {
         guard let p = providers.first else { return false }
-        DragLog.log("drop onto: \(target.displayName)")
         loadDraggedEntryID(p) { id in
             DispatchQueue.main.async {
-                guard let id else { DragLog.log("drop abort: unparsable payload"); return }
-                guard id != target.id else { DragLog.log("drop abort: same row"); return }
-                guard let ti = tabIndex(of: target.id) else { DragLog.log("drop abort: no tab"); return }
-                guard let dragged = store.tabs[ti].entries.first(where: { $0.id == id }) else { DragLog.log("drop abort: entry gone"); return }
-                guard dragged.isPinned == target.isPinned else { DragLog.log("drop abort: cross-section"); return }
+                guard let id else { return }
+                guard id != target.id else { return }
+                guard let ti = tabIndex(of: target.id) else { return }
+                guard let dragged = store.tabs[ti].entries.first(where: { $0.id == id }) else { return }
+                guard dragged.isPinned == target.isPinned else { return }
                 if sortOrder != .manual {
                     sortOrder = .manual
                     UserDefaults.standard.set(SortOrder.manual.rawValue, forKey: "CollectionBox.sortOrder")
                 }
                 store.reorderEntry(id, before: target.id, in: ti)
-                DragLog.log("reordered \(dragged.displayName) above \(target.displayName)")
             }
         }
         return true

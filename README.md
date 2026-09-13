@@ -147,7 +147,7 @@ WorkBuddy 快捷键    ← 子菜单配置
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.3.0.dmg`
+2. 下载最新版本的 `Pinner-v1.4.0.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 
