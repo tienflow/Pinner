@@ -12,7 +12,7 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
                              backing: .buffered, defer: false)
-            w.title = "Pinner 设置"
+            w.title = "总览"
             w.isReleasedWhenClosed = false
             w.setFrameAutosaveName("PinnerDashboardWindow")
             w.contentView = NSHostingView(rootView: StatsDashboardView())

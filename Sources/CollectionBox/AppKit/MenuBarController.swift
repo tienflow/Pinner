@@ -81,7 +81,7 @@ public final class MenuBarController: NSObject {
 
     private func showMenu() {
         let m = NSMenu()
-        let header = NSMenuItem(title: "Pinner 设置", action: #selector(openDashboard), keyEquivalent: "")
+        let header = NSMenuItem(title: "总览", action: #selector(openDashboard), keyEquivalent: "")
         header.target = self; m.addItem(header)
         m.addItem(.separator())
 
