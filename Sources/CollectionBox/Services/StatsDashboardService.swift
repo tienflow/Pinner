@@ -6,7 +6,7 @@ enum StatsAgent: String, CaseIterable, Sendable {
     var label: String {
         switch self {
         case .codex: return "Codex"
-        case .gemini: return "Gemini"
+        case .gemini: return "Antigravity"
         case .workbuddy: return "WorkBuddy"
         }
     }

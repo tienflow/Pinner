@@ -137,9 +137,9 @@ public final class MenuBarController: NSObject {
         m.addItem(.separator())
 
         // Gemini Stats
-        let geminiStatsItem = NSMenuItem(title: "Gemini 统计", action: #selector(showGeminiStatsFromMenu), keyEquivalent: "")
+        let geminiStatsItem = NSMenuItem(title: "Antigravity 统计", action: #selector(showGeminiStatsFromMenu), keyEquivalent: "")
         geminiStatsItem.target = self; m.addItem(geminiStatsItem)
-        let geminiStatsHotkeyItem = NSMenuItem(title: "Gemini 统计快捷键", action: nil, keyEquivalent: "")
+        let geminiStatsHotkeyItem = NSMenuItem(title: "Antigravity 统计快捷键", action: nil, keyEquivalent: "")
         let geminiStatsHotkeySub = NSMenu()
         let curGeminiCombo = geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo
         let showGeminiCurrent = NSMenuItem(title: "当前: \(curGeminiCombo.displayString)", action: nil, keyEquivalent: "")
@@ -310,7 +310,7 @@ public final class MenuBarController: NSObject {
     }
 
     @objc private func recordGeminiStatsHotkey() {
-        HotkeyRecorder.present(title: "设置 Gemini 统计快捷键") { [weak self] combo in
+        HotkeyRecorder.present(title: "设置 Antigravity 统计快捷键") { [weak self] combo in
             self?.geminiStatsHotkeyManager?.save(combo: combo)
         }
     }

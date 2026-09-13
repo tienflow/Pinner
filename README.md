@@ -1,6 +1,6 @@
 # Pinner
 
-你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示，以及 Codex / Gemini (Antigravity) / WorkBuddy 三套本地 Token 用量统计。
+你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示，以及 Codex / Antigravity (Gemini) / WorkBuddy 三套本地 Token 用量统计。
 
 运行截图见 `image/` 目录。
 
@@ -35,7 +35,7 @@
 - **趋势对比**：每个维度显示与上一周期的环比变化
 - **快捷键**：默认 `⌘⇧I`，可自定义
 
-**Gemini 统计**
+**Antigravity 统计**
 - **Token 用量**：查询本地 Antigravity 数据库，按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
 - **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
 - **快捷键**：默认 `⌘⇧G`，可自定义
@@ -48,7 +48,7 @@
 
 **通用**
 - **统计总览**：菜单栏右键 →「总览」打开统计大窗口——三个 Agent 合计与分项卡片、按 Agent / 按模型（含占比与会话数）、每日明细 / 会话排行 / 模型排行、GitHub 格风格的按天 token 热力图，支持今天 / 近 7 天 / 30 天 / 全部 / 自定义，窗口大小自动记忆
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Gemini 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义
 - **主题**：浅色、深色、自动
 
 ## 技术栈
@@ -78,8 +78,8 @@ Sources/
 │       ├── OTPHotkeyManager.swift            # OTP 快捷键
 │       ├── CodexStatsWindowController.swift  # Codex 统计面板
 │       ├── CodexStatsHotkeyManager.swift     # Codex 统计快捷键
-│       ├── GeminiStatsWindowController.swift # Gemini 统计面板
-│       ├── GeminiStatsHotkeyManager.swift    # Gemini 统计快捷键
+│       ├── GeminiStatsWindowController.swift # Antigravity 统计面板
+│       ├── GeminiStatsHotkeyManager.swift    # Antigravity 统计快捷键
 │       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
 │       └── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
@@ -96,10 +96,10 @@ Sources/
 | `⌘⇧P`（默认） | 在鼠标位置展开收藏面板 |
 | `⌘⇧O`（默认） | 在鼠标位置展开 OTP 面板并自动复制验证码 |
 | `⌘⇧I`（默认） | 打开 Codex 统计面板 |
-| `⌘⇧G`（默认） | 打开 Gemini 统计面板 |
+| `⌘⇧G`（默认） | 打开 Antigravity 统计面板 |
 | `⌘⇧W`（默认） | 打开 WorkBuddy 统计面板 |
 
-可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 / Gemini 统计快捷键 / WorkBuddy 快捷键 → 设置快捷键 中自定义。
+可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 / Antigravity 统计快捷键 / WorkBuddy 快捷键 → 设置快捷键 中自定义。
 
 ### 面板内快捷键
 
@@ -131,8 +131,8 @@ OTP 快捷键          ← 子菜单配置
 Codex 统计          ← 打开统计面板
 Codex 统计快捷键     ← 子菜单配置
 ──────────
-Gemini 统计         ← 打开统计面板
-Gemini 统计快捷键    ← 子菜单配置
+Antigravity 统计      ← 打开统计面板
+Antigravity 统计快捷键 ← 子菜单配置
 ──────────
 WorkBuddy 统计      ← 打开统计面板
 WorkBuddy 快捷键    ← 子菜单配置
