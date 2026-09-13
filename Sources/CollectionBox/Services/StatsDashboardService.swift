@@ -10,13 +10,26 @@ enum StatsAgent: String, CaseIterable, Sendable {
         case .workbuddy: return "WorkBuddy"
         }
     }
+
+    var symbolName: String {
+        switch self {
+        case .codex: return "terminal.fill"
+        case .gemini: return "sparkles"
+        case .workbuddy: return "briefcase.fill"
+        }
+    }
 }
 
 struct UnifiedUsageRecord: Sendable {
     let agent: StatsAgent
     let model: String?      // nil → unknown-model bucket
+    let title: String?
     let tsMs: Int64
-    let tokens: Int
+    let tokens: Int         // total context throughput (input incl. cache + output)
+    let freshInput: Int     // 0 when the source has no split (Codex)
+    let cached: Int
+    let output: Int
+    let hasBreakdown: Bool  // false → only `tokens` is meaningful (Codex)
     let sessionId: String
 }
 
@@ -34,15 +47,21 @@ final class StatsDashboardService {
         switch agent {
         case .codex:
             return codex.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
-                UnifiedUsageRecord(agent: .codex, model: $0.model, tsMs: $0.tsMs, tokens: $0.tokens, sessionId: $0.sessionId)
+                UnifiedUsageRecord(agent: .codex, model: $0.model, title: $0.title, tsMs: $0.tsMs,
+                                   tokens: $0.tokens, freshInput: 0, cached: 0, output: 0,
+                                   hasBreakdown: false, sessionId: $0.sessionId)
             }
         case .gemini:
             return gemini.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
-                UnifiedUsageRecord(agent: .gemini, model: nil, tsMs: $0.tsMs, tokens: $0.tokens, sessionId: $0.sessionId)
+                UnifiedUsageRecord(agent: .gemini, model: nil, title: $0.title, tsMs: $0.tsMs,
+                                   tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
             }
         case .workbuddy:
             return workbuddy.collectRecords(sinceMs: sinceMs).map {
-                UnifiedUsageRecord(agent: .workbuddy, model: $0.model, tsMs: $0.tsMs, tokens: $0.tokens, sessionId: $0.sessionId)
+                UnifiedUsageRecord(agent: .workbuddy, model: $0.model, title: $0.title, tsMs: $0.tsMs,
+                                   tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
             }
         }
     }

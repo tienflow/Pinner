@@ -226,18 +226,27 @@ final class WorkBuddyStatsService: Sendable {
     }
 
     /// Per-turn usage records for the dashboard, with the turn's session
-    /// model resolved from the sessions table (nil → unknown bucket).
-    func collectRecords(sinceMs: Int64) -> [(tsMs: Int64, tokens: Int, sessionId: String, model: String?)] {
+    /// model and title resolved from the sessions table.
+    /// `freshInput` = input − cache_read (input includes cached reads here).
+    func collectRecords(sinceMs: Int64) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
         let records = cachedCollect(sinceMs: sinceMs)
-        let models = sessionModelMap()
+        let info = sessionInfoMap()
         return records.map { r in
-            (tsMs: r.tsMs, tokens: r.input + r.output, sessionId: r.sessionId, model: models[r.sessionId])
+            let cached = r.cacheRead
+            return (tsMs: r.tsMs, tokens: r.input + r.output,
+                    freshInput: max(0, r.input - cached), cached: cached, output: r.output,
+                    sessionId: r.sessionId, model: info[r.sessionId]?.model, title: info[r.sessionId]?.title)
         }
     }
 
-    /// session_id -> model from ~/.workbuddy/workbuddy.db; empty map when the
-    /// DB is locked or missing (records then fall into the unknown bucket).
-    private func sessionModelMap() -> [String: String] {
+    private struct SessionInfo {
+        let model: String?
+        let title: String?
+    }
+
+    /// session_id -> (model, title) from ~/.workbuddy/workbuddy.db; empty map
+    /// when the DB is locked or missing (records then fall into unknown).
+    private func sessionInfoMap() -> [String: SessionInfo] {
         let dbPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".workbuddy/workbuddy.db").path
         guard FileManager.default.fileExists(atPath: dbPath) else { return [:] }
@@ -253,14 +262,18 @@ final class WorkBuddyStatsService: Sendable {
         defer { sqlite3_close(db) }
 
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT id, model FROM sessions", -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [:] }
+        guard sqlite3_prepare_v2(db, "SELECT id, model, title FROM sessions", -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [:] }
         defer { sqlite3_finalize(stmt) }
 
-        var map: [String: String] = [:]
+        var map: [String: SessionInfo] = [:]
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) else { continue }
             let model = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
-            if let model, !model.isEmpty { map[id] = model }
+            let title = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+            map[id] = SessionInfo(
+                model: (model?.isEmpty == false) ? model : nil,
+                title: (title?.isEmpty == false) ? title : nil
+            )
         }
         return map
     }

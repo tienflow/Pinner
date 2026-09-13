@@ -213,15 +213,53 @@ final class GeminiStatsService {
 
     /// Per-step usage records for the dashboard. Antigravity payloads carry
     /// no model name, so callers bucket these under an "unknown" model.
-    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, sessionId: String)] {
-        var records: [(tsMs: Int64, tokens: Int, sessionId: String)] = []
+    /// `freshInput`/`cached`/`output` give the input/output/cache split
+    /// (input here excludes cached reads).
+    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, title: String?)] {
+        let titles = conversationTitleMap()
+        var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, title: String?)] = []
         for (cid, fileUrl) in getEligibleDbFiles(since: sinceUnix) {
             for step in querySteps(from: fileUrl.path) where step.timestamp >= sinceUnix {
-                records.append((tsMs: Int64(step.timestamp) * 1000, tokens: step.totalTokens, sessionId: cid))
+                records.append((
+                    tsMs: Int64(step.timestamp) * 1000,
+                    tokens: step.totalTokens,
+                    freshInput: step.inputTokens,
+                    cached: step.cacheReadTokens,
+                    output: step.outputTokens,
+                    sessionId: cid,
+                    title: titles[cid]
+                ))
             }
         }
         return records
     }
+
+    /// conversation_id -> title, read once per service lifetime. The summary
+    /// DB may be WAL-locked by Antigravity; immutable read bypasses the lock
+    /// at the cost of possibly missing the newest rows (titles only).
+    private func conversationTitleMap() -> [String: String] {
+        if let cached = titleMapCache { return cached }
+        var map: [String: String] = [:]
+        let path = summaryDbPath
+        var db: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY
+        if sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK, let db = db {
+            sqlite3_busy_timeout(db, 3000)
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "SELECT conversation_id, title FROM conversation_summaries", -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) else { continue }
+                    let title = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+                    if let title, !title.isEmpty { map[id] = title }
+                }
+            }
+            if stmt != nil { sqlite3_finalize(stmt) }
+        }
+        if db != nil { sqlite3_close(db) }
+        titleMapCache = map
+        return map
+    }
+    private var titleMapCache: [String: String]?
 
     // MARK: - Internal DB & Protobuf Scanning
 
