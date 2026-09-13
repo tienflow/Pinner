@@ -53,7 +53,7 @@ final class StatsDashboardService {
             }
         case .gemini:
             return gemini.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
-                UnifiedUsageRecord(agent: .gemini, model: nil, title: $0.title, tsMs: $0.tsMs,
+                UnifiedUsageRecord(agent: .gemini, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
                                    output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
             }

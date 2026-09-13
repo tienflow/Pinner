@@ -215,11 +215,11 @@ final class GeminiStatsService {
     /// no model name, so callers bucket these under an "unknown" model.
     /// `freshInput`/`cached`/`output` give the input/output/cache split
     /// (input here excludes cached reads).
-    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, title: String?)] {
+    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
         let titles = conversationTitleMap()
-        var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, title: String?)] = []
+        var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] = []
         for (cid, fileUrl) in getEligibleDbFiles(since: sinceUnix) {
-            for step in querySteps(from: fileUrl.path) where step.timestamp >= sinceUnix {
+            for step in queryStepsWithModels(from: fileUrl.path) where step.timestamp >= sinceUnix {
                 records.append((
                     tsMs: Int64(step.timestamp) * 1000,
                     tokens: step.totalTokens,
@@ -227,6 +227,7 @@ final class GeminiStatsService {
                     cached: step.cacheReadTokens,
                     output: step.outputTokens,
                     sessionId: cid,
+                    model: step.model,
                     title: titles[cid]
                 ))
             }
@@ -234,28 +235,16 @@ final class GeminiStatsService {
         return records
     }
 
-    /// conversation_id -> title, read once per service lifetime. The summary
-    /// DB may be WAL-locked by Antigravity; immutable read bypasses the lock
-    /// at the cost of possibly missing the newest rows (titles only).
+    /// conversation_id -> title, read once per service lifetime. Falls back
+    /// to an immutable read when the summary DB is WAL-locked.
     private func conversationTitleMap() -> [String: String] {
         if let cached = titleMapCache { return cached }
         var map: [String: String] = [:]
-        let path = summaryDbPath
-        var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READONLY
-        if sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK, let db = db {
-            sqlite3_busy_timeout(db, 3000)
-            var stmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, "SELECT conversation_id, title FROM conversation_summaries", -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    guard let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) else { continue }
-                    let title = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
-                    if let title, !title.isEmpty { map[id] = title }
-                }
-            }
-            if stmt != nil { sqlite3_finalize(stmt) }
+        queryReadOnly(path: summaryDbPath, sql: "SELECT conversation_id, title FROM conversation_summaries") { stmt in
+            guard let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) else { return }
+            let title = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+            if let title, !title.isEmpty { map[id] = title }
         }
-        if db != nil { sqlite3_close(db) }
         titleMapCache = map
         return map
     }
@@ -268,9 +257,130 @@ final class GeminiStatsService {
         let inputTokens: Int
         let outputTokens: Int
         let cacheReadTokens: Int
+        let model: String?
 
         var totalTokens: Int {
             inputTokens + outputTokens + cacheReadTokens
+        }
+    }
+
+    /// Read-only query with an immutable fallback: Antigravity keeps its DBs
+    /// in WAL mode, and a plain READONLY connection cannot create/access the
+    /// -shm file while the app holds them (prepare fails with rc 14). The
+    /// immutable URI skips the WAL and reads the main file — possibly missing
+    /// the newest un-checkpointed rows, which is acceptable for statistics.
+    private func queryReadOnly(path: String, sql: String, row: (OpaquePointer) -> Void) {
+        for immutable in [false, true] {
+            var db: OpaquePointer?
+            let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
+            let target = immutable ? "file:\(path)?immutable=1" : path
+            guard sqlite3_open_v2(target, &db, flags, nil) == SQLITE_OK, let db = db else {
+                if db != nil { sqlite3_close(db) }
+                continue
+            }
+            sqlite3_busy_timeout(db, 3000)
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
+                while sqlite3_step(stmt) == SQLITE_ROW { row(stmt) }
+                sqlite3_finalize(stmt)
+                sqlite3_close(db)
+                return
+            }
+            if stmt != nil { sqlite3_finalize(stmt) }
+            sqlite3_close(db)
+        }
+    }
+
+    /// Generation steps (step_type = 15) paired with their model name.
+    /// `gen_metadata` rows line up by position with the step_type=15 rows
+    /// (its idx is the Nth-generation sequence, steps.idx interleaves other
+    /// step types).
+    private func queryStepsWithModels(from dbPath: String) -> [StepTokenUsage] {
+        var payloads: [Data] = []
+        queryReadOnly(path: dbPath, sql: "SELECT step_payload FROM steps WHERE step_type = 15 ORDER BY idx") { stmt in
+            if let blob = sqlite3_column_blob(stmt, 0) {
+                payloads.append(Data(bytes: blob, count: Int(sqlite3_column_bytes(stmt, 0))))
+            } else {
+                payloads.append(Data())
+            }
+        }
+
+        var models: [String?] = []
+        queryReadOnly(path: dbPath, sql: "SELECT data FROM gen_metadata ORDER BY idx") { stmt in
+            if let blob = sqlite3_column_blob(stmt, 0) {
+                let buffer = UnsafeBufferPointer(start: blob.assumingMemoryBound(to: UInt8.self), count: Int(sqlite3_column_bytes(stmt, 0)))
+                models.append(parseGenModel(buffer))
+            } else {
+                models.append(nil)
+            }
+        }
+
+        var usages: [StepTokenUsage] = []
+        for (i, payload) in payloads.enumerated() {
+            guard let parsed = payload.withUnsafeBytes({ ptr -> StepTokenUsage? in
+                guard let base = ptr.baseAddress else { return nil }
+                return parseProtobufStep(UnsafeBufferPointer(start: base.assumingMemoryBound(to: UInt8.self), count: ptr.count))
+            }) else { continue }
+            let model = i < models.count ? models[i] : nil
+            usages.append(StepTokenUsage(
+                timestamp: parsed.timestamp,
+                inputTokens: parsed.inputTokens,
+                outputTokens: parsed.outputTokens,
+                cacheReadTokens: parsed.cacheReadTokens,
+                model: model
+            ))
+        }
+        return usages
+    }
+
+    /// Model name from a gen_metadata blob. The name lives in a nested
+    /// protobuf field 19 (a submessage alongside a model-api id), not at the
+    /// top level, so walk wire-type-2 fields recursively (depth-capped) and
+    /// validate the candidate looks like a model identifier.
+    private func parseGenModel<C: Collection>(_ bytes: C) -> String? where C.Element == UInt8, C.Index == Int {
+        genModelWalk(bytes, depth: 0)
+    }
+
+    private func genModelWalk<C: Collection>(_ bytes: C, depth: Int) -> String? where C.Element == UInt8, C.Index == Int {
+        guard depth < 4 else { return nil }
+        var i = bytes.startIndex
+        let n = bytes.endIndex
+        while i < n {
+            guard let (k, newI) = readVarint(bytes, from: i) else { break }
+            i = newI
+            let fnum = Int(k >> 3)
+            let wtype = k & 7
+            if wtype == 0 {
+                guard let (_, nextI) = readVarint(bytes, from: i) else { break }
+                i = nextI
+            } else if wtype == 1 {
+                i += 8
+            } else if wtype == 5 {
+                i += 4
+            } else if wtype == 2 {
+                guard let (len, nextI) = readVarint(bytes, from: i) else { break }
+                i = nextI
+                let length = Int(len)
+                guard i + length <= n else { break }
+                let slice = bytes[i..<(i + length)]
+                if fnum == 19, let text = String(bytes: slice, encoding: .utf8),
+                   length <= 64, looksLikeModelName(text) {
+                    return text
+                }
+                if let nested = genModelWalk(slice, depth: depth + 1) {
+                    return nested
+                }
+                i += length
+            } else {
+                break
+            }
+        }
+        return nil
+    }
+
+    private func looksLikeModelName(_ text: String) -> Bool {
+        !text.isEmpty && text.allSatisfy { c in
+            (c.isASCII && (c.isLetter || c.isNumber || c == "-" || c == "." || c == "_"))
         }
     }
 
@@ -313,25 +423,7 @@ final class GeminiStatsService {
 
     /// Query step_payload for model generation steps (step_type = 15) and parse token usage.
     private func querySteps(from dbPath: String) -> [StepTokenUsage] {
-        guard let db = openDB(at: dbPath) else { return [] }
-        defer { sqlite3_close(db) }
-
-        let sql = "SELECT step_payload FROM steps WHERE step_type = 15;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [] }
-        defer { sqlite3_finalize(stmt) }
-
-        var usages: [StepTokenUsage] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let blob = sqlite3_column_blob(stmt, 0) {
-                let length = Int(sqlite3_column_bytes(stmt, 0))
-                let buffer = UnsafeBufferPointer(start: blob.assumingMemoryBound(to: UInt8.self), count: length)
-                if let parsed = parseProtobufStep(buffer) {
-                    usages.append(parsed)
-                }
-            }
-        }
-        return usages
+        queryStepsWithModels(from: dbPath)
     }
 
     /// Parse Step protobuf payload: extract CortexStepMetadata (tag 5) -> created_at (tag 1) and model_usage (tag 9).
@@ -446,7 +538,8 @@ final class GeminiStatsService {
             timestamp: ts,
             inputTokens: inputTokens,
             outputTokens: outputTokens,
-            cacheReadTokens: cacheReadTokens
+            cacheReadTokens: cacheReadTokens,
+            model: nil
         )
     }
 
