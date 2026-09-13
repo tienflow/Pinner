@@ -1,6 +1,6 @@
 # Pinner
 
-你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示、Codex 用量统计以及 Gemini (Antigravity) 用量统计。
+你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示，以及 Codex / Gemini (Antigravity) / WorkBuddy 三套本地 Token 用量统计。
 
 运行截图见 `image/` 目录。
 
@@ -40,8 +40,14 @@
 - **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
 - **快捷键**：默认 `⌘⇧G`，可自定义
 
+**WorkBuddy 统计**
+- **Token 用量**：扫描本地 `~/.workbuddy/projects` 会话文件（含 subagents，按消息 id 去重），按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
+- **双轨口径**：主卡片为上下文吞吐合计（输入+输出），明细展示净输入 / 缓存命中占比 / 输出
+- **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
+- **快捷键**：默认 `⌘⇧W`，可自定义
+
 **通用**
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Gemini 统计 `⌘⇧G`，均可自定义
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Gemini 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义
 - **主题**：浅色、深色、自动
 
 ## 技术栈
@@ -59,7 +65,7 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount）
-│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService
+│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
 │   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView 等）
 │   └── AppKit/                 # AppKit 集成
@@ -72,7 +78,9 @@ Sources/
 │       ├── CodexStatsWindowController.swift  # Codex 统计面板
 │       ├── CodexStatsHotkeyManager.swift     # Codex 统计快捷键
 │       ├── GeminiStatsWindowController.swift # Gemini 统计面板
-│       └── GeminiStatsHotkeyManager.swift    # Gemini 统计快捷键
+│       ├── GeminiStatsHotkeyManager.swift    # Gemini 统计快捷键
+│       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
+│       └── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
 
@@ -88,8 +96,9 @@ Sources/
 | `⌘⇧O`（默认） | 在鼠标位置展开 OTP 面板并自动复制验证码 |
 | `⌘⇧I`（默认） | 打开 Codex 统计面板 |
 | `⌘⇧G`（默认） | 打开 Gemini 统计面板 |
+| `⌘⇧W`（默认） | 打开 WorkBuddy 统计面板 |
 
-可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 / Gemini 统计快捷键 → 设置快捷键 中自定义。
+可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 / Gemini 统计快捷键 / WorkBuddy 快捷键 → 设置快捷键 中自定义。
 
 ### 面板内快捷键
 
@@ -123,6 +132,9 @@ Codex 统计快捷键     ← 子菜单配置
 ──────────
 Gemini 统计         ← 打开统计面板
 Gemini 统计快捷键    ← 子菜单配置
+──────────
+WorkBuddy 统计      ← 打开统计面板
+WorkBuddy 快捷键    ← 子菜单配置
 ──────────
 主题                ← 自动 / 浅色 / 深色
 ──────────

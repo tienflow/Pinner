@@ -759,9 +759,10 @@ struct EntryRow: View {
             : isSelected ? Color.accentColor.opacity(Design.selectedAlpha)
             : isHovered ? Color.secondary.opacity(Design.hoverAlpha) : Color.clear)
         .overlay(alignment: .top) {
-            if isDropTargeted {
-                Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
-            }
+            // Always present, toggled by opacity: adding/removing the branch
+            // mid-drag invalidates the active drag session on macOS.
+            Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
+                .opacity(isDropTargeted ? 1 : 0)
         }
         .overlay(RoundedRectangle(cornerRadius: Design.radiusS)
             .strokeBorder(Color.accentColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1))
@@ -804,9 +805,10 @@ struct GridEntryItem: View {
         .overlay(RoundedRectangle(cornerRadius: Design.radiusM)
             .strokeBorder(Color.accentColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1))
         .overlay(alignment: .top) {
-            if isDropTargeted {
-                Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
-            }
+            // Always present, toggled by opacity: adding/removing the branch
+            // mid-drag invalidates the active drag session on macOS.
+            Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
+                .opacity(isDropTargeted ? 1 : 0)
         }
         .onDrop(of: [.pinnerEntry, .plainText], isTargeted: $isDropTargeted) { onReorderDrop($0) }
         .onHover { isHovered = $0 }

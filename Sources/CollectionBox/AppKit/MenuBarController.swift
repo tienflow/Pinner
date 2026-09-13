@@ -21,6 +21,8 @@ public final class MenuBarController: NSObject {
     private var codexStatsHotkeyManager: CodexStatsHotkeyManager?
     private var geminiStatsController: GeminiStatsWindowController?
     private var geminiStatsHotkeyManager: GeminiStatsHotkeyManager?
+    private var workbuddyStatsController: WorkBuddyStatsWindowController?
+    private var workbuddyStatsHotkeyManager: WorkBuddyStatsHotkeyManager?
 
     public init(store: CollectionStore) { self.store = store; super.init() }
 
@@ -55,6 +57,11 @@ public final class MenuBarController: NSObject {
         geminiStatsHotkeyManager = GeminiStatsHotkeyManager()
         geminiStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showGeminiStats() }
         geminiStatsHotkeyManager?.register()
+
+        workbuddyStatsController = WorkBuddyStatsWindowController()
+        workbuddyStatsHotkeyManager = WorkBuddyStatsHotkeyManager()
+        workbuddyStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showWorkBuddyStats() }
+        workbuddyStatsHotkeyManager?.register()
 
         applyTheme()
     }
@@ -146,6 +153,23 @@ public final class MenuBarController: NSObject {
 
         m.addItem(.separator())
 
+        // WorkBuddy Stats
+        let workbuddyStatsItem = NSMenuItem(title: "WorkBuddy 统计", action: #selector(showWorkBuddyStatsFromMenu), keyEquivalent: "")
+        workbuddyStatsItem.target = self; m.addItem(workbuddyStatsItem)
+        let workbuddyStatsHotkeyItem = NSMenuItem(title: "WorkBuddy 快捷键", action: nil, keyEquivalent: "")
+        let workbuddyStatsHotkeySub = NSMenu()
+        let curWorkbuddyCombo = workbuddyStatsHotkeyManager?.currentCombo ?? WorkBuddyStatsHotkeyManager.defaultCombo
+        let showWorkbuddyCurrent = NSMenuItem(title: "当前: \(curWorkbuddyCombo.displayString)", action: nil, keyEquivalent: "")
+        showWorkbuddyCurrent.isEnabled = false; workbuddyStatsHotkeySub.addItem(showWorkbuddyCurrent)
+        workbuddyStatsHotkeySub.addItem(.separator())
+        let recordWorkbuddyItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordWorkBuddyStatsHotkey), keyEquivalent: "")
+        recordWorkbuddyItem.target = self; workbuddyStatsHotkeySub.addItem(recordWorkbuddyItem)
+        let clearWorkbuddyItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearWorkBuddyStatsHotkey), keyEquivalent: "")
+        clearWorkbuddyItem.target = self; workbuddyStatsHotkeySub.addItem(clearWorkbuddyItem)
+        workbuddyStatsHotkeyItem.submenu = workbuddyStatsHotkeySub; m.addItem(workbuddyStatsHotkeyItem)
+
+        m.addItem(.separator())
+
         // Theme
         let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
         let themeSub = NSMenu()
@@ -231,6 +255,34 @@ public final class MenuBarController: NSObject {
         } else {
             geminiStatsController?.showAtMouse()
         }
+    }
+
+    @objc private func showWorkBuddyStatsFromMenu() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            workbuddyStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            workbuddyStatsController?.showAtMouse()
+        }
+    }
+
+    private func showWorkBuddyStats() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            workbuddyStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            workbuddyStatsController?.showAtMouse()
+        }
+    }
+
+    @objc private func recordWorkBuddyStatsHotkey() {
+        HotkeyRecorder.present(title: "设置 WorkBuddy 统计快捷键") { [weak self] combo in
+            self?.workbuddyStatsHotkeyManager?.save(combo: combo)
+        }
+    }
+
+    @objc private func clearWorkBuddyStatsHotkey() {
+        workbuddyStatsHotkeyManager?.clear()
     }
 
     @objc private func recordOTPHotkey() {

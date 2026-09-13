@@ -1,13 +1,14 @@
 import SwiftUI
 
-struct GeminiStatsView: View {
+struct WorkBuddyStatsView: View {
     @State private var selectedRange: StatsTimeRange = .today
-    @State private var stats: GeminiStats?
+    @State private var stats: WorkBuddyStats?
     @State private var trend: [TrendPoint] = []
     @State private var lastUpdated: Date?
+    @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var hoverIndex: Int?
-    private let service = GeminiStatsService()
+    private let service = WorkBuddyStatsService()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,7 +60,7 @@ struct GeminiStatsView: View {
                         Text(stats.formattedCache).fontWeight(.medium).foregroundStyle(.primary)
                         Text(String(format: "(%.0f%%)", stats.cacheHitRate))
                             .foregroundStyle(.green)
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: Design.micro, weight: .semibold))
                     }
                     Text("·").foregroundStyle(.tertiary)
                     HStack(spacing: 2) {
@@ -67,13 +68,13 @@ struct GeminiStatsView: View {
                         Text(stats.formattedOutput).fontWeight(.medium).foregroundStyle(.primary)
                     }
                 }
-                .font(.system(size: 10))
+                .font(.system(size: Design.caption))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .frame(maxWidth: .infinity)
                 .background(Color.secondary.opacity(Design.slotAlpha))
                 .clipShape(Capsule())
-                .help("Token 明细：\n净输入: \(formatExact(stats.inputTokens))\n缓存命中: \(formatExact(stats.cacheReadTokens)) (\(String(format: "%.1f%%", stats.cacheHitRate)))\n模型生成: \(formatExact(stats.outputTokens))\n上下文吞吐: \(formatExact(stats.currentTokens))")
+                .help("Token 明细：\n净输入: \(formatExact(stats.freshInputTokens))\n缓存命中: \(formatExact(stats.cacheReadTokens)) (\(String(format: "%.1f%%", stats.cacheHitRate)))\n模型生成: \(formatExact(stats.outputTokens))\n上下文吞吐: \(formatExact(stats.currentTokens))")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -82,14 +83,16 @@ struct GeminiStatsView: View {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 20)).foregroundStyle(.orange)
                 Text(error).font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }.padding(.vertical, 8)
-        } else {
+        } else if isLoading {
             ProgressView().controlSize(.small).padding(.vertical, 10)
+        } else {
+            Text("未找到 ~/.workbuddy/projects 会话数据").font(.system(size: 11)).foregroundStyle(.secondary).padding(.vertical, 10)
         }
     }
 
     private func metricCard(value: String, label: String, trend: Double?) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(label).font(.system(size: Design.caption)).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -109,7 +112,7 @@ struct GeminiStatsView: View {
         let isFlat = abs(value) < 0.1
         let color: Color = isFlat ? .secondary : (isUp ? .green : .red)
         let text = isFlat ? "-" : "\(isUp ? "↑" : "↓")\(String(format: "%.0f", abs(value)))%"
-        return Text(text).font(.system(size: 10, weight: .medium)).foregroundStyle(color)
+        return Text(text).font(.system(size: Design.caption, weight: .medium)).foregroundStyle(color)
     }
 
     // MARK: - Trend Chart
@@ -118,15 +121,14 @@ struct GeminiStatsView: View {
         let maxTokens = trend.map(\.tokens).max() ?? 1
 
         return VStack(alignment: .leading, spacing: 0) {
-            // Title + hover info
             HStack {
                 Text("Token 消耗趋势")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: Design.caption, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let idx = hoverIndex, idx < trend.count {
                     Text("\(trend[idx].label)  \(fmtToken(trend[idx].tokens))")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: Design.caption, weight: .medium))
                         .foregroundStyle(.primary)
                 }
             }
@@ -134,7 +136,6 @@ struct GeminiStatsView: View {
             .padding(.top, 6)
             .padding(.bottom, 4)
 
-            // Chart: Y-axis + Canvas + hover overlay
             GeometryReader { geo in
                 let canvasW = geo.size.width - 38  // 34 for Y-axis + some spacing
                 let canvasH = geo.size.height
@@ -166,7 +167,6 @@ struct GeminiStatsView: View {
                             let drawW = size.width - 4
                             let stepX = n > 1 ? drawW / CGFloat(n - 1) : drawW
 
-                            // Grid
                             for ratio in [0.0, 0.5, 1.0] {
                                 let y = baselineY - drawH * ratio
                                 var gp = Path()
@@ -190,7 +190,6 @@ struct GeminiStatsView: View {
                                 pts.append(CGPoint(x: x, y: y))
                             }
 
-                            // Gradient fill
                             var fill = Path()
                             fill.move(to: CGPoint(x: pts[0].x, y: baselineY))
                             for p in pts { fill.addLine(to: p) }
@@ -199,13 +198,11 @@ struct GeminiStatsView: View {
                             let grad = Gradient(colors: [Color.accentColor.opacity(0.2), Color.accentColor.opacity(0.01)])
                             context.fill(fill, with: .linearGradient(grad, startPoint: CGPoint(x: 0, y: 4), endPoint: CGPoint(x: 0, y: baselineY)))
 
-                            // Line
                             var line = Path()
                             line.move(to: pts[0])
                             for p in pts.dropFirst() { line.addLine(to: p) }
                             context.stroke(line, with: .color(.accentColor), lineWidth: 1.5)
 
-                            // Dots
                             for (i, p) in pts.enumerated() {
                                 let active = hoverIndex == i
                                 let hasData = trend[i].tokens > 0
@@ -218,7 +215,6 @@ struct GeminiStatsView: View {
                                 }
                             }
 
-                            // Hover line
                             if let idx = hoverIndex, idx < pts.count {
                                 var vl = Path()
                                 vl.move(to: CGPoint(x: pts[idx].x, y: 4))
@@ -227,7 +223,6 @@ struct GeminiStatsView: View {
                             }
                         }
 
-                        // Transparent hover overlay
                         Color.clear
                             .contentShape(Rectangle())
                             .onContinuousHover { phase in
@@ -249,7 +244,6 @@ struct GeminiStatsView: View {
             }
             .frame(height: 130)
             .padding(.horizontal, 12)
-            // X-axis labels
             if trend.count <= 14 {
                 HStack(spacing: 0) {
                     ForEach(trend) { pt in
@@ -300,7 +294,7 @@ struct GeminiStatsView: View {
         HStack {
             if let last = lastUpdated {
                 Text("上次更新 \(last, style: .time)")
-                    .font(.system(size: 10))
+                    .font(.system(size: Design.caption))
                     .foregroundStyle(.tertiary)
             }
             Spacer()
@@ -319,8 +313,21 @@ struct GeminiStatsView: View {
     private func refresh() {
         errorMessage = nil
         hoverIndex = nil
-        stats = service.fetchStats(for: selectedRange)
-        trend = service.fetchTrend(for: selectedRange)
-        lastUpdated = Date()
+        isLoading = true
+        stats = nil
+        let range = selectedRange
+        // Scanning session files touches hundreds of MB at worst — keep it
+        // off the main thread.
+        Task.detached(priority: .userInitiated) {
+            let newStats = service.fetchStats(for: range)
+            let newTrend = service.fetchTrend(for: range)
+            await MainActor.run {
+                guard range == selectedRange else { return }
+                stats = newStats
+                trend = newTrend
+                isLoading = false
+                lastUpdated = Date()
+            }
+        }
     }
 }
