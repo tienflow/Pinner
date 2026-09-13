@@ -22,6 +22,8 @@ struct StatsDashboardView: View {
     @State private var loadedAgents: Set<StatsAgent> = []
     @State private var lastUpdated: Date?
     @State private var detailTab: Int = 0
+    @State private var heatHoverText: String?
+    @State private var trendHoverText: String?
     @State private var enabledAgents: Set<StatsAgent> = Set(StatsAgent.allCases)
     private static let enabledAgentsKey = "CollectionBox.dashboardAgents"
     private let service = StatsDashboardService.shared
@@ -131,7 +133,7 @@ struct StatsDashboardView: View {
 
     private var modelRanking: some View {
         struct RankRow: Identifiable {
-            let idx: Int; let name: String; let share: Double
+            let idx: Int; let name: String; let tokens: Int; let share: Double
             var id: Int { idx }
         }
         let grouped = Dictionary(grouping: enabledRecords) { $0.model ?? "未知（\($0.agent.label)）" }
@@ -139,10 +141,10 @@ struct StatsDashboardView: View {
         let rows = grouped
             .map { name, recs -> RankRow in
                 let tokens = recs.reduce(0) { $0 + $1.tokens }
-                return RankRow(idx: 0, name: name, share: total > 0 ? Double(tokens) / Double(total) * 100 : 0)
+                return RankRow(idx: 0, name: name, tokens: tokens, share: total > 0 ? Double(tokens) / Double(total) * 100 : 0)
             }
             .sorted { $0.share > $1.share }
-            .prefix(5).enumerated().map { i, r in RankRow(idx: i + 1, name: r.name, share: r.share) }
+            .prefix(5).enumerated().map { i, r in RankRow(idx: i + 1, name: r.name, tokens: r.tokens, share: r.share) }
 
         return VStack(alignment: .leading, spacing: 7) {
             if rows.isEmpty {
@@ -157,7 +159,11 @@ struct StatsDashboardView: View {
                         Text(row.name)
                             .font(.system(size: Design.caption))
                             .lineLimit(1).truncationMode(.middle)
+                            .help("\(row.name)：\(WorkBuddyStats.formatTokens(row.tokens)) tokens（\(String(format: "%.1f", row.share))%）")
                         Spacer()
+                        Text(WorkBuddyStats.formatTokens(row.tokens))
+                            .font(.system(size: Design.caption, weight: .medium))
+                            .foregroundStyle(.secondary)
                         Text(String(format: "%.1f%%", row.share))
                             .font(.system(size: Design.caption, weight: .bold, design: .rounded))
                     }
@@ -191,7 +197,11 @@ struct StatsDashboardView: View {
             HStack {
                 Text("活动热力图").font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Text(timeZoneLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                if let heatHoverText {
+                    Text(heatHoverText).font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.primary)
+                } else {
+                    Text(timeZoneLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                }
             }
             if enabledRecords.isEmpty {
                 placeholder("正在扫描…")
@@ -336,10 +346,15 @@ struct StatsDashboardView: View {
                 HStack(alignment: .bottom, spacing: 2) {
                     ForEach(values.indices, id: \.self) { i in
                         let h: CGFloat = maxV > 0 ? CGFloat(CGFloat(values[i]) / CGFloat(maxV)) * 72 : 0
+                        let hoverText = "\(df.string(from: days[i]))：\(WorkBuddyStats.formatTokens(values[i])) tokens"
                         RoundedRectangle(cornerRadius: 1)
                             .fill(Color.green.opacity(values[i] > 0 ? 0.85 : 0.15))
                             .frame(height: max(3, h))
-                            .help("\(df.string(from: days[i]))：\(WorkBuddyStats.formatTokens(values[i])) tokens")
+                            .help(hoverText)
+                            .onHover { hovering in
+                                if hovering { trendHoverText = hoverText }
+                                else if trendHoverText == hoverText { trendHoverText = nil }
+                            }
                     }
                 }
                 .frame(height: 74)
