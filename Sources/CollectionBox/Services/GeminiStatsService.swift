@@ -271,24 +271,25 @@ final class GeminiStatsService {
     /// the newest un-checkpointed rows, which is acceptable for statistics.
     private func queryReadOnly(path: String, sql: String, row: (OpaquePointer) -> Void) {
         for immutable in [false, true] {
-            var db: OpaquePointer?
-            let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
-            let target = immutable ? "file:\(path)?immutable=1" : path
-            guard sqlite3_open_v2(target, &db, flags, nil) == SQLITE_OK, let db = db else {
-                if db != nil { sqlite3_close(db) }
-                continue
-            }
-            sqlite3_busy_timeout(db, 3000)
-            var stmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
-                while sqlite3_step(stmt) == SQLITE_ROW { row(stmt) }
-                sqlite3_finalize(stmt)
-                sqlite3_close(db)
-                return
-            }
-            if stmt != nil { sqlite3_finalize(stmt) }
-            sqlite3_close(db)
+            queryReadOnly(path: path, immutable: immutable, sql: sql, row: row)
         }
+    }
+
+    private func queryReadOnly(path: String, immutable: Bool, sql: String, row: (OpaquePointer) -> Void) {
+        var db: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
+        let target = immutable ? "file:\(path)?immutable=1" : path
+        guard sqlite3_open_v2(target, &db, flags, nil) == SQLITE_OK, let db = db else {
+            if db != nil { sqlite3_close(db) }
+            return
+        }
+        sqlite3_busy_timeout(db, 3000)
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
+            while sqlite3_step(stmt) == SQLITE_ROW { row(stmt) }
+            sqlite3_finalize(stmt)
+        }
+        sqlite3_close(db)
     }
 
     /// Generation steps (step_type = 15) paired with their model name.
@@ -296,25 +297,31 @@ final class GeminiStatsService {
     /// (its idx is the Nth-generation sequence, steps.idx interleaves other
     /// step types).
     private func queryStepsWithModels(from dbPath: String) -> [StepTokenUsage] {
+        // The two tables pair by position. On a live DB a step can land
+        // between the two queries and leave the tail unpaired — those
+        // records used to surface as phantom "未知" models. Retry the plain
+        // read a few times (the writer settles quickly); on persistent
+        // mismatch pair the aligned prefix — the unpaired tail is the
+        // newest, still-being-written turn.
+        for attempt in 0..<3 {
+            var payloads: [Data] = []
+            var models: [String?] = []
+            readStepPayloads(dbPath: dbPath, into: &payloads)
+            readGenModels(dbPath: dbPath, into: &models)
+            if payloads.count == models.count {
+                return pairSteps(payloads, with: models)
+            }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.15) }
+        }
         var payloads: [Data] = []
-        queryReadOnly(path: dbPath, sql: "SELECT step_payload FROM steps WHERE step_type = 15 ORDER BY idx") { stmt in
-            if let blob = sqlite3_column_blob(stmt, 0) {
-                payloads.append(Data(bytes: blob, count: Int(sqlite3_column_bytes(stmt, 0))))
-            } else {
-                payloads.append(Data())
-            }
-        }
-
         var models: [String?] = []
-        queryReadOnly(path: dbPath, sql: "SELECT data FROM gen_metadata ORDER BY idx") { stmt in
-            if let blob = sqlite3_column_blob(stmt, 0) {
-                let buffer = UnsafeBufferPointer(start: blob.assumingMemoryBound(to: UInt8.self), count: Int(sqlite3_column_bytes(stmt, 0)))
-                models.append(parseGenModel(buffer))
-            } else {
-                models.append(nil)
-            }
-        }
+        readStepPayloads(dbPath: dbPath, into: &payloads)
+        readGenModels(dbPath: dbPath, into: &models)
+        let n = min(payloads.count, models.count)
+        return pairSteps(Array(payloads.prefix(n)), with: Array(models.prefix(n)))
+    }
 
+    private func pairSteps(_ payloads: [Data], with models: [String?]) -> [StepTokenUsage] {
         var usages: [StepTokenUsage] = []
         for (i, payload) in payloads.enumerated() {
             guard let parsed = payload.withUnsafeBytes({ ptr -> StepTokenUsage? in
@@ -331,6 +338,29 @@ final class GeminiStatsService {
             ))
         }
         return usages
+    }
+
+    private func readStepPayloads(dbPath: String, into payloads: inout [Data]) {
+        queryReadOnly(path: dbPath,
+                      sql: "SELECT step_payload FROM steps WHERE step_type = 15 ORDER BY idx") { stmt in
+            if let blob = sqlite3_column_blob(stmt, 0) {
+                payloads.append(Data(bytes: blob, count: Int(sqlite3_column_bytes(stmt, 0))))
+            } else {
+                payloads.append(Data())
+            }
+        }
+    }
+
+    private func readGenModels(dbPath: String, into models: inout [String?]) {
+        queryReadOnly(path: dbPath,
+                      sql: "SELECT data FROM gen_metadata ORDER BY idx") { stmt in
+            if let blob = sqlite3_column_blob(stmt, 0) {
+                let buffer = UnsafeBufferPointer(start: blob.assumingMemoryBound(to: UInt8.self), count: Int(sqlite3_column_bytes(stmt, 0)))
+                models.append(parseGenModel(buffer))
+            } else {
+                models.append(nil)
+            }
+        }
     }
 
     /// Model name from a gen_metadata blob. The name lives in a nested
