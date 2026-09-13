@@ -211,6 +211,18 @@ final class GeminiStatsService {
         return points
     }
 
+    /// Per-step usage records for the dashboard. Antigravity payloads carry
+    /// no model name, so callers bucket these under an "unknown" model.
+    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, sessionId: String)] {
+        var records: [(tsMs: Int64, tokens: Int, sessionId: String)] = []
+        for (cid, fileUrl) in getEligibleDbFiles(since: sinceUnix) {
+            for step in querySteps(from: fileUrl.path) where step.timestamp >= sinceUnix {
+                records.append((tsMs: Int64(step.timestamp) * 1000, tokens: step.totalTokens, sessionId: cid))
+            }
+        }
+        return records
+    }
+
     // MARK: - Internal DB & Protobuf Scanning
 
     private struct StepTokenUsage {

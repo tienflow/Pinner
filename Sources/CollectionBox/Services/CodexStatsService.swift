@@ -116,6 +116,29 @@ final class CodexStatsService {
         )
     }
 
+    /// Per-thread usage records for the dashboard (same source as the panel:
+    /// one row per thread, `tokens_used` is the thread lifetime total).
+    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, sessionId: String, model: String?)] {
+        guard let db = openDB() else { return [] }
+        defer { sqlite3_close(db) }
+
+        let sql = "SELECT id, model, updated_at, tokens_used FROM threads WHERE updated_at >= ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(sinceUnix))
+
+        var records: [(tsMs: Int64, tokens: Int, sessionId: String, model: String?)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let id = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? UUID().uuidString
+            let model = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+            let updatedAt = sqlite3_column_int64(stmt, 2)
+            let tokens = Int(sqlite3_column_int64(stmt, 3))
+            records.append((tsMs: updatedAt * 1000, tokens: tokens, sessionId: id, model: (model?.isEmpty == false) ? model : nil))
+        }
+        return records
+    }
+
     func fetchTrend(for range: StatsTimeRange) -> [TrendPoint] {
         let now = Date()
         let nowUnix = Int(now.timeIntervalSince1970)

@@ -81,8 +81,8 @@ public final class MenuBarController: NSObject {
 
     private func showMenu() {
         let m = NSMenu()
-        let header = NSMenuItem(title: "Pinner 设置", action: nil, keyEquivalent: "")
-        header.isEnabled = false; m.addItem(header)
+        let header = NSMenuItem(title: "Pinner 设置", action: #selector(openDashboard), keyEquivalent: "")
+        header.target = self; m.addItem(header)
         m.addItem(.separator())
 
         // Collection
@@ -201,6 +201,10 @@ public final class MenuBarController: NSObject {
     @objc private func setTheme(_ s: NSMenuItem) {
         guard let t = s.representedObject as? AppTheme else { return }
         UserDefaults.standard.set(t.rawValue, forKey: "CollectionBox.theme"); applyTheme()
+    }
+
+    @objc private func openDashboard() {
+        DashboardWindowController.shared.show()
     }
 
     @objc private func openCollection() {

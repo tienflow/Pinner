@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 struct WorkBuddyStats {
     let currentTokens: Int
@@ -222,6 +223,46 @@ final class WorkBuddyStatsService: Sendable {
         }
 
         return points
+    }
+
+    /// Per-turn usage records for the dashboard, with the turn's session
+    /// model resolved from the sessions table (nil → unknown bucket).
+    func collectRecords(sinceMs: Int64) -> [(tsMs: Int64, tokens: Int, sessionId: String, model: String?)] {
+        let records = cachedCollect(sinceMs: sinceMs)
+        let models = sessionModelMap()
+        return records.map { r in
+            (tsMs: r.tsMs, tokens: r.input + r.output, sessionId: r.sessionId, model: models[r.sessionId])
+        }
+    }
+
+    /// session_id -> model from ~/.workbuddy/workbuddy.db; empty map when the
+    /// DB is locked or missing (records then fall into the unknown bucket).
+    private func sessionModelMap() -> [String: String] {
+        let dbPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".workbuddy/workbuddy.db").path
+        guard FileManager.default.fileExists(atPath: dbPath) else { return [:] }
+
+        var db: OpaquePointer?
+        for _ in 0..<3 {
+            if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK { break }
+            if db != nil { sqlite3_close(db); db = nil }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        guard let db = db else { return [:] }
+        sqlite3_busy_timeout(db, 3000)
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT id, model FROM sessions", -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [:] }
+        defer { sqlite3_finalize(stmt) }
+
+        var map: [String: String] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) else { continue }
+            let model = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+            if let model, !model.isEmpty { map[id] = model }
+        }
+        return map
     }
 
     // MARK: - Session File Scanning
