@@ -136,15 +136,11 @@ struct StatsDashboardView: View {
             let idx: Int; let name: String; let tokens: Int; let share: Double
             var id: Int { idx }
         }
-        let grouped = Dictionary(grouping: enabledRecords) { $0.model ?? "未知（\($0.agent.label)）" }
         let total = enabledRecords.reduce(0) { $0 + $1.tokens }
-        let rows = grouped
-            .map { name, recs -> RankRow in
-                let tokens = recs.reduce(0) { $0 + $1.tokens }
-                return RankRow(idx: 0, name: name, tokens: tokens, share: total > 0 ? Double(tokens) / Double(total) * 100 : 0)
-            }
-            .sorted { $0.share > $1.share }
-            .prefix(5).enumerated().map { i, r in RankRow(idx: i + 1, name: r.name, tokens: r.tokens, share: r.share) }
+        let rows = mergedModelGroups(enabledRecords)
+            .prefix(5).enumerated()
+            .map { i, g in RankRow(idx: i + 1, name: g.name, tokens: g.tokens,
+                                   share: total > 0 ? Double(g.tokens) / Double(total) * 100 : 0) }
 
         return VStack(alignment: .leading, spacing: 7) {
             if rows.isEmpty {
@@ -292,10 +288,18 @@ struct StatsDashboardView: View {
                                 ForEach(0..<7, id: \.self) { ri in
                                     let day = columns[ci][ri]
                                     let tokens = daily[day] ?? 0
+                                    let hoverText = tokens > 0
+                                        ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens"
+                                        : "\(dayFormatter.string(from: day))：无用量"
                                     RoundedRectangle(cornerRadius: 2)
                                         .fill(heatColor(tokens: tokens, maxDay: maxDay))
                                         .frame(width: cell, height: cell)
-                                        .help(tokens > 0 ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens" : dayFormatter.string(from: day))
+                                        .contentShape(Rectangle())
+                                        .help(hoverText)
+                                        .onHover { hovering in
+                                            if hovering { heatHoverText = hoverText }
+                                            else if heatHoverText == hoverText { heatHoverText = nil }
+                                        }
                                 }
                             }
                         }
@@ -339,7 +343,13 @@ struct StatsDashboardView: View {
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text("用量趋势").font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)
+            HStack {
+                Text("用量趋势").font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                if let trendHoverText {
+                    Text(trendHoverText).font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.primary)
+                }
+            }
             if enabledRecords.isEmpty {
                 placeholder("正在扫描…")
             } else {
@@ -465,7 +475,7 @@ struct StatsDashboardView: View {
                 .font(.system(size: Design.body, weight: .medium))
                 .foregroundStyle(.green)
             if !breakdown.isEmpty && breakdown.count < current.count {
-                Text("输入/输出/缓存明细不含 Codex（其数据源仅提供总量）")
+                Text("输入/输出/缓存明细不含 Codex / ZCode（数据源仅提供总量）")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
             if loadedAgents.count < visibleAgents.count {
@@ -606,7 +616,7 @@ struct StatsDashboardView: View {
                     .padding(.vertical, 4)
                     Divider().opacity(0.5)
                 }
-                Text("净输入/输出/缓存列不含 Codex（数据源仅提供总量）")
+                Text("净输入/输出/缓存列不含 Codex / ZCode（数据源仅提供总量）")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 6)
@@ -686,17 +696,11 @@ struct StatsDashboardView: View {
             let tokens: Int
             let sessions: Int
         }
-        let grouped = Dictionary(grouping: inRange) { rec in rec.model ?? "未知（\(rec.agent.label)）" }
-        let rows: [ModelRankRow] = grouped.map { name, recs in
-            let agents = recs.map(\.agent).sorted { $0.rawValue < $1.rawValue }.map(\.label)
-            let unique = agents.reduce(into: [String]()) { acc, label in
-                if acc.last != label { acc.append(label) }
-            }
-            return ModelRankRow(id: name, name: name, agents: unique.joined(separator: " / "),
-                                tokens: recs.reduce(0) { $0 + $1.tokens },
-                                sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count)
+        let rows: [ModelRankRow] = mergedModelGroups(inRange).map { g in
+            ModelRankRow(id: g.name.lowercased(), name: g.name,
+                         agents: g.agents.map(\.label).joined(separator: " / "),
+                         tokens: g.tokens, sessions: g.sessions)
         }
-        .sorted { $0.tokens > $1.tokens }
         let maxTokens = rows.first?.tokens ?? 0
         let grand = rows.reduce(0) { $0 + $1.tokens }
 
@@ -764,6 +768,37 @@ struct StatsDashboardView: View {
     }
 
     // MARK: - Shared Pieces
+
+    /// Cross-agent model grouping: key is the lowercased model name so
+    /// case variants (glm-5.3-flash vs GLM-5.3-Flash) merge; the displayed
+    /// name is the most frequent original casing. Unknown models stay
+    /// per-agent buckets.
+    private func mergedModelGroups(_ records: [UnifiedUsageRecord]) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent])] {
+        struct Group {
+            var tokens = 0
+            var sessions = Set<String>()
+            var agents = Set<StatsAgent>()
+            var casings: [String: Int] = [:]
+        }
+        var groups: [String: Group] = [:]
+        for r in records {
+            let display = r.model ?? "未知（\(r.agent.label)）"
+            let key = display.lowercased()
+            var g = groups[key] ?? Group()
+            g.tokens += r.tokens
+            g.sessions.insert("\(r.agent):\(r.sessionId)")
+            g.agents.insert(r.agent)
+            g.casings[display, default: 0] += 1
+            groups[key] = g
+        }
+        return groups
+            .map { key, g in
+                let name = g.casings.max { $0.value < $1.value }?.key ?? key
+                return (name: name, tokens: g.tokens, sessions: g.sessions.count,
+                        agents: g.agents.sorted { $0.rawValue < $1.rawValue })
+            }
+            .sorted { $0.tokens > $1.tokens }
+    }
 
     private func placeholder(_ text: String) -> some View {
         Text(text).font(.system(size: Design.caption)).foregroundStyle(.tertiary)

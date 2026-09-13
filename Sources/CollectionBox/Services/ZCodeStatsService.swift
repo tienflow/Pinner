@@ -4,9 +4,9 @@ import SQLite3
 /// Token usage of the ZCode CLI, read from `~/.zcode/cli/db/db.sqlite`.
 ///
 /// `model_usage` (status = completed) is the record source: it carries the
-/// model id directly and its per-request totals sum to the turn aggregates
-/// in `turn_usage`. The DB is WAL-held by the running ZCode app, so reads
-/// fall back to an immutable=1 URI (same pattern as GeminiStatsService).
+/// model id directly and covers ZCode's full local history. The DB is
+/// WAL-held by the running ZCode app, so reads fall back to an
+/// immutable=1 URI (same pattern as GeminiStatsService).
 final class ZCodeStatsService {
     private let dbPath: String
 
