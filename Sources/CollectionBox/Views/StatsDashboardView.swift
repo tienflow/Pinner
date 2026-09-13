@@ -480,12 +480,13 @@ struct StatsDashboardView: View {
             Picker("明细", selection: $detailTab) {
                 Text("每日明细").tag(0)
                 Text("会话排行").tag(1)
+                Text("模型排行").tag(2)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(width: 280)
 
-            if detailTab == 0 { dailyBreakdownTable } else { sessionRankTable }
+            if detailTab == 0 { dailyBreakdownTable } else if detailTab == 1 { sessionRankTable } else { modelRankTable }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -601,6 +602,74 @@ struct StatsDashboardView: View {
                         Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
                             .frame(width: 110, alignment: .trailing)
                         Text("\(row.turns)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                            .frame(width: 60, alignment: .trailing)
+                    }
+                    .padding(.vertical, 4)
+                    Divider().opacity(0.5)
+                }
+            }
+        }
+    }
+
+    /// Cross-agent model ranking: merged by display name, share bar, tokens,
+    /// sessions and percentage.
+    private var modelRankTable: some View {
+        struct ModelRankRow: Identifiable {
+            let id: String
+            let name: String
+            let agents: String
+            let tokens: Int
+            let sessions: Int
+        }
+        let grouped = Dictionary(grouping: inRange) { rec in rec.model ?? "未知（\(rec.agent.label)）" }
+        let rows: [ModelRankRow] = grouped.map { name, recs in
+            let agents = recs.map(\.agent).sorted { $0.rawValue < $1.rawValue }.map(\.label)
+            let unique = agents.reduce(into: [String]()) { acc, label in
+                if acc.last != label { acc.append(label) }
+            }
+            return ModelRankRow(id: name, name: name, agents: unique.joined(separator: " / "),
+                                tokens: recs.reduce(0) { $0 + $1.tokens },
+                                sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count)
+        }
+        .sorted { $0.tokens > $1.tokens }
+        let maxTokens = rows.first?.tokens ?? 0
+        let grand = rows.reduce(0) { $0 + $1.tokens }
+
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Text("模型").font(.system(size: Design.caption, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 100, alignment: .leading)
+                Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 140, alignment: .leading)
+                Text("Tokens").font(.system(size: Design.caption, weight: .semibold)).frame(width: 110, alignment: .trailing)
+                Text("会话").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
+                Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
+            }
+            .padding(.vertical, 4)
+            Divider()
+            if rows.isEmpty {
+                placeholder("所选范围内没有数据").padding(.vertical, 16)
+            } else {
+                ForEach(rows) { row in
+                    HStack(spacing: 0) {
+                        Text(row.name).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                            .frame(width: 100, alignment: .leading)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
+                                RoundedRectangle(cornerRadius: Design.radiusS)
+                                    .fill(Color.accentColor.opacity(0.75))
+                                    .frame(width: maxTokens > 0 ? geo.size.width * CGFloat(row.tokens) / CGFloat(maxTokens) : 0)
+                            }
+                        }
+                        .frame(width: 140, height: 12)
+                        Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
+                            .frame(width: 110, alignment: .trailing)
+                        Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                            .frame(width: 60, alignment: .trailing)
+                        Text("\(grand > 0 ? Int(Double(row.tokens) / Double(grand) * 100) : 0)%")
+                            .font(.system(size: Design.caption)).foregroundStyle(.secondary)
                             .frame(width: 60, alignment: .trailing)
                     }
                     .padding(.vertical, 4)
