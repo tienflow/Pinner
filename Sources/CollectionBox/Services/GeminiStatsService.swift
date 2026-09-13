@@ -270,8 +270,16 @@ final class GeminiStatsService {
     /// immutable URI skips the WAL and reads the main file — possibly missing
     /// the newest un-checkpointed rows, which is acceptable for statistics.
     private func queryReadOnly(path: String, sql: String, row: (OpaquePointer) -> Void) {
+        // Try the plain connection first; only fall back to the immutable URI
+        // when the plain pass could not run at all (rc 14). A successful pass
+        // must terminate the loop, or every row gets appended twice.
         for immutable in [false, true] {
-            queryReadOnly(path: path, immutable: immutable, sql: sql, row: row)
+            var handled = false
+            queryReadOnly(path: path, immutable: immutable, sql: sql, row: { stmt in
+                handled = true
+                row(stmt)
+            })
+            if handled { return }
         }
     }
 
