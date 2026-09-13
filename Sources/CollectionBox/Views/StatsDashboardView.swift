@@ -15,18 +15,28 @@ struct StatsDashboardView: View {
         }
     }
 
-    @State private var range: DashRange = .month
+    @State private var range: DashRange = .today
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @State private var customEnd = Date()
     @State private var allRecords: [UnifiedUsageRecord] = []   // one full scan; all views slice in memory
     @State private var loadedAgents: Set<StatsAgent> = []
     @State private var lastUpdated: Date?
     @State private var detailTab: Int = 0
+    @State private var enabledAgents: Set<StatsAgent> = Set(StatsAgent.allCases)
+    private static let enabledAgentsKey = "CollectionBox.dashboardAgents"
     private let service = StatsDashboardService.shared
 
     private let agentColor: [StatsAgent: Color] = [
-        .codex: .purple, .gemini: .blue, .workbuddy: .green
+        .codex: .purple, .gemini: .blue, .workbuddy: .green, .zcode: .orange, .dsh: .teal
     ]
+
+    private var visibleAgents: [StatsAgent] {
+        StatsAgent.allCases.filter { enabledAgents.contains($0) }
+    }
+
+    private var enabledRecords: [UnifiedUsageRecord] {
+        allRecords.filter { enabledAgents.contains($0.agent) }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -36,12 +46,19 @@ struct StatsDashboardView: View {
             mainArea
         }
         .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
-        .onAppear { reload() }
+        .onAppear {
+            if let saved = UserDefaults.standard.stringArray(forKey: Self.enabledAgentsKey),
+               let decoded = saved.compactMap(StatsAgent.init(rawValue:)) as? [StatsAgent], !decoded.isEmpty {
+                enabledAgents = Set(decoded)
+            }
+            reload()
+        }
         .onChange(of: range) { _, newRange in
             if newRange != .custom { reload() }
         }
         .onChange(of: customStart) { _, _ in if range == .custom { reload() } }
         .onChange(of: customEnd) { _, _ in if range == .custom { reload() } }
+        .onChange(of: enabledAgents) { _, _ in reload() }
     }
 
     // MARK: - Range Window
@@ -66,7 +83,7 @@ struct StatsDashboardView: View {
     }
 
     private var inRange: [UnifiedUsageRecord] {
-        allRecords.filter { $0.tsMs >= effectiveSinceMs && $0.tsMs <= effectiveUntilMs }
+        allRecords.filter { enabledAgents.contains($0.agent) && $0.tsMs >= effectiveSinceMs && $0.tsMs <= effectiveUntilMs }
     }
 
     // MARK: - Sidebar (all-time view)
@@ -85,7 +102,7 @@ struct StatsDashboardView: View {
     }
 
     private var quickStats: some View {
-        let all = allRecords
+        let all = enabledRecords
         let now = Date()
         let cal = Calendar.current
         let d7 = all.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
@@ -117,8 +134,8 @@ struct StatsDashboardView: View {
             let idx: Int; let name: String; let share: Double
             var id: Int { idx }
         }
-        let grouped = Dictionary(grouping: allRecords) { $0.model ?? "未知（\($0.agent.label)）" }
-        let total = allRecords.reduce(0) { $0 + $1.tokens }
+        let grouped = Dictionary(grouping: enabledRecords) { $0.model ?? "未知（\($0.agent.label)）" }
+        let total = enabledRecords.reduce(0) { $0 + $1.tokens }
         let rows = grouped
             .map { name, recs -> RankRow in
                 let tokens = recs.reduce(0) { $0 + $1.tokens }
@@ -155,8 +172,8 @@ struct StatsDashboardView: View {
 
     private var startedInfo: some View {
         let cal = Calendar.current
-        let first = allRecords.map(\.tsMs).min()
-        let activeDays = Set(allRecords.map { cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.tsMs) / 1000)) }).count
+        let first = enabledRecords.map(\.tsMs).min()
+        let activeDays = Set(enabledRecords.map { cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.tsMs) / 1000)) }).count
         let started: String = first.map { ts in
             let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
             return df.string(from: Date(timeIntervalSince1970: TimeInterval(ts) / 1000))
@@ -176,7 +193,7 @@ struct StatsDashboardView: View {
                 Spacer()
                 Text(timeZoneLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
-            if allRecords.isEmpty {
+            if enabledRecords.isEmpty {
                 placeholder("正在扫描…")
             } else {
                 contributionGrid
@@ -218,7 +235,7 @@ struct StatsDashboardView: View {
             let gridStart = cal.date(byAdding: .day, value: -(maxWeeks * 7 - 1), to: gridEnd)!
 
             var daily: [Date: Int] = [:]
-            for r in allRecords {
+            for r in enabledRecords {
                 let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
                 daily[day, default: 0] += r.tokens
             }
@@ -297,7 +314,7 @@ struct StatsDashboardView: View {
         let cal = Calendar.current
         let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -29, to: Date())!)
         var daily: [Date: Int] = [:]
-        for r in allRecords {
+        for r in enabledRecords {
             let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
             daily[day, default: 0] += r.tokens
         }
@@ -313,7 +330,7 @@ struct StatsDashboardView: View {
 
         return VStack(alignment: .leading, spacing: 6) {
             Text("用量趋势").font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)
-            if allRecords.isEmpty {
+            if enabledRecords.isEmpty {
                 placeholder("正在扫描…")
             } else {
                 HStack(alignment: .bottom, spacing: 2) {
@@ -369,6 +386,7 @@ struct StatsDashboardView: View {
                     .font(.system(size: Design.caption))
             }
             Spacer()
+            agentVisibilityMenu
             if let last = lastUpdated {
                 Text("刷新于 \(last, style: .time)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
@@ -377,6 +395,38 @@ struct StatsDashboardView: View {
                     .frame(width: 24, height: 24).contentShape(Rectangle())
             }.buttonStyle(.plain).help("刷新").accessibilityLabel("刷新")
         }
+    }
+
+    /// Which agents the dashboard aggregates. Persisted; the last remaining
+    /// agent cannot be switched off.
+    private var agentVisibilityMenu: some View {
+        Menu {
+            ForEach(StatsAgent.allCases, id: \.self) { agent in
+                Toggle(agent.label, isOn: agentBinding(agent))
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "slider.horizontal.3").font(.system(size: 11, weight: .medium))
+                Text("Agent").font(.system(size: Design.caption, weight: .medium))
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 76, height: 22)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("选择参与统计的 Agent").accessibilityLabel("选择参与统计的 Agent")
+    }
+
+    private func agentBinding(_ agent: StatsAgent) -> Binding<Bool> {
+        Binding(
+            get: { enabledAgents.contains(agent) },
+            set: { on in
+                if !on && enabledAgents.count <= 1 { return }
+                if on { enabledAgents.insert(agent) } else { enabledAgents.remove(agent) }
+                UserDefaults.standard.set(enabledAgents.map(\.rawValue).sorted(), forKey: Self.enabledAgentsKey)
+            }
+        )
     }
 
     private var totalTokenHeader: some View {
@@ -403,8 +453,8 @@ struct StatsDashboardView: View {
                 Text("输入/输出/缓存明细不含 Codex（其数据源仅提供总量）")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
-            if loadedAgents.count < StatsAgent.allCases.count {
-                Text("正在扫描 \(StatsAgent.allCases.count - loadedAgents.count) 个 Agent…")
+            if loadedAgents.count < visibleAgents.count {
+                Text("正在扫描 \(visibleAgents.count - loadedAgents.count) 个 Agent…")
                     .font(.system(size: Design.caption)).foregroundStyle(.orange)
             }
         }
@@ -424,7 +474,7 @@ struct StatsDashboardView: View {
         return VStack(spacing: 6) {
             GeometryReader { geo in
                 HStack(spacing: 1) {
-                    ForEach(StatsAgent.allCases, id: \.self) { agent in
+                    ForEach(visibleAgents, id: \.self) { agent in
                         let tokens = current.filter { $0.agent == agent }.reduce(0) { $0 + $1.tokens }
                         RoundedRectangle(cornerRadius: 1)
                             .fill(agentColor[agent] ?? .gray)
@@ -441,7 +491,7 @@ struct StatsDashboardView: View {
         let current = inRange
         let grand = current.reduce(0) { $0 + $1.tokens }
         return HStack(spacing: 10) {
-            ForEach(StatsAgent.allCases, id: \.self) { agent in
+            ForEach(visibleAgents, id: \.self) { agent in
                 let tokens = current.filter { $0.agent == agent }.reduce(0) { $0 + $1.tokens }
                 let models = Set(current.filter { $0.agent == agent }.map { $0.model ?? "unknown" }).count
                 let share = grand > 0 ? Double(tokens) / Double(grand) * 100 : 0.0
@@ -685,7 +735,7 @@ struct StatsDashboardView: View {
         loadedAgents = []
         // One all-time scan feeds the sidebar AND every range slice (records
         // carry timestamps; range windows filter in memory).
-        for agent in StatsAgent.allCases {
+        for agent in visibleAgents {
             Task.detached(priority: .userInitiated) {
                 let agentRecords = service.collect(agent: agent, sinceMs: 0)
                 await MainActor.run {

@@ -17,14 +17,21 @@ let package = Package(
             name: "CollectionBoxApp",
             dependencies: ["CollectionBox"],
             path: "Sources/CollectionBoxApp",
-            exclude: ["Assets.xcassets", "Resources"]
+            exclude: ["Assets.xcassets", "Resources"],
+            linkerSettings: [
+                // DSH session files are zstd-compressed; link Homebrew libzstd.
+                .unsafeFlags(["-L/opt/homebrew/lib", "-lzstd"]),
+            ]
         ),
         // Test runner: the pure-CommandLineTools toolchain has no XCTest /
         // Swift Testing, so tests run via `swift run PinnerTestRunner`.
         .executableTarget(
             name: "PinnerTestRunner",
             dependencies: ["CollectionBox"],
-            path: "Sources/PinnerTestRunner"
+            path: "Sources/PinnerTestRunner",
+            linkerSettings: [
+                .unsafeFlags(["-L/opt/homebrew/lib", "-lzstd"]),
+            ]
         ),
     ]
 )

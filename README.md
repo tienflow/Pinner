@@ -47,7 +47,7 @@
 - **快捷键**：默认 `⌘⇧W`，可自定义
 
 **通用**
-- **统计总览**：菜单栏右键 →「总览」打开统计大窗口——三个 Agent 合计与分项卡片、按 Agent / 按模型（含占比与会话数）、每日明细 / 会话排行 / 模型排行、GitHub 格风格的按天 token 热力图，支持今天 / 近 7 天 / 30 天 / 全部 / 自定义，窗口大小自动记忆
+- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换近 7 天 / 30 天 / 全部 / 自定义日期；支持勾选参与统计的 Agent；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表、半年 GitHub 格热力图，窗口大小自动记忆
 - **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义
 - **主题**：浅色、深色、自动
 
@@ -161,7 +161,11 @@ xattr -cr /Applications/Pinner.app
 
 ### 方式二：从源码编译
 
-需要 macOS 14+ 和 Xcode Command Line Tools：
+需要 macOS 14+ 和 Xcode Command Line Tools，以及 Homebrew 的 zstd（用于解压 DSH 会话）：
+
+```bash
+brew install zstd
+```
 
 ```bash
 git clone https://github.com/tienflow/Pinner.git

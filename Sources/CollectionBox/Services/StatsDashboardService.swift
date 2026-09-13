@@ -1,13 +1,15 @@
 import Foundation
 
 enum StatsAgent: String, CaseIterable, Sendable {
-    case codex, gemini, workbuddy
+    case codex, gemini, workbuddy, zcode, dsh
 
     var label: String {
         switch self {
         case .codex: return "Codex"
         case .gemini: return "Antigravity"
         case .workbuddy: return "WorkBuddy"
+        case .zcode: return "ZCode"
+        case .dsh: return "DSH"
         }
     }
 
@@ -16,6 +18,8 @@ enum StatsAgent: String, CaseIterable, Sendable {
         case .codex: return "terminal.fill"
         case .gemini: return "sparkles"
         case .workbuddy: return "briefcase.fill"
+        case .zcode: return "chevron.left.forwardslash.fill"
+        case .dsh: return "fish.fill"
         }
     }
 }
@@ -42,6 +46,8 @@ final class StatsDashboardService {
     private let codex = CodexStatsService()
     private let gemini = GeminiStatsService()
     private let workbuddy = WorkBuddyStatsService()
+    private let zcode = ZCodeStatsService()
+    private let dsh = DshStatsService()
 
     func collect(agent: StatsAgent, sinceMs: Int64) -> [UnifiedUsageRecord] {
         switch agent {
@@ -60,6 +66,18 @@ final class StatsDashboardService {
         case .workbuddy:
             return workbuddy.collectRecords(sinceMs: sinceMs).map {
                 UnifiedUsageRecord(agent: .workbuddy, model: $0.model, title: $0.title, tsMs: $0.tsMs,
+                                   tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
+            }
+        case .zcode:
+            return zcode.collectRecords(sinceMs: sinceMs).map {
+                UnifiedUsageRecord(agent: .zcode, model: $0.model, title: $0.title, tsMs: $0.tsMs,
+                                   tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
+            }
+        case .dsh:
+            return dsh.collectRecords(sinceMs: sinceMs).map {
+                UnifiedUsageRecord(agent: .dsh, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
                                    output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
             }
