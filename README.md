@@ -69,9 +69,9 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount）
-│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService
+│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView 等）
+│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
 │   └── AppKit/                 # AppKit 集成
 │       ├── MenuBarController.swift           # 菜单栏交互
 │       ├── EdgeDockWindowController.swift    # 收藏面板管理
@@ -86,6 +86,8 @@ Sources/
 │       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
 │       ├── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
 │       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH 统计快捷键
+│       ├── AgentStatsWindowController.swift     # ZCode / DSH 紧凑统计窗口
+│       ├── HotkeyRegistrationNotifier.swift     # 快捷键注册失败系统通知
 │       └── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
@@ -149,6 +151,7 @@ DSH 统计            ← 打开 DSH 紧凑统计面板
   ├ WorkBuddy 统计快捷键 ← 子菜单配置
   ├ ZCode / DSH 统计快捷键 ← 子菜单配置（无默认值）
   ├ 参与统计的 Agent   ← 勾选（与总览界面联动，至少保留一个）
+  ├ 登录时启动        ← 开关（SMAppService）
   └ 主题            ← 自动 / 浅色 / 深色
 ──────────
 退出
