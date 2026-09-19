@@ -56,9 +56,9 @@ killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner"
 
 ```
 1. swift build -c release --product CollectionBoxApp → 验证: 构建成功
-2. 打包 .app bundle（Pinner.app/Contents/MacOS/Pinner + Info.plist + Resources/AppIcon.icns）→ 验证: ls Pinner.app/Contents/MacOS/Pinner
+2. 打包 .app bundle（Pinner.app/Contents/MacOS/Pinner + Info.plist + Resources/AppIcon.icns）；同步将 Info.plist 的 CFBundleShortVersionString / CFBundleVersion 更新为当前版本 → 验证: ls Pinner.app/Contents/MacOS/Pinner + `/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Pinner.app/Contents/Info.plist`
 3. 打包 DMG（含拖拽安装布局）：创建临时目录放入 Pinner.app + Applications 符号链接 → hdiutil create 读写 DMG → osascript 设置 Finder 窗口布局（图标视图、96px、左右排列）→ hdiutil convert 转压缩只读 → 验证: DMG 文件生成并可拖拽安装
-4. 更新 README.md → 验证: 功能列表与代码一致
+4. 更新 README.md → 验证: 功能列表与代码一致，安装段的 DMG 文件名与当前版本一致
 5. git add + commit → 验证: git status 干净
 6. git push + git tag -a vX.X.X → 验证: 远程分支和 tag 已同步
 7. gh release create vX.X.X + gh release upload vX.X.X Pinner-vX.X.X.dmg → 验证: Release 页面有 DMG 下载
