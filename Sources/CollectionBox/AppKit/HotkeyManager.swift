@@ -94,8 +94,11 @@ final class HotkeyManager {
         InstallEventHandler(GetApplicationEventTarget(), hotkeyCallback, 1, &eventType, selfPtr, &handlerRef)
 
         // Register the hotkey
-        var hotKeyID = EventHotKeyID(signature: OSType(0x504E_4E52), id: 1) // "PNNR"
-        RegisterEventHotKey(combo.keyCode, combo.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x504E_4E52), id: 1) // "PNNR"
+        let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        if status != noErr {
+            HotkeyRegistrationNotifier.notifyFailure(label: "收藏夹", combo: combo)
+        }
     }
 
     func unregister() {

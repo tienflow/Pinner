@@ -61,6 +61,9 @@ struct RootView: View {
     @State private var gridColumns = 3
     @State private var isShowingImporter = false
     @State private var dropTargeted = false
+    /// Cross-tab "最近访问" mode: shows recently opened entries from every tab
+    /// instead of a single tab's content.
+    @State private var showingRecents = false
 
     // MARK: - Derived Data
 
@@ -122,6 +125,10 @@ struct RootView: View {
                 guard let entries = byTab[i], !entries.isEmpty else { return nil }
                 return EntrySection(id: "tab_\(store.tabs[i].id)", title: store.tabs[i].name, entries: entries)
             }
+        }
+        if showingRecents {
+            let pairs = store.recentEntries().compactMap { re in re.entry.lastOpened.map { (re.entry, $0) } }
+            return groupByDate(pairs)
         }
         var result: [EntrySection] = []
         if !pinnedEntries.isEmpty {
@@ -221,6 +228,20 @@ struct RootView: View {
 
     private var tabBar: some View {
         HStack(spacing: 4) {
+            // 固定"最近访问"入口，独立于收藏夹 Tab
+            Button(action: { showingRecents = true; clearSelection() }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "clock").font(.system(size: 11, weight: .medium))
+                    Text("最近").font(.system(size: Design.ui, weight: showingRecents ? .semibold : .regular))
+                }
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(showingRecents ? Color.accentColor.opacity(Design.selectedAlpha) : Color.clear, in: Capsule())
+                .foregroundStyle(showingRecents ? Color.accentColor : Color.secondary)
+            }
+            .buttonStyle(.plain).fixedSize()
+            .help("跨收藏夹查看最近打开的文件")
+            .accessibilityLabel("最近访问")
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
                     ForEach(store.tabs) { tab in
@@ -268,6 +289,7 @@ struct RootView: View {
 
     private func selectTab(_ id: UUID) {
         selectedTabID = id
+        showingRecents = false
         clearSelection()
     }
 
@@ -316,7 +338,21 @@ struct RootView: View {
 
     @ViewBuilder
     private var entryContent: some View {
-        if let ti = currentTabIndex {
+        if showingRecents && !isSearching {
+            if store.recentEntries().isEmpty {
+                recentsEmptyState
+            } else {
+                ScrollViewReader { proxy in
+                    Group {
+                        if viewMode == .list { sectionedList() } else { sectionedGrid() }
+                    }
+                    .onChange(of: selectedEntryID) { _, id in
+                        guard let id else { return }
+                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                }
+            }
+        } else if let ti = currentTabIndex {
             if store.tabs[ti].entries.isEmpty && !isSearching {
                 emptyState.onDrop(of: [.fileURL], isTargeted: $dropTargeted) { dropHandler(providers: $0, ti: ti) }
             } else if isSearching && flatDisplay.isEmpty {
@@ -336,6 +372,14 @@ struct RootView: View {
         } else { VStack { Spacer(); Text("点击 + 创建一个收藏夹").foregroundStyle(.secondary); Spacer() } }
     }
 
+    private var recentsEmptyState: some View {
+        VStack(spacing: 8) { Spacer()
+            Image(systemName: "clock").font(.system(size: 32)).foregroundStyle(.tertiary)
+            Text("最近打开的文件会显示在这里").font(.system(size: Design.body)).foregroundStyle(.secondary)
+        Spacer() }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     // MARK: - List
 
     private func sectionedList() -> some View {
@@ -352,6 +396,7 @@ struct RootView: View {
 
     private func listRow(_ entry: BookmarkEntry) -> some View {
         EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id,
+                 sourceLabel: showingRecents ? sourceTabName(for: entry) : nil,
                  onReorderDrop: { handleEntryReorderDrop(providers: $0, onto: entry) })
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { openEntry(entry) }
@@ -359,6 +404,12 @@ struct RootView: View {
             .contextMenu { entryMenu(entry) }
             .onDrag { dragProvider(for: entry) }
             .id(entry.id)
+    }
+
+    /// Source tab display name for cross-tab views (recents).
+    private func sourceTabName(for entry: BookmarkEntry) -> String? {
+        guard let ti = tabIndex(of: entry.id), store.tabs.indices.contains(ti) else { return nil }
+        return store.tabs[ti].name
     }
 
     // MARK: - Grid
@@ -650,6 +701,8 @@ struct RootView: View {
     private var countText: some View {
         if isSearching {
             Text("\(flatDisplay.count) 个结果")
+        } else if showingRecents {
+            Text("\(store.recentEntries().count) 个最近打开")
         } else {
             let missing = currentTab?.entries.filter(\.isMissing).count ?? 0
             if missing > 0 {
@@ -664,14 +717,16 @@ struct RootView: View {
         HStack(spacing: 8) {
             countText.font(.system(size: Design.caption)).foregroundStyle(.secondary)
             Spacer()
-            Button(action: { isShowingImporter = true }) {
-                Image(systemName: "folder.badge.plus").font(.system(size: 11, weight: .medium))
-                    .frame(width: 22, height: 22).contentShape(Rectangle())
-            }.buttonStyle(.plain).help("添加文件或文件夹").accessibilityLabel("添加文件或文件夹")
-            Button(action: refreshCurrentTab) {
-                Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .medium))
-                    .frame(width: 22, height: 22).contentShape(Rectangle())
-            }.buttonStyle(.plain).help("刷新文件状态").accessibilityLabel("刷新文件状态")
+            if !showingRecents {
+                Button(action: { isShowingImporter = true }) {
+                    Image(systemName: "folder.badge.plus").font(.system(size: 11, weight: .medium))
+                        .frame(width: 22, height: 22).contentShape(Rectangle())
+                }.buttonStyle(.plain).help("添加文件或文件夹").accessibilityLabel("添加文件或文件夹")
+                Button(action: refreshCurrentTab) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .medium))
+                        .frame(width: 22, height: 22).contentShape(Rectangle())
+                }.buttonStyle(.plain).help("刷新文件状态").accessibilityLabel("刷新文件状态")
+            }
         }.padding(.horizontal, 12).padding(.vertical, 6)
     }
 
@@ -722,6 +777,8 @@ struct EntryRow: View {
     let entry: BookmarkEntry
     var isSelected = false
     var isFlashing = false
+    /// Optional source-tab label shown in cross-tab views (recents).
+    var sourceLabel: String? = nil
     var onReorderDrop: ([NSItemProvider]) -> Bool = { _ in false }
     @State private var isHovered = false
     @State private var isDropTargeted = false
@@ -733,6 +790,9 @@ struct EntryRow: View {
                 .foregroundStyle(entry.isMissing ? .secondary : .primary)
             if entry.isMissing {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: Design.micro)).foregroundStyle(.orange)
+            }
+            if let sourceLabel {
+                Text(sourceLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer()
         }.padding(.vertical, 3).padding(.horizontal, 6)

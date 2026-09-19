@@ -1,5 +1,7 @@
 import Foundation
+import AppKit
 import CollectionBox
+@testable import CollectionBox
 
 // Test runner for CollectionStore / BookmarkService.
 // The pure-CommandLineTools toolchain has no XCTest, so this executable
@@ -144,6 +146,45 @@ func testRefreshClearsMissingForValidFile() async throws {
 }
 
 @MainActor
+func testRecentEntries() throws {
+    let store = makeStore()
+    store.createTab(named: "A")
+    store.createTab(named: "B")
+    let u1 = makeTempFile(named: "recent-a.txt")
+    let u2 = makeTempFile(named: "recent-b.txt")
+    let u3 = makeTempFile(named: "recent-c.txt")
+    defer {
+        try? FileManager.default.removeItem(at: u1)
+        try? FileManager.default.removeItem(at: u2)
+        try? FileManager.default.removeItem(at: u3)
+    }
+    let e1 = try entry(for: u1)
+    let e2 = try entry(for: u2)
+    let e3 = try entry(for: u3)
+    store.addEntry(e1, to: 0)
+    store.addEntry(e2, to: 1)
+    store.addEntry(e3, to: 1)
+
+    // 从未打开过的条目不进入"最近"
+    check(store.recentEntries().isEmpty, "recentEntries empty before any open")
+
+    // 显式设置打开时间（避免 Date() 精度导致的顺序不稳定）
+    store.tabs[0].entries[0].lastOpened = Date(timeIntervalSinceNow: -100)
+    store.tabs[1].entries[0].lastOpened = Date(timeIntervalSinceNow: -10)
+    store.tabs[1].entries[1].lastOpened = Date(timeIntervalSinceNow: -50)
+
+    let recents = store.recentEntries()
+    check(recents.count == 3, "recentEntries returns all opened entries")
+    check(recents[0].entry.id == e2.id, "recentEntries newest first")
+    check(recents[0].tabIndex == 1, "recentEntries carries source tab index")
+    check(recents[2].entry.id == e1.id, "recentEntries oldest last")
+    check(recents[2].tabIndex == 0, "recentEntries oldest source tab")
+
+    let limited = store.recentEntries(limit: 2)
+    check(limited.count == 2 && limited[0].entry.id == e2.id, "recentEntries respects limit")
+}
+
+@MainActor
 func testBatchOperations() throws {
     let store = makeStore()
     store.createTab(named: "A")
@@ -262,6 +303,166 @@ func testBookmarkServiceHelpers() throws {
     check(BookmarkService.resolveURL(Data([0x09, 0x09])) == nil, "resolveURL nil for garbage data")
 }
 
+@MainActor
+func testAgentSelectionPersistence() {
+    let suite = UserDefaults(suiteName: "test-agent-selection-\(UUID().uuidString)")!
+    let selection = StatsAgentSelection(defaults: suite)
+    check(selection.enabledAgents == Set(StatsAgent.allCases), "agent selection defaults to all")
+
+    selection.setEnabled(.codex, to: false)
+    selection.setEnabled(.zcode, to: false)
+    check(!selection.enabledAgents.contains(.codex), "agent selection toggle off persists in set")
+    let reloaded = StatsAgentSelection(defaults: suite)
+    check(reloaded.enabledAgents == selection.enabledAgents, "agent selection survives reload")
+
+    let minimal = StatsAgentSelection(defaults: suite)
+    for agent in StatsAgent.allCases.dropFirst() { minimal.setEnabled(agent, to: false) }
+    let last = StatsAgent.allCases.last!
+    check(minimal.enabledAgents == [last], "agent selection keeps the last agent on")
+    minimal.setEnabled(last, to: false)
+    check(minimal.enabledAgents == [last], "agent selection refuses to disable the last agent")
+}
+
+@MainActor
+func testMenuBarMenuFollowsSelection() {
+    let all: Set<StatsAgent> = [.codex, .gemini, .workbuddy, .zcode, .dsh]
+    let titles = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: all).items.map { $0.title }
+    for agent in StatsAgent.allCases {
+        check(titles.contains("\(agent.label) 统计"), "menu shows \(agent.label) stats when enabled")
+    }
+
+    let titlesWithOnlyCodex = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: [.codex]).items.map { $0.title }
+    check(titlesWithOnlyCodex.contains("Codex 统计"), "menu shows Codex stats when only Codex enabled")
+    check(!titlesWithOnlyCodex.contains("Antigravity 统计"), "menu hides Antigravity stats when disabled")
+    check(!titlesWithOnlyCodex.contains("Antigravity 统计快捷键"), "menu hides Antigravity hotkey when disabled")
+    check(!titlesWithOnlyCodex.contains("WorkBuddy 统计"), "menu hides WorkBuddy stats when disabled")
+    check(!titlesWithOnlyCodex.contains("ZCode 统计"), "menu hides ZCode stats when disabled")
+    check(!titlesWithOnlyCodex.contains("DSH 统计"), "menu hides DSH stats when disabled")
+    check(titlesWithOnlyCodex.contains("总览"), "menu keeps the dashboard entry")
+    check(titlesWithOnlyCodex.contains("设置"), "menu keeps settings entry")
+    check(titlesWithOnlyCodex.contains("退出"), "menu keeps quit entry")
+}
+
+@MainActor
+func testSettingsSubmenuContents() {
+    let controller = MenuBarController(store: CollectionStore(inMemory: true))
+    let settings = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases)).items.first { $0.title == "设置" }
+    check(settings != nil, "settings submenu exists")
+    guard let submenu = settings?.submenu else { return }
+    let settingTitles = submenu.items.map { $0.title }
+    check(settingTitles.contains("总览快捷键"), "settings has dashboard hotkey")
+    for agent in StatsAgent.allCases {
+        check(settingTitles.contains("\(agent.label) 统计快捷键"), "settings has \(agent.label) hotkey")
+    }
+    check(settingTitles.contains("主题"), "settings has theme entry")
+    check(settingTitles.contains("登录时启动"), "settings has launch-at-login entry")
+
+    // Top-level menu must not expose hotkey config anymore.
+    let topTitles = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases)).items.map { $0.title }
+    check(!topTitles.contains { $0.hasSuffix("快捷键") }, "top-level menu hides hotkey items")
+
+    // The "总览" item must actually be wired to an action, not a stub.
+    let header = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases)).items.first { $0.title == "总览" }
+    check(header?.action != nil && header?.target != nil, "dashboard menu item is wired to an action")
+
+    // Fire the action for real: the dashboard window must appear. The runner
+    // has no app lifecycle, so NSApplication must be created first.
+    _ = NSApplication.shared
+    if let header, let action = header.action, NSApp.sendAction(action, to: header.target, from: header) {
+        let found = NSApp.windows.contains { $0.title == "总览" }
+        check(found, "dashboard action opens the overview window")
+        if found { NSApp.windows.first { $0.title == "总览" }?.close() }
+    }
+}
+
+@MainActor
+func testDshScanCacheReusesResults() async {
+    // Real path: StatsDashboardService.collect(.dsh) twice. The DSH service
+    // holds a 120s scan cache, so the second full-range call must return the
+    // same record count from cache — and fast.
+    let service = StatsDashboardService()
+    let t0 = Date()
+    let first = service.collect(agent: .dsh, sinceMs: 0)
+    let cold = Date().timeIntervalSince(t0)
+
+    let t1 = Date()
+    let second = service.collect(agent: .dsh, sinceMs: 0)
+    let warm = Date().timeIntervalSince(t1)
+
+    check(first.count == second.count && !second.isEmpty, "dsh cached collect returns same records (\(first.count))")
+    check(warm < max(0.05, cold * 0.2), "dsh cached collect is fast (cold \(String(format: "%.3f", cold))s, warm \(String(format: "%.3f", warm))s)")
+}
+
+@MainActor
+func testAgentSymbolsExist() {
+    for agent in StatsAgent.allCases {
+        check(NSImage(systemSymbolName: agent.symbolName, accessibilityDescription: nil) != nil,
+              "symbol exists: \(agent.rawValue) -> \(agent.symbolName)")
+    }
+}
+
+@MainActor
+func testDailySortHelpers() {
+    // Real comparator behavior over synthetic rows (internal via @testable).
+    let a = StatsDashboardView.DayRow(id: "1", date: "2026-09-17", total: 100, fresh: 10, cached: 20, output: 30, sessions: 2)
+    let b = StatsDashboardView.DayRow(id: "2", date: "2026-09-18", total: 300, fresh: 40, cached: 50, output: 60, sessions: 5)
+    let view = StatsDashboardView()
+
+    let dateDesc = view.dailySort(key: "date", ascending: false)
+    check(!dateDesc(a, b) && dateDesc(b, a), "daily date sort desc puts newer first")
+    let totalAsc = view.dailySort(key: "total", ascending: true)
+    check(totalAsc(a, b) && !totalAsc(b, a), "daily total sort asc orders by tokens")
+
+    let s1 = StatsDashboardView.SessionRow(id: "s1", title: "a 会话", agent: .codex, tokens: 500, turns: 3)
+    let s2 = StatsDashboardView.SessionRow(id: "s2", title: "b 会话", agent: .dsh, tokens: 900, turns: 1)
+    let tokensDesc = view.sessionSort(key: "tokens", ascending: false)
+    check(tokensDesc(s2, s1), "session tokens desc puts bigger first")
+    let turnsAsc = view.sessionSort(key: "turns", ascending: true)
+    check(turnsAsc(s2, s1) && !turnsAsc(s1, s2), "session turns asc orders by turns")
+
+    let m1 = StatsDashboardView.ModelRankRow(id: "x", name: "model-a", agents: "Codex", tokens: 700, sessions: 4)
+    let m2 = StatsDashboardView.ModelRankRow(id: "y", name: "model-b", agents: "DSH", tokens: 200, sessions: 9)
+    let modelDesc = view.modelSort(key: "tokens", ascending: false)
+    check(modelDesc(m1, m2) && !modelDesc(m2, m1), "model tokens desc orders by tokens")
+    let modelSessions = view.modelSort(key: "sessions", ascending: true)
+    check(modelSessions(m1, m2), "model sessions asc orders by sessions")
+}
+
+@MainActor
+func testHotkeyFailureDetection() {
+    // Real Carbon duplicate-combo path: two managers, same combo. The second
+    // RegisterEventHotKey must fail and be reported.
+    _ = NSApplication.shared
+    let prefix = "CollectionBox.testDupHotkey"
+    let combo = HotkeyCombo(keyCode: 111, modifiers: 13)  // F4-ish, unlikely used
+    let first = AgentStatsHotkeyManager(keyPrefix: prefix + "A", eventID: 61)
+    let second = AgentStatsHotkeyManager(keyPrefix: prefix + "B", eventID: 62)
+    first.save(combo: combo)
+    check(first.lastRegistrationSucceeded == true, "first registration of a free combo succeeds")
+    second.save(combo: combo)
+    check(second.lastRegistrationSucceeded == false, "duplicate combo registration is detected as failure")
+    second.clear()
+    check(second.lastRegistrationSucceeded == nil, "clear resets registration state")
+    first.clear()
+}
+
+@MainActor
+func testAgentStatsHotkeyManagerLifecycle() {
+    let prefix = "CollectionBox.dashboardHotkey"
+    let manager = AgentStatsHotkeyManager(keyPrefix: prefix, eventID: 8)
+    // Optional binding: nothing registered by default.
+    check(UserDefaults.standard.object(forKey: prefix + "Code") == nil, "dashboard hotkey unset by default")
+
+    manager.save(combo: HotkeyCombo(keyCode: 16, modifiers: 13))
+    check(UserDefaults.standard.integer(forKey: prefix + "Code") == 16, "dashboard hotkey save persists code")
+    check(UserDefaults.standard.integer(forKey: prefix + "Mods") > 0, "dashboard hotkey save persists mods")
+    check(manager.currentCombo != nil, "dashboard hotkey currentCombo after save")
+
+    manager.clear()
+    check(UserDefaults.standard.object(forKey: prefix + "Code") == nil, "dashboard hotkey clear removes binding")
+    check(manager.currentCombo == nil, "dashboard hotkey cleared")
+}
+
 // MARK: - Entry Point
 
 let allPassed = await Task { @MainActor () -> Bool in
@@ -275,9 +476,17 @@ let allPassed = await Task { @MainActor () -> Bool in
     try? testBatchOperations()
     try? testReorderEntry()
     try? testUndo()
+    try? testRecentEntries()
     try? testPersistenceRoundtrip()
     try? testLegacyJSONCompatibility()
     try? testBookmarkServiceHelpers()
+    testAgentSelectionPersistence()
+    testMenuBarMenuFollowsSelection()
+    testSettingsSubmenuContents()
+    testAgentStatsHotkeyManagerLifecycle()
+    testAgentSymbolsExist()
+    await testDshScanCacheReusesResults()
+    testDailySortHelpers()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

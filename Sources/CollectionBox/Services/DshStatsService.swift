@@ -27,7 +27,34 @@ final class DshStatsService {
             .appendingPathComponent(".dsh/sessions")
     }
 
-    struct Record {
+    private struct Record {
+        let tsMs: Int64
+        let tokens: Int
+        let freshInput: Int
+        let cached: Int
+        let output: Int
+        let sessionId: String
+        let model: String?
+        let title: String?
+
+        var asPublic: PublicRecord {
+            PublicRecord(tsMs: tsMs, tokens: tokens, freshInput: freshInput, cached: cached,
+                         output: output, sessionId: sessionId, model: model, title: title)
+        }
+    }
+
+    // A full scan decompresses every session file; cache the newest scan
+    // briefly so dashboard reloads share it (same pattern as WorkBuddy).
+    private struct ScanCache {
+        let sinceMs: Int64
+        let records: [Record]
+        let at: Date
+    }
+
+    private static let cacheLock = NSLock()
+    private static var scanCache: ScanCache?
+
+    struct PublicRecord {
         let tsMs: Int64
         let tokens: Int
         let freshInput: Int
@@ -38,7 +65,22 @@ final class DshStatsService {
         let title: String?
     }
 
-    func collectRecords(sinceMs: Int64) -> [Record] {
+    func collectRecords(sinceMs: Int64) -> [PublicRecord] {
+        Self.cacheLock.lock()
+        let cached = Self.scanCache
+        Self.cacheLock.unlock()
+        if let cached = cached, cached.sinceMs <= sinceMs,
+           Date().timeIntervalSince(cached.at) < 120 {
+            return cached.records.filter { $0.tsMs >= sinceMs }.map(\.asPublic)
+        }
+        let records = scan(sinceMs: sinceMs)
+        Self.cacheLock.lock()
+        Self.scanCache = ScanCache(sinceMs: sinceMs, records: records, at: Date())
+        Self.cacheLock.unlock()
+        return records.map(\.asPublic)
+    }
+
+    private func scan(sinceMs: Int64) -> [Record] {
         guard FileManager.default.fileExists(atPath: sessionsDir.path) else { return [] }
         let minDate = Date(timeIntervalSince1970: TimeInterval(sinceMs) / 1000)
 

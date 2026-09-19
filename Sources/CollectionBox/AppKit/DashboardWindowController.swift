@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Regular (non-panel) dashboard window opened from the "Pinner 设置" menu
+/// Regular (non-panel) dashboard window opened from the "总览" menu
 /// item. One shared instance; size/position persist via frame autosave.
 final class DashboardWindowController: NSObject, NSWindowDelegate {
     static let shared = DashboardWindowController()

@@ -28,7 +28,10 @@ final class OTPHotkeyManager {
         InstallEventHandler(GetApplicationEventTarget(), otpHotkeyCallback, 1, &eventType, selfPtr, &handlerRef)
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x504E_4F54), id: 2) // "PNOT"
-        RegisterEventHotKey(combo.keyCode, combo.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        if status != noErr {
+            HotkeyRegistrationNotifier.notifyFailure(label: "OTP", combo: combo)
+        }
     }
 
     func unregister() {

@@ -16,6 +16,7 @@
 - **排序**：按自定义（拖拽顺序）、名称、添加时间、上次打开时间、文件类型排序，后两者带分区标题
 - **拖拽排序**：按住条目拖到目标位置落下即可调整顺序，自动切换为「自定义」排序；拖到面板外仍是把文件拖出使用
 - **搜索**：实时过滤当前收藏夹；输入关键词后自动跨所有收藏夹搜索并按收藏夹分组
+- **最近访问**：跨收藏夹聚合最近打开的文件，按今天 / 最近 7 天 / 本月 / 更早分组，并标注来源收藏夹
 - **右键菜单**：置顶 / 取消置顶、快速预览、拷贝路径、在终端中打开、在 Finder 中显示、重命名、移动到其他收藏夹、移除
 - **自动刷新**：每次展开面板自动验证所有 bookmark，失效文件（含废纸篓）标灰显示「未找到」并保留，文件恢复后自动清除标记
 - **撤销**：⌘Z 撤销移除文件、删除收藏夹等破坏性操作
@@ -45,8 +46,10 @@
 - **快捷键**：默认 `⌘⇧W`，可自定义
 
 **通用**
-- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换近 7 天 / 30 天 / 全部 / 自定义日期；支持勾选参与统计的 Agent；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表、半年 GitHub 格热力图，窗口大小自动记忆
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义
+- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换近 7 天 / 30 天 / 全部 / 自定义日期；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
+- **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
+- **设置菜单**：右键菜单 →「设置」统一管理全部快捷键（总览 / 收藏夹 / OTP / 各 Agent 统计）、参与统计的 Agent 勾选（与总览界面双向联动）、登录时启动与主题
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / ZCode / DSH 统计默认不占快捷键，可在设置中单独配置；组合键被系统或其他应用占用时弹系统通知提醒
 - **主题**：浅色、深色、自动
 
 产品落地页位于 `landing/`（单文件静态页，字体已内联，可部署到任意静态托管）。
@@ -81,7 +84,9 @@ Sources/
 │       ├── GeminiStatsWindowController.swift # Antigravity 统计面板
 │       ├── GeminiStatsHotkeyManager.swift    # Antigravity 统计快捷键
 │       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
-│       └── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
+│       ├── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
+│       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH 统计快捷键
+│       └── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
 
@@ -99,7 +104,9 @@ Sources/
 | `⌘⇧G`（默认） | 打开 Antigravity 统计面板 |
 | `⌘⇧W`（默认） | 打开 WorkBuddy 统计面板 |
 
-可在菜单栏右键 → 收藏夹快捷键 / OTP 快捷键 / Codex 统计快捷键 / Antigravity 统计快捷键 / WorkBuddy 快捷键 → 设置快捷键 中自定义。
+Codex / Antigravity / WorkBuddy / ZCode / DSH 统计入口仅在该 Agent 被勾选参与统计时出现在右键菜单；总览 / ZCode / DSH 统计无默认快捷键，可在菜单栏右键 → 设置 中自定义。
+
+可在菜单栏右键 → 设置 → 对应快捷键子菜单 → 设置快捷键 中自定义。
 
 ### 面板内快捷键
 
@@ -120,24 +127,29 @@ Sources/
 - **右键点击**：打开设置菜单
 
 ```
-总览
+总览                  ← 打开统计大窗口
 ──────────
 收藏夹              ← 打开收藏面板
-收藏夹快捷键         ← 子菜单配置
 ──────────
 OTP 验证码          ← 打开 OTP 面板
-OTP 快捷键          ← 子菜单配置
 ──────────
+（以下随「总览」勾选显示 / 隐藏，至少保留一个）
 Codex 统计          ← 打开统计面板
-Codex 统计快捷键     ← 子菜单配置
-──────────
 Antigravity 统计      ← 打开统计面板
-Antigravity 统计快捷键 ← 子菜单配置
-──────────
 WorkBuddy 统计      ← 打开统计面板
-WorkBuddy 快捷键    ← 子菜单配置
+ZCode 统计          ← 打开 ZCode 紧凑统计面板
+DSH 统计            ← 打开 DSH 紧凑统计面板
 ──────────
-主题                ← 自动 / 浅色 / 深色
+设置                ← 子菜单：
+  ├ 总览快捷键       ← 子菜单配置（无默认值）
+  ├ 收藏夹快捷键      ← 子菜单配置
+  ├ OTP 快捷键       ← 子菜单配置
+  ├ Codex 统计快捷键   ← 子菜单配置
+  ├ Antigravity 统计快捷键 ← 子菜单配置
+  ├ WorkBuddy 统计快捷键 ← 子菜单配置
+  ├ ZCode / DSH 统计快捷键 ← 子菜单配置（无默认值）
+  ├ 参与统计的 Agent   ← 勾选（与总览界面联动，至少保留一个）
+  └ 主题            ← 自动 / 浅色 / 深色
 ──────────
 退出
 ```

@@ -1,10 +1,35 @@
 import Foundation
+import Combine
 
-enum StatsAgent: String, CaseIterable, Sendable {
-    case codex, gemini, workbuddy, zcode, dsh
+/// Shared, persisted selection for the dashboard and menu-bar entries.
+public final class StatsAgentSelection: ObservableObject {
+    static let shared = StatsAgentSelection()
+    private static let defaultsKey = "CollectionBox.dashboardAgents"
+    private let defaults: UserDefaults
 
-    var label: String {
-        switch self {
+    @Published private(set) public var enabledAgents: Set<StatsAgent> {
+        didSet {
+            defaults.set(enabledAgents.map(\.rawValue).sorted(), forKey: Self.defaultsKey)
+        }
+    }
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let saved = defaults.stringArray(forKey: Self.defaultsKey) ?? []
+        let decoded = Set(saved.compactMap(StatsAgent.init(rawValue:)))
+        enabledAgents = decoded.isEmpty ? Set(StatsAgent.allCases) : decoded
+    }
+
+    /// The dashboard's last agent always stays on, matching the menu rule.
+    public func setEnabled(_ agent: StatsAgent, to on: Bool) {
+        if on { enabledAgents.insert(agent) }
+        else if enabledAgents.count > 1 { enabledAgents.remove(agent) }
+    }
+}
+
+public enum StatsAgent: String, CaseIterable, Sendable {    case codex, gemini, workbuddy, zcode, dsh
+
+    var label: String {        switch self {
         case .codex: return "Codex"
         case .gemini: return "Antigravity"
         case .workbuddy: return "WorkBuddy"
@@ -18,7 +43,7 @@ enum StatsAgent: String, CaseIterable, Sendable {
         case .codex: return "terminal.fill"
         case .gemini: return "sparkles"
         case .workbuddy: return "briefcase.fill"
-        case .zcode: return "chevron.left.forwardslash.fill"
+        case .zcode: return "chevron.left.forwardslash.chevron.right"
         case .dsh: return "fish.fill"
         }
     }

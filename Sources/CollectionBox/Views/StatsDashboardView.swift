@@ -20,12 +20,19 @@ struct StatsDashboardView: View {
     @State private var customEnd = Date()
     @State private var allRecords: [UnifiedUsageRecord] = []   // one full scan; all views slice in memory
     @State private var loadedAgents: Set<StatsAgent> = []
+    @State private var scannedAgents: Set<StatsAgent> = []
     @State private var lastUpdated: Date?
     @State private var detailTab: Int = 0
+    @State private var dailySortKey: String = "date"
+    @State private var dailySortAsc: Bool = false
+    @State private var sessionSortKey: String = "tokens"
+    @State private var sessionSortAsc: Bool = false
+    @State private var modelSortKey: String = "tokens"
+    @State private var modelSortAsc: Bool = false
     @State private var heatHoverText: String?
     @State private var trendHoverText: String?
-    @State private var enabledAgents: Set<StatsAgent> = Set(StatsAgent.allCases)
-    private static let enabledAgentsKey = "CollectionBox.dashboardAgents"
+    @ObservedObject private var agentSelection = StatsAgentSelection.shared
+    private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
     private let service = StatsDashboardService.shared
 
     private let agentColor: [StatsAgent: Color] = [
@@ -48,13 +55,7 @@ struct StatsDashboardView: View {
             mainArea
         }
         .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
-        .onAppear {
-            if let saved = UserDefaults.standard.stringArray(forKey: Self.enabledAgentsKey),
-               let decoded = saved.compactMap(StatsAgent.init(rawValue:)) as? [StatsAgent], !decoded.isEmpty {
-                enabledAgents = Set(decoded)
-            }
-            reload()
-        }
+        .onAppear { reload() }
         .onChange(of: range) { _, newRange in
             if newRange != .custom { reload() }
         }
@@ -309,7 +310,7 @@ struct StatsDashboardView: View {
         }
         // Sidebar is a fixed 300pt: usable = 300 − 20 (card padding) − 16
         // (row labels), cell = floor((264 − 25×2) / 26) = 8 → grid ≈ 7×8 + 6×2.
-        .frame(height: 86)
+        .frame(height: 96)
     }
 
     private func heatColor(tokens: Int, maxDay: Int) -> Color {
@@ -415,7 +416,7 @@ struct StatsDashboardView: View {
             if let last = lastUpdated {
                 Text("刷新于 \(last, style: .time)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
-            Button(action: reload) {
+            Button(action: { reload(force: true) }) {
                 Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .medium))
                     .frame(width: 24, height: 24).contentShape(Rectangle())
             }.buttonStyle(.plain).help("刷新").accessibilityLabel("刷新")
@@ -448,8 +449,8 @@ struct StatsDashboardView: View {
             get: { enabledAgents.contains(agent) },
             set: { on in
                 if !on && enabledAgents.count <= 1 { return }
-                if on { enabledAgents.insert(agent) } else { enabledAgents.remove(agent) }
-                UserDefaults.standard.set(enabledAgents.map(\.rawValue).sorted(), forKey: Self.enabledAgentsKey)
+                if on { agentSelection.setEnabled(agent, to: true) }
+                else { agentSelection.setEnabled(agent, to: false) }
             }
         )
     }
@@ -475,7 +476,7 @@ struct StatsDashboardView: View {
                 .font(.system(size: Design.body, weight: .medium))
                 .foregroundStyle(.green)
             if !breakdown.isEmpty && breakdown.count < current.count {
-                Text("输入/输出/缓存明细不含 Codex / ZCode（数据源仅提供总量）")
+                Text("输入/输出/缓存明细不含 Codex（数据源仅提供总量）")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
             if loadedAgents.count < visibleAgents.count {
@@ -552,14 +553,30 @@ struct StatsDashboardView: View {
 
     private var detailTabs: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("明细", selection: $detailTab) {
-                Text("每日明细").tag(0)
-                Text("会话排行").tag(1)
-                Text("模型排行").tag(2)
+            HStack(spacing: 8) {
+                Picker("明细", selection: $detailTab) {
+                    Text("每日明细").tag(0)
+                    Text("会话排行").tag(1)
+                    Text("模型排行").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 280)
+
+                Spacer()
+
+                if detailTab == 0 {
+                    Button {
+                        exportDailyCSV()
+                    } label: {
+                        Label("导出 CSV", systemImage: "square.and.arrow.down")
+                            .font(.system(size: Design.caption, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("将每日明细导出为 CSV")
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 280)
 
             if detailTab == 0 { dailyBreakdownTable } else if detailTab == 1 { sessionRankTable } else { modelRankTable }
         }
@@ -569,16 +586,17 @@ struct StatsDashboardView: View {
         .cornerRadius(Design.radiusM)
     }
 
+    struct DayRow: Identifiable {
+        let id: String
+        let date: String
+        let total: Int
+        let fresh: Int
+        let cached: Int
+        let output: Int
+        let sessions: Int
+    }
+
     private var dailyBreakdownTable: some View {
-        struct DayRow: Identifiable {
-            let id: String
-            let date: String
-            let total: Int
-            let fresh: Int
-            let cached: Int
-            let output: Int
-            let sessions: Int
-        }
         let cal = Calendar.current
         let grouped = Dictionary(grouping: inRange) { rec -> String in
             let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
@@ -596,7 +614,7 @@ struct StatsDashboardView: View {
                 sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count
             )
         }
-        .sorted { $0.date > $1.date }
+        .sorted(by: dailySort(key: dailySortKey, ascending: dailySortAsc))
 
         return VStack(spacing: 0) {
             headerRow
@@ -616,7 +634,7 @@ struct StatsDashboardView: View {
                     .padding(.vertical, 4)
                     Divider().opacity(0.5)
                 }
-                Text("净输入/输出/缓存列不含 Codex / ZCode（数据源仅提供总量）")
+                Text("净输入/输出/缓存列不含 Codex（数据源仅提供总量）")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 6)
@@ -624,26 +642,68 @@ struct StatsDashboardView: View {
         }
     }
 
+    func dailySort(key: String, ascending: Bool) -> (DayRow, DayRow) -> Bool {
+        { a, b in
+            switch key {
+            case "total": return ascending ? a.total < b.total : a.total > b.total
+            case "fresh": return ascending ? a.fresh < b.fresh : a.fresh > b.fresh
+            case "output": return ascending ? a.output < b.output : a.output > b.output
+            case "cached": return ascending ? a.cached < b.cached : a.cached > b.cached
+            case "sessions": return ascending ? a.sessions < b.sessions : a.sessions > b.sessions
+            default: return ascending ? a.date < b.date : a.date > b.date
+            }
+        }
+    }
+
+    private func sortHeader(_ title: String, key: String, current: String, ascending: Bool, width: CGFloat? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 2) {
+                Text(title)
+                if current == key {
+                    Image(systemName: ascending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                }
+            }
+            .font(.system(size: Design.caption, weight: .semibold))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .frame(width: width, alignment: .trailing)
+        .contentShape(Rectangle())
+    }
+
     private var headerRow: some View {
         HStack(spacing: 0) {
-            Text("日期").font(.system(size: Design.caption, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
-            Text("合计").font(.system(size: Design.caption, weight: .semibold)).frame(width: 110, alignment: .trailing)
-            Text("净输入").font(.system(size: Design.caption, weight: .semibold)).frame(width: 100, alignment: .trailing)
-            Text("输出").font(.system(size: Design.caption, weight: .semibold)).frame(width: 100, alignment: .trailing)
-            Text("缓存").font(.system(size: Design.caption, weight: .semibold)).frame(width: 120, alignment: .trailing)
-            Text("会话").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
+            sortHeader("日期", key: "date", current: dailySortKey, ascending: dailySortAsc, action: toggleDailySortDate)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            sortHeader("合计", key: "total", current: dailySortKey, ascending: dailySortAsc, width: 110, action: { toggleDailySort("total") })
+            sortHeader("净输入", key: "fresh", current: dailySortKey, ascending: dailySortAsc, width: 100, action: { toggleDailySort("fresh") })
+            sortHeader("输出", key: "output", current: dailySortKey, ascending: dailySortAsc, width: 100, action: { toggleDailySort("output") })
+            sortHeader("缓存", key: "cached", current: dailySortKey, ascending: dailySortAsc, width: 120, action: { toggleDailySort("cached") })
+            sortHeader("会话", key: "sessions", current: dailySortKey, ascending: dailySortAsc, width: 60, action: { toggleDailySort("sessions") })
         }
         .padding(.vertical, 4)
     }
 
+    private func toggleDailySortDate() {
+        if dailySortKey == "date" { dailySortAsc.toggle() }
+        else { dailySortKey = "date"; dailySortAsc = false }
+    }
+
+    private func toggleDailySort(_ key: String) {
+        if dailySortKey == key { dailySortAsc.toggle() }
+        else { dailySortKey = key; dailySortAsc = false }
+    }
+
+    struct SessionRow: Identifiable {
+        let id: String
+        let title: String
+        let agent: StatsAgent
+        let tokens: Int
+        let turns: Int
+    }
+
     private var sessionRankTable: some View {
-        struct SessionRow: Identifiable {
-            let id: String
-            let title: String
-            let agent: StatsAgent
-            let tokens: Int
-            let turns: Int
-        }
         let grouped = Dictionary(grouping: inRange) { rec in "\(rec.agent.rawValue)|\(rec.sessionId)" }
         let rows: [SessionRow] = grouped.map { _, recs in
             let first = recs[0]
@@ -652,16 +712,17 @@ struct StatsDashboardView: View {
                               agent: first.agent, tokens: recs.reduce(0) { $0 + $1.tokens },
                               turns: recs.count)
         }
-        .sorted { $0.tokens > $1.tokens }
+        .sorted(by: sessionSort(key: sessionSortKey, ascending: sessionSortAsc))
         .prefix(30)
         .map { $0 }
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Text("会话").font(.system(size: Design.caption, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                sortHeader("会话", key: "title", current: sessionSortKey, ascending: sessionSortAsc, action: { toggleSessionSort("title") })
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 90, alignment: .leading)
-                Text("Tokens").font(.system(size: Design.caption, weight: .semibold)).frame(width: 110, alignment: .trailing)
-                Text("轮次").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
+                sortHeader("Tokens", key: "tokens", current: sessionSortKey, ascending: sessionSortAsc, width: 110, action: { toggleSessionSort("tokens") })
+                sortHeader("轮次", key: "turns", current: sessionSortKey, ascending: sessionSortAsc, width: 60, action: { toggleSessionSort("turns") })
             }
             .padding(.vertical, 4)
             Divider()
@@ -686,31 +747,99 @@ struct StatsDashboardView: View {
         }
     }
 
+    func modelSort(key: String, ascending: Bool) -> (ModelRankRow, ModelRankRow) -> Bool {
+        { a, b in
+            switch key {
+            case "name": return ascending ? a.name < b.name : a.name > b.name
+            case "sessions": return ascending ? a.sessions < b.sessions : a.sessions > b.sessions
+            default: return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
+            }
+        }
+    }
+
+    private func toggleModelSort(_ key: String) {
+        if modelSortKey == key { modelSortAsc.toggle() }
+        else { modelSortKey = key; modelSortAsc = false }
+    }
+
+    // MARK: - CSV Export
+
+    private func exportDailyCSV() {
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: inRange) { rec -> String in
+            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
+            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+            return df.string(from: day)
+        }
+        let rows: [(String, Int, Int, Int, Int, Int)] = grouped.map { date, recs in
+            let breakdown = recs.filter(\.hasBreakdown)
+            return (date,
+                    recs.reduce(0) { $0 + $1.tokens },
+                    breakdown.reduce(0) { $0 + $1.freshInput },
+                    breakdown.reduce(0) { $0 + $1.output },
+                    breakdown.reduce(0) { $0 + $1.cached },
+                    Set(recs.map { "\($0.agent):\($0.sessionId)" }).count)
+        }
+        .sorted { $0.0 > $1.0 }
+
+        var csv = "日期,合计,净输入,输出,缓存,会话\n"
+        for r in rows {
+            csv += "\(r.0),\(r.1),\(r.2),\(r.3),\(r.4),\(r.5)\n"
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "Pinner-每日明细-\(range.label).csv"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            try? csv.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func sessionSort(key: String, ascending: Bool) -> (SessionRow, SessionRow) -> Bool {
+        { a, b in
+            switch key {
+            case "title": return ascending ? a.title < b.title : a.title > b.title
+            case "turns": return ascending ? a.turns < b.turns : a.turns > b.turns
+            default: return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
+            }
+        }
+    }
+
+    private func toggleSessionSort(_ key: String) {
+        if sessionSortKey == key { sessionSortAsc.toggle() }
+        else { sessionSortKey = key; sessionSortAsc = false }
+    }
+
     /// Cross-agent model ranking: merged by display name, share bar, tokens,
     /// sessions and percentage.
+    struct ModelRankRow: Identifiable {
+        let id: String
+        let name: String
+        let agents: String
+        let tokens: Int
+        let sessions: Int
+    }
+
     private var modelRankTable: some View {
-        struct ModelRankRow: Identifiable {
-            let id: String
-            let name: String
-            let agents: String
-            let tokens: Int
-            let sessions: Int
-        }
-        let rows: [ModelRankRow] = mergedModelGroups(inRange).map { g in
-            ModelRankRow(id: g.name.lowercased(), name: g.name,
-                         agents: g.agents.map(\.label).joined(separator: " / "),
-                         tokens: g.tokens, sessions: g.sessions)
-        }
-        let maxTokens = rows.first?.tokens ?? 0
+        let rows: [ModelRankRow] = mergedModelGroups(inRange)
+            .map { g in
+                ModelRankRow(id: g.name.lowercased(), name: g.name,
+                             agents: g.agents.map(\.label).joined(separator: " / "),
+                             tokens: g.tokens, sessions: g.sessions)
+            }
+            .sorted(by: modelSort(key: modelSortKey, ascending: modelSortAsc))
+        let maxTokens = rows.map(\.tokens).max() ?? 0
         let grand = rows.reduce(0) { $0 + $1.tokens }
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Text("模型").font(.system(size: Design.caption, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                sortHeader("模型", key: "name", current: modelSortKey, ascending: modelSortAsc, action: { toggleModelSort("name") })
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 100, alignment: .leading)
                 Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 140, alignment: .leading)
-                Text("Tokens").font(.system(size: Design.caption, weight: .semibold)).frame(width: 110, alignment: .trailing)
-                Text("会话").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
+                sortHeader("Tokens", key: "tokens", current: modelSortKey, ascending: modelSortAsc, width: 110, action: { toggleModelSort("tokens") })
+                sortHeader("会话", key: "sessions", current: modelSortKey, ascending: modelSortAsc, width: 60, action: { toggleModelSort("sessions") })
                 Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
             }
             .padding(.vertical, 4)
@@ -750,21 +879,34 @@ struct StatsDashboardView: View {
 
     // MARK: - Loading
 
-    private func reload() {
-        loadedAgents = []
+    private func reload(force: Bool = false) {
+        if force { scannedAgents = [] }
+        // Agents already scanned count as loaded immediately — otherwise any
+        // selection/range change clears the set and the "scanning" banner
+        // spins forever over data that is already on screen.
+        loadedAgents = Set(visibleAgents.filter { scannedAgents.contains($0) })
         // One all-time scan feeds the sidebar AND every range slice (records
-        // carry timestamps; range windows filter in memory).
-        for agent in visibleAgents {
+        // carry timestamps; range windows filter in memory). Agents already
+        // scanned this session keep their records — selection toggles don't
+        // rescan the expensive sources (DSH zstd decompression).
+        let missing = visibleAgents.filter { !scannedAgents.contains($0) }
+        for agent in missing {
             Task.detached(priority: .userInitiated) {
                 let agentRecords = service.collect(agent: agent, sinceMs: 0)
                 await MainActor.run {
                     allRecords.removeAll { $0.agent == agent }
                     allRecords.append(contentsOf: agentRecords)
+                    scannedAgents.insert(agent)
                     loadedAgents.insert(agent)
                     lastUpdated = Date()
                 }
             }
         }
+        // Deselected agents drop out of the in-memory store immediately so
+        // totals don't include them.
+        let keep = Set(visibleAgents)
+        allRecords.removeAll { !keep.contains($0.agent) }
+        if missing.isEmpty { lastUpdated = Date() }
     }
 
     // MARK: - Shared Pieces

@@ -1,6 +1,19 @@
 import Foundation
 import Observation
 
+/// A bookmark entry flattened with its source tab index, used by the
+/// cross-tab "最近访问" view.
+public struct RecentEntry: Identifiable, Equatable, Sendable {
+    public let entry: BookmarkEntry
+    public let tabIndex: Int
+    public var id: UUID { entry.id }
+
+    public init(entry: BookmarkEntry, tabIndex: Int) {
+        self.entry = entry
+        self.tabIndex = tabIndex
+    }
+}
+
 @MainActor
 @Observable
 public final class CollectionStore {
@@ -151,6 +164,23 @@ public final class CollectionStore {
         guard let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
         tabs[tabIndex].entries[i].lastOpened = Date()
         save()
+    }
+
+    // MARK: - Recents
+
+    /// Cross-tab recently-opened entries, newest first. Entries that have never
+    /// been opened are excluded.
+    public func recentEntries(limit: Int = 200) -> [RecentEntry] {
+        var out: [RecentEntry] = []
+        for (i, tab) in tabs.enumerated() {
+            for e in tab.entries where e.lastOpened != nil {
+                out.append(RecentEntry(entry: e, tabIndex: i))
+            }
+        }
+        return out
+            .sorted { ($0.entry.lastOpened ?? .distantPast) > ($1.entry.lastOpened ?? .distantPast) }
+            .prefix(limit)
+            .map { $0 }
     }
 
     // MARK: - Undo

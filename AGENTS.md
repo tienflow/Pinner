@@ -23,7 +23,12 @@ swift build --product CollectionBoxApp && open .build/debug/CollectionBoxApp
 
 # 杀掉进程
 pkill -f CollectionBoxApp
+
+# 杀掉已安装到 /Applications 的实例（进程名是 Pinner，上面的 CollectionBoxApp 模式匹配不到它）
+killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner"
 ```
+
+⚠️ `pkill -f CollectionBoxApp` 只能匹配开发构建；替换 `/Applications/Pinner.app` 前必须先杀安装实例，否则 `open` 会与旧实例并存，菜单栏出现两个图标。
 
 `open` 通过 LaunchServices 启动应用，进程独立于终端。每次 `swift build` 后必须重新 `codesign`，否则 macOS Gatekeeper 会弹窗拦截。
 

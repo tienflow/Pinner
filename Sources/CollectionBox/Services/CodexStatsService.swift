@@ -151,30 +151,20 @@ final class CodexStatsService {
 
         var startUnix: Int
         var bucketSeconds: Int
-        var strftimeFmt: String
-        var labelFmt: String
 
         switch range {
         case .last5Hours:
             startUnix = nowUnix - 5 * 3600
             bucketSeconds = 1500
-            strftimeFmt = "%H:%M"
-            labelFmt = "%H:%M"
         case .today:
             startUnix = Int(cal.startOfDay(for: now).timeIntervalSince1970)
             bucketSeconds = 3600
-            strftimeFmt = "%H"
-            labelFmt = ":00"
         case .last7Days:
             startUnix = nowUnix - 7 * 86400
             bucketSeconds = 86400
-            strftimeFmt = "%Y-%m-%d"
-            labelFmt = "M/d"
         case .last30Days:
             startUnix = nowUnix - 30 * 86400
             bucketSeconds = 86400
-            strftimeFmt = "%Y-%m-%d"
-            labelFmt = "M/d"
         }
 
         guard let db = openDB() else { return [] }

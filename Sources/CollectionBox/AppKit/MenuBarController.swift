@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 enum AppTheme: Int, CaseIterable, Identifiable {
     case auto = 0, light = 1, dark = 2
@@ -23,6 +24,11 @@ public final class MenuBarController: NSObject {
     private var geminiStatsHotkeyManager: GeminiStatsHotkeyManager?
     private var workbuddyStatsController: WorkBuddyStatsWindowController?
     private var workbuddyStatsHotkeyManager: WorkBuddyStatsHotkeyManager?
+    private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
+    private let dshStatsController = AgentStatsWindowController(agent: .dsh)
+    private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
+    private let dshStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.dshStatsHotkey", eventID: 7)
+    private let dashboardHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.dashboardHotkey", eventID: 8)
 
     public init(store: CollectionStore) { self.store = store; super.init() }
 
@@ -63,6 +69,13 @@ public final class MenuBarController: NSObject {
         workbuddyStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showWorkBuddyStats() }
         workbuddyStatsHotkeyManager?.register()
 
+        dashboardHotkeyManager.onHotkeyTriggered = { [weak self] in self?.openDashboard() }
+        zcodeStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.zcode) }
+        dshStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.dsh) }
+        dashboardHotkeyManager.register()
+        zcodeStatsHotkeyManager.register()
+        dshStatsHotkeyManager.register()
+
         applyTheme()
     }
 
@@ -80,6 +93,13 @@ public final class MenuBarController: NSObject {
     }
 
     private func showMenu() {
+        statusItem?.menu = makeMenu()
+        statusItem?.button?.performClick(nil)
+        statusItem?.menu = nil
+    }
+
+    /// Rebuilt on every right click so dashboard selection changes need no restart.
+    func makeMenu(enabledAgents: Set<StatsAgent> = StatsAgentSelection.shared.enabledAgents) -> NSMenu {
         let m = NSMenu()
         let header = NSMenuItem(title: "总览", action: #selector(openDashboard), keyEquivalent: "")
         header.target = self; m.addItem(header)
@@ -88,89 +108,78 @@ public final class MenuBarController: NSObject {
         // Collection
         let collectionItem = NSMenuItem(title: "收藏夹", action: #selector(openCollection), keyEquivalent: "")
         collectionItem.target = self; m.addItem(collectionItem)
-        let collectionHotkeyItem = NSMenuItem(title: "收藏夹快捷键", action: nil, keyEquivalent: "")
-        let collectionHotkeySub = NSMenu()
-        let curCombo = hotkeyManager?.currentCombo ?? HotkeyManager.defaultCombo
-        let showCurrent = NSMenuItem(title: "当前: \(curCombo.displayString)", action: nil, keyEquivalent: "")
-        showCurrent.isEnabled = false; collectionHotkeySub.addItem(showCurrent)
-        collectionHotkeySub.addItem(.separator())
-        let recordItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordHotkey), keyEquivalent: "")
-        recordItem.target = self; collectionHotkeySub.addItem(recordItem)
-        let clearItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearHotkey), keyEquivalent: "")
-        clearItem.target = self; collectionHotkeySub.addItem(clearItem)
-        collectionHotkeyItem.submenu = collectionHotkeySub; m.addItem(collectionHotkeyItem)
 
         m.addItem(.separator())
 
         // OTP
         let otpItem = NSMenuItem(title: "OTP 验证码", action: #selector(showOTP), keyEquivalent: "")
         otpItem.target = self; m.addItem(otpItem)
+
+        m.addItem(.separator())
+
+        // Agent stats entries follow the dashboard selection.
+        for agent in StatsAgent.allCases where enabledAgents.contains(agent) {
+            let item = NSMenuItem(title: "\(agent.label) 统计", action: #selector(showAgentStats(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = agent; m.addItem(item)
+        }
+
+        m.addItem(.separator())
+
+        // Settings: all hotkeys (incl. dashboard) + theme.
+        let settingsItem = NSMenuItem(title: "设置", action: nil, keyEquivalent: "")
+        let settingsSub = NSMenu()
+
+        let dashHotkeyItem = NSMenuItem(title: "总览快捷键", action: nil, keyEquivalent: "")
+        dashHotkeyItem.submenu = makeHotkeySubmenu(
+            current: dashboardHotkeyManager.currentCombo?.displayString ?? "未设置",
+            record: #selector(recordDashboardHotkey), clear: #selector(clearDashboardHotkey)
+        )
+        settingsSub.addItem(dashHotkeyItem)
+
+        let collectionHotkeyItem = NSMenuItem(title: "收藏夹快捷键", action: nil, keyEquivalent: "")
+        collectionHotkeyItem.submenu = makeHotkeySubmenu(
+            current: (hotkeyManager?.currentCombo ?? HotkeyManager.defaultCombo).displayString,
+            record: #selector(recordHotkey), clear: #selector(clearHotkey))
+        settingsSub.addItem(collectionHotkeyItem)
+
         let otpHotkeyItem = NSMenuItem(title: "OTP 快捷键", action: nil, keyEquivalent: "")
-        let otpHotkeySub = NSMenu()
-        let curOTPCombo = otpHotkeyManager?.currentCombo ?? OTPHotkeyManager.defaultCombo
-        let showOTPCurrent = NSMenuItem(title: "当前: \(curOTPCombo.displayString)", action: nil, keyEquivalent: "")
-        showOTPCurrent.isEnabled = false; otpHotkeySub.addItem(showOTPCurrent)
-        otpHotkeySub.addItem(.separator())
-        let recordOTPItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordOTPHotkey), keyEquivalent: "")
-        recordOTPItem.target = self; otpHotkeySub.addItem(recordOTPItem)
-        let clearOTPItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearOTPHotkey), keyEquivalent: "")
-        clearOTPItem.target = self; otpHotkeySub.addItem(clearOTPItem)
-        otpHotkeyItem.submenu = otpHotkeySub; m.addItem(otpHotkeyItem)
+        otpHotkeyItem.submenu = makeHotkeySubmenu(
+            current: (otpHotkeyManager?.currentCombo ?? OTPHotkeyManager.defaultCombo).displayString,
+            record: #selector(recordOTPHotkey), clear: #selector(clearOTPHotkey))
+        settingsSub.addItem(otpHotkeyItem)
 
-        m.addItem(.separator())
+        settingsSub.addItem(.separator())
 
-        // Codex Stats
-        let codexStatsItem = NSMenuItem(title: "Codex 统计", action: #selector(showCodexStatsFromMenu), keyEquivalent: "")
-        codexStatsItem.target = self; m.addItem(codexStatsItem)
-        let codexStatsHotkeyItem = NSMenuItem(title: "Codex 统计快捷键", action: nil, keyEquivalent: "")
-        let codexStatsHotkeySub = NSMenu()
-        let curCodexCombo = codexStatsHotkeyManager?.currentCombo ?? CodexStatsHotkeyManager.defaultCombo
-        let showCodexCurrent = NSMenuItem(title: "当前: \(curCodexCombo.displayString)", action: nil, keyEquivalent: "")
-        showCodexCurrent.isEnabled = false; codexStatsHotkeySub.addItem(showCodexCurrent)
-        codexStatsHotkeySub.addItem(.separator())
-        let recordCodexItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordCodexStatsHotkey), keyEquivalent: "")
-        recordCodexItem.target = self; codexStatsHotkeySub.addItem(recordCodexItem)
-        let clearCodexItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearCodexStatsHotkey), keyEquivalent: "")
-        clearCodexItem.target = self; codexStatsHotkeySub.addItem(clearCodexItem)
-        codexStatsHotkeyItem.submenu = codexStatsHotkeySub; m.addItem(codexStatsHotkeyItem)
+        for agent in StatsAgent.allCases {
+            let item = NSMenuItem(title: "\(agent.label) 统计快捷键", action: nil, keyEquivalent: "")
+            item.representedObject = agent
+            item.submenu = makeAgentHotkeySubmenu(agent)
+            settingsSub.addItem(item)
+        }
 
-        m.addItem(.separator())
+        // Agent visibility mirrors the dashboard toggle (same shared state).
+        let agentsItem = NSMenuItem(title: "参与统计的 Agent", action: nil, keyEquivalent: "")
+        let agentsSub = NSMenu()
+        for agent in StatsAgent.allCases {
+            let toggle = NSMenuItem(title: agent.label, action: #selector(toggleAgentStats(_:)), keyEquivalent: "")
+            toggle.target = self
+            toggle.representedObject = agent
+            toggle.state = enabledAgents.contains(agent) ? .on : .off
+            agentsSub.addItem(toggle)
+        }
+        agentsItem.submenu = agentsSub
+        settingsSub.addItem(agentsItem)
 
-        // Gemini Stats
-        let geminiStatsItem = NSMenuItem(title: "Antigravity 统计", action: #selector(showGeminiStatsFromMenu), keyEquivalent: "")
-        geminiStatsItem.target = self; m.addItem(geminiStatsItem)
-        let geminiStatsHotkeyItem = NSMenuItem(title: "Antigravity 统计快捷键", action: nil, keyEquivalent: "")
-        let geminiStatsHotkeySub = NSMenu()
-        let curGeminiCombo = geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo
-        let showGeminiCurrent = NSMenuItem(title: "当前: \(curGeminiCombo.displayString)", action: nil, keyEquivalent: "")
-        showGeminiCurrent.isEnabled = false; geminiStatsHotkeySub.addItem(showGeminiCurrent)
-        geminiStatsHotkeySub.addItem(.separator())
-        let recordGeminiItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordGeminiStatsHotkey), keyEquivalent: "")
-        recordGeminiItem.target = self; geminiStatsHotkeySub.addItem(recordGeminiItem)
-        let clearGeminiItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearGeminiStatsHotkey), keyEquivalent: "")
-        clearGeminiItem.target = self; geminiStatsHotkeySub.addItem(clearGeminiItem)
-        geminiStatsHotkeyItem.submenu = geminiStatsHotkeySub; m.addItem(geminiStatsHotkeyItem)
+        settingsSub.addItem(.separator())
 
-        m.addItem(.separator())
+        // 登录时启动（SMAppService，macOS 13+）
+        let launchAtLogin = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLogin.target = self
+        launchAtLogin.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        settingsSub.addItem(launchAtLogin)
 
-        // WorkBuddy Stats
-        let workbuddyStatsItem = NSMenuItem(title: "WorkBuddy 统计", action: #selector(showWorkBuddyStatsFromMenu), keyEquivalent: "")
-        workbuddyStatsItem.target = self; m.addItem(workbuddyStatsItem)
-        let workbuddyStatsHotkeyItem = NSMenuItem(title: "WorkBuddy 快捷键", action: nil, keyEquivalent: "")
-        let workbuddyStatsHotkeySub = NSMenu()
-        let curWorkbuddyCombo = workbuddyStatsHotkeyManager?.currentCombo ?? WorkBuddyStatsHotkeyManager.defaultCombo
-        let showWorkbuddyCurrent = NSMenuItem(title: "当前: \(curWorkbuddyCombo.displayString)", action: nil, keyEquivalent: "")
-        showWorkbuddyCurrent.isEnabled = false; workbuddyStatsHotkeySub.addItem(showWorkbuddyCurrent)
-        workbuddyStatsHotkeySub.addItem(.separator())
-        let recordWorkbuddyItem = NSMenuItem(title: "设置快捷键...", action: #selector(recordWorkBuddyStatsHotkey), keyEquivalent: "")
-        recordWorkbuddyItem.target = self; workbuddyStatsHotkeySub.addItem(recordWorkbuddyItem)
-        let clearWorkbuddyItem = NSMenuItem(title: "恢复默认快捷键", action: #selector(clearWorkBuddyStatsHotkey), keyEquivalent: "")
-        clearWorkbuddyItem.target = self; workbuddyStatsHotkeySub.addItem(clearWorkbuddyItem)
-        workbuddyStatsHotkeyItem.submenu = workbuddyStatsHotkeySub; m.addItem(workbuddyStatsHotkeyItem)
+        settingsSub.addItem(.separator())
 
-        m.addItem(.separator())
-
-        // Theme
         let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
         let themeSub = NSMenu()
         let curTheme = AppTheme(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.theme")) ?? .auto
@@ -179,13 +188,132 @@ public final class MenuBarController: NSObject {
             i.target = self; i.tag = t.rawValue; i.state = t == curTheme ? .on : .off; i.representedObject = t
             themeSub.addItem(i)
         }
-        themeItem.submenu = themeSub; m.addItem(themeItem)
+        themeItem.submenu = themeSub
+        settingsSub.addItem(themeItem)
+
+        settingsItem.submenu = settingsSub
+        m.addItem(settingsItem)
 
         m.addItem(.separator())
         let quit = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self; quit.keyEquivalentModifierMask = [.command]; m.addItem(quit)
 
-        statusItem?.menu = m; statusItem?.button?.performClick(nil); statusItem?.menu = nil
+        return m
+    }
+
+    // MARK: - Menu Helpers
+
+    private func makeHotkeySubmenu(current: String, record: Selector, clear: Selector) -> NSMenu {        let sub = NSMenu()
+        let cur = NSMenuItem(title: "当前: \(current)", action: nil, keyEquivalent: "")
+        cur.isEnabled = false; sub.addItem(cur)
+        sub.addItem(.separator())
+        let recordItem = NSMenuItem(title: "设置快捷键...", action: record, keyEquivalent: "")
+        recordItem.target = self; sub.addItem(recordItem)
+        let clearItem = NSMenuItem(title: "恢复默认快捷键", action: clear, keyEquivalent: "")
+        clearItem.target = self; sub.addItem(clearItem)
+        return sub
+    }
+
+    /// Codex / Antigravity / WorkBuddy route to their legacy managers (with a
+    /// fixed default combo); ZCode / DSH use the generic manager whose
+    /// "恢复默认" clears the binding entirely.
+    private func makeAgentHotkeySubmenu(_ agent: StatsAgent) -> NSMenu {
+        let sub: NSMenu
+        switch agent {
+        case .codex:
+            sub = makeHotkeySubmenu(
+                current: (codexStatsHotkeyManager?.currentCombo ?? CodexStatsHotkeyManager.defaultCombo).displayString,
+                record: #selector(recordCodexStatsHotkey), clear: #selector(clearCodexStatsHotkey))
+        case .gemini:
+            sub = makeHotkeySubmenu(
+                current: (geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo).displayString,
+                record: #selector(recordGeminiStatsHotkey), clear: #selector(clearGeminiStatsHotkey))
+        case .workbuddy:
+            sub = makeHotkeySubmenu(
+                current: (workbuddyStatsHotkeyManager?.currentCombo ?? WorkBuddyStatsHotkeyManager.defaultCombo).displayString,
+                record: #selector(recordWorkBuddyStatsHotkey), clear: #selector(clearWorkBuddyStatsHotkey))
+        case .zcode, .dsh:
+            sub = makeHotkeySubmenu(
+                current: (agent == .zcode ? zcodeStatsHotkeyManager : dshStatsHotkeyManager).currentCombo?.displayString ?? "未设置",
+                record: #selector(recordAgentStatsHotkey(_:)), clear: #selector(clearAgentStatsHotkey(_:)))
+        }
+        // Generic record/clear actions need the agent; legacy selectors don't.
+        for entry in sub.items where entry.action == #selector(recordAgentStatsHotkey(_:)) || entry.action == #selector(clearAgentStatsHotkey(_:)) {
+            entry.representedObject = agent
+        }
+        return sub
+    }
+
+    // MARK: - Actions
+
+    @objc private func showAgentStats(_ sender: NSMenuItem) {
+        guard let agent = sender.representedObject as? StatsAgent else { return }
+        showAgentPanel(agent)
+    }
+
+    /// Mirrors the dashboard's Agent toggle, including the keep-last-on rule.
+    @objc private func toggleAgentStats(_ sender: NSMenuItem) {
+        guard let agent = sender.representedObject as? StatsAgent else { return }
+        let selection = StatsAgentSelection.shared
+        let isOn = selection.enabledAgents.contains(agent)
+        if isOn && selection.enabledAgents.count <= 1 { return }
+        selection.setEnabled(agent, to: !isOn)
+    }
+
+    /// Codex / Antigravity / WorkBuddy keep their dedicated panels; ZCode and
+    /// DSH open the shared compact panel.
+    private func showAgentPanel(_ agent: StatsAgent) {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            switch agent {
+            case .codex: codexStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+            case .gemini: geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+            case .workbuddy: workbuddyStatsController?.showAtMenuBar(buttonFrame: btnFrame)
+            case .zcode: zcodeStatsController.showAtMenuBar(buttonFrame: btnFrame)
+            case .dsh: dshStatsController.showAtMenuBar(buttonFrame: btnFrame)
+            }
+        } else {
+            switch agent {
+            case .codex: codexStatsController?.showAtMouse()
+            case .gemini: geminiStatsController?.showAtMouse()
+            case .workbuddy: workbuddyStatsController?.showAtMouse()
+            case .zcode: zcodeStatsController.showAtMouse()
+            case .dsh: dshStatsController.showAtMouse()
+            }
+        }
+    }
+
+    /// ZCode / DSH share the generic hotkey manager; other agents have none.
+    private func genericAgentStatsHotkeyManager(_ agent: StatsAgent) -> AgentStatsHotkeyManager? {
+        switch agent {
+        case .zcode: return zcodeStatsHotkeyManager
+        case .dsh: return dshStatsHotkeyManager
+        default: return nil
+        }
+    }
+
+    @objc private func recordAgentStatsHotkey(_ sender: NSMenuItem) {
+        guard let agent = sender.representedObject as? StatsAgent,
+              let manager = genericAgentStatsHotkeyManager(agent) else { return }
+        HotkeyRecorder.present(title: "设置 \(agent.label) 统计快捷键") { combo in
+            manager.save(combo: combo)
+        }
+    }
+
+    @objc private func clearAgentStatsHotkey(_ sender: NSMenuItem) {
+        guard let agent = sender.representedObject as? StatsAgent,
+              let manager = genericAgentStatsHotkeyManager(agent) else { return }
+        manager.clear()
+    }
+
+    @objc private func recordDashboardHotkey() {
+        HotkeyRecorder.present(title: "设置总览快捷键") { [weak self] combo in
+            self?.dashboardHotkeyManager.save(combo: combo)
+        }
+    }
+
+    @objc private func clearDashboardHotkey() {
+        dashboardHotkeyManager.clear()
     }
 
     @objc private func recordHotkey() {
@@ -225,15 +353,6 @@ public final class MenuBarController: NSObject {
         }
     }
 
-    @objc private func showCodexStatsFromMenu() {
-        if let btn = statusItem?.button {
-            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            codexStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-        } else {
-            codexStatsController?.showAtMouse()
-        }
-    }
-
     private func showCodexStats() {
         if let btn = statusItem?.button {
             let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
@@ -243,30 +362,12 @@ public final class MenuBarController: NSObject {
         }
     }
 
-    @objc private func showGeminiStatsFromMenu() {
-        if let btn = statusItem?.button {
-            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-        } else {
-            geminiStatsController?.showAtMouse()
-        }
-    }
-
     private func showGeminiStats() {
         if let btn = statusItem?.button {
             let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
             geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
         } else {
             geminiStatsController?.showAtMouse()
-        }
-    }
-
-    @objc private func showWorkBuddyStatsFromMenu() {
-        if let btn = statusItem?.button {
-            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            workbuddyStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-        } else {
-            workbuddyStatsController?.showAtMouse()
         }
     }
 
@@ -317,6 +418,25 @@ public final class MenuBarController: NSObject {
 
     @objc private func clearGeminiStatsHotkey() {
         geminiStatsHotkeyManager?.clear()
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let enable = sender.state == .off
+        do {
+            if enable {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = enable ? "无法开启开机自启" : "无法关闭开机自启"
+            alert.informativeText = enable
+                ? "请将 Pinner 放入「应用程序」文件夹后重试。\n\(error.localizedDescription)"
+                : error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
     }
 
     @objc private func hidePanel() { edgeController?.collapse() }
