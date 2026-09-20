@@ -3,7 +3,7 @@ import Combine
 
 /// Shared, persisted selection for the dashboard and menu-bar entries.
 public final class StatsAgentSelection: ObservableObject {
-    static let shared = StatsAgentSelection()
+    public static let shared = StatsAgentSelection()
     private static let defaultsKey = "CollectionBox.dashboardAgents"
     private let defaults: UserDefaults
 

@@ -54,9 +54,13 @@ struct TodoSettingsView: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.top, 4)
+
+            Text("提示：海外端点需在 macOS 系统设置中开启系统代理；Base URL 通常以 /v1 结尾。")
+                .font(.system(size: Design.micro))
+                .foregroundStyle(.tertiary)
         }
         .padding(20)
-        .frame(width: 420, height: 240)
+        .frame(width: 440, height: 265)
         .onAppear(perform: load)
     }
 
@@ -114,17 +118,22 @@ struct TodoSettingsView: View {
         testResult = nil
         Task {
             defer { isTesting = false }
-            let client = TodoLLMClient()
-            let context = TodoPromptContext(input: "明早九点交周报", now: Date(), lists: ["提醒事项", "工作", "购物"], lastList: nil)
+            let client = TodoLLMClient(timeout: 30)
+            let context = TodoPromptContext(input: "明早九点提醒我开会", now: Date(), lists: ["提醒事项", "工作", "购物"], lastList: nil)
             do {
                 let result = try await client.parse(context: context, config: config)
                 if let result, !result.title.isEmpty {
-                    testResult = .success("解析成功：\(result.title)")
+                    testResult = .success("连接成功，模型响应正常")
                 } else {
-                    testResult = .failure("响应无法解析")
+                    testResult = .failure("响应无法解析为待办格式")
                 }
             } catch {
-                testResult = .failure(error.localizedDescription)
+                let nsError = error as NSError
+                if nsError.code == NSURLErrorTimedOut || error.localizedDescription.contains("timed out") || error.localizedDescription.contains("超时") {
+                    testResult = .failure("请求超时（30s）。若为海外端点请检查系统代理，或核对端点连通性")
+                } else {
+                    testResult = .failure(error.localizedDescription)
+                }
             }
         }
     }

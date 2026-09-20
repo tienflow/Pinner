@@ -43,6 +43,23 @@ SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift run Pinner
 
 根治：安装完整 Xcode 或等待 Apple 修复 CLT。若环境已恢复正常（plugins 目录出现 `libSwiftUIMacros.dylib`），直接用 `swift build` 即可。
 
+### 2.1 修改构建完后自动重启（🔴 铁律：必须主动执行）
+
+每次代码修改完成并验证通过后，**必须主动、自动重启用户本地的 Pinner 进程**，严禁让用户手动重启或等用户催促：
+
+```
+# 标准重装并平滑重启流程
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build -c release --product CollectionBoxApp
+cp .build/release/CollectionBoxApp Pinner.app/Contents/MacOS/Pinner
+codesign --force --deep --sign - Pinner.app
+rm -rf /Applications/Pinner.app && cp -R Pinner.app /Applications/
+killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner" || true
+sleep 1
+open /Applications/Pinner.app
+```
+
+⚠️ 注意必须更新 `/Applications/Pinner.app` 并启动该 bundle 路径，避免裸二进制启动导致的 UserDefaults 域隔离问题。
+
 ## 3. 质量验证（🔴 改完必须跑）
 
 - 改完跑项目的构建命令（`npm run build` / `swift build` / `cargo build` / `make` 等）
@@ -66,7 +83,7 @@ SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift run Pinner
 ```
 1. swift build -c release --product CollectionBoxApp → 验证: 构建成功
 2. 打包 .app bundle（Pinner.app/Contents/MacOS/Pinner + Info.plist + Resources/AppIcon.icns）；同步将 Info.plist 的 CFBundleShortVersionString / CFBundleVersion 更新为当前版本 → 验证: ls Pinner.app/Contents/MacOS/Pinner + `/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Pinner.app/Contents/Info.plist`
-3. 打包 DMG（含拖拽安装布局）：创建临时目录放入 Pinner.app + Applications 符号链接 → hdiutil create 读写 DMG → osascript 设置 Finder 窗口布局（图标视图、96px、左右排列）→ hdiutil convert 转压缩只读 → 验证: DMG 文件生成并可拖拽安装
+3. 打包 DMG（含拖拽安装布局）：创建临时目录放入 Pinner.app + Applications 符号链接 → hdiutil create (-fs HFS+) 读写 DMG → osascript 设置 Finder 窗口布局（图标视图、96px、左右排列）→ hdiutil convert 转压缩只读 → 验证: DMG 文件生成并可拖拽安装
 4. 更新 README.md → 验证: 功能列表与代码一致，安装段的 DMG 文件名与当前版本一致
 5. git add + commit → 验证: git status 干净
 6. git push + git tag -a vX.X.X → 验证: 远程分支和 tag 已同步

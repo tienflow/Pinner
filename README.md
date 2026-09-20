@@ -46,18 +46,21 @@
 - **快捷键**：默认 `⌘⇧W`，可自定义
 
 **待办快速录入**
-- **自然语言解析**：一句话 → 结构化任务（标题 / 到期 / 优先级 / 列表），由 OpenAI 兼容 API（自带 Key，Base URL / API Key / 模型名可配置，Key 存 Keychain）解析后写入 macOS 提醒事项
+- **自然语言解析**：一句话 → 结构化任务（标题 / 到期 / 优先级 / 列表），由 OpenAI 兼容 API（自带 Key，Base URL / API Key / 模型名可配置，本地持久化无系统弹窗）解析后写入 macOS 提醒事项
 - **预览确认卡**：解析结果先浮出可编辑卡片，四字段均可改，⏎ 保存、⎋ 丢弃
 - **失败降级**：断网 / 超时（5s）/ 响应不可解析时，原文直接作为任务标题保存（无到期日），不阻断录入
-- **今日概览**：面板下半区只读显示「今天 + 已逾期」未完成条目，点击跳转提醒事项 App
-- **可选全局快捷键**：默认不绑定，可在设置中配置（同总览 / ZCode 模式）
+- **今日概览**：面板下半区实时显示「今天 + 已逾期」未完成条目，可直接勾选标记完成，点击外部按钮跳转提醒事项 App
+- **快捷键直达**：可自定义全局快捷键（默认未设置，可于偏好设置随时录制）
 
-**通用**
+**通用与偏好设置**
+- **扁平极简菜单**：右键菜单全面扁平化，去除繁冗的层级子菜单，高频入口一目了然
+- **统一偏好设置面板 (`⌘,`)**：
+  - **通用**：开机自启开关（`SMAppService`）、外观主题（自动 / 浅色 / 深色）、参与统计的 Agent 勾选（双向联动）
+  - **快捷键**：可视化呈现总览、收藏夹、OTP、待办及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
+  - **待办 AI**：配置 Base URL、API Key、Model Name，支持连通性一键测试与状态提示
 - **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换近 7 天 / 30 天 / 全部 / 自定义日期；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
-- **设置菜单**：右键菜单 →「设置」统一管理全部快捷键（总览 / 收藏夹 / OTP / 各 Agent 统计）、参与统计的 Agent 勾选（与总览界面双向联动）、登录时启动与主题
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / ZCode / DSH 统计默认不占快捷键，可在设置中单独配置；组合键被系统或其他应用占用时弹系统通知提醒
-- **主题**：浅色、深色、自动
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
 
 产品落地页位于 `landing/`（单文件静态页，字体已内联，可部署到任意静态托管）。
 
@@ -75,13 +78,14 @@
 ```
 Sources/
 ├── CollectionBox/              # 核心库
-│   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount）
+│   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent）
 │   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView, AgentStatsView, TodoCaptureView, TodoSettingsView 等）
+│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
 │   └── AppKit/                 # AppKit 集成
-│       ├── MenuBarController.swift           # 菜单栏交互
+│       ├── MenuBarController.swift           # 菜单栏交互与极简扁平菜单
 │       ├── EdgeDockWindowController.swift    # 收藏面板管理
+│       ├── SettingsWindowController.swift    # 统一偏好设置窗口管理
 │       ├── HotkeyRecorder.swift              # 快捷键录制面板（通用组件）
 │       ├── OTPWindowController.swift         # OTP 面板管理
 │       ├── HotkeyManager.swift               # 收藏夹快捷键
@@ -97,7 +101,7 @@ Sources/
 │       ├── HotkeyRegistrationNotifier.swift     # 快捷键注册失败系统通知
 │       ├── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
 │       ├── TodoCaptureWindowController.swift    # 待办快速录入面板
-│       └── TodoSettingsWindowController.swift   # 待办 AI 设置窗口
+│       └── TodoSettingsWindowController.swift   # 兼容路由至偏好设置
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
 
@@ -115,11 +119,7 @@ Sources/
 | `⌘⇧G`（默认） | 打开 Antigravity 统计面板 |
 | `⌘⇧W`（默认） | 打开 WorkBuddy 统计面板 |
 
-待办快速录入无默认快捷键，可在菜单栏右键 → 设置 → 待办快捷键 中自定义（未设置时通过菜单「待办」打开）。
-
-Codex / Antigravity / WorkBuddy / ZCode / DSH 统计入口仅在该 Agent 被勾选参与统计时出现在右键菜单；总览 / ZCode / DSH 统计无默认快捷键，可在菜单栏右键 → 设置 中自定义。
-
-可在菜单栏右键 → 设置 → 对应快捷键子菜单 → 设置快捷键 中自定义。
+待办快速录入、总览、ZCode 与 DSH 统计默认未分配快捷键，可在菜单栏右键 →「偏好设置…」(⌘,) →「快捷键」选项卡中一键录制。
 
 ### 面板内快捷键
 
@@ -137,39 +137,25 @@ Codex / Antigravity / WorkBuddy / ZCode / DSH 统计入口仅在该 Agent 被勾
 ## 菜单栏
 
 - **左键点击**：展开 / 收起收藏面板
-- **右键点击**：打开设置菜单
+- **右键点击**：打开极简扁平菜单
 
 ```
 总览                  ← 打开统计大窗口
 ──────────
-收藏夹              ← 打开收藏面板
+待办                  ← 打开待办快速录入面板（自然语言 → 提醒事项）
+收藏夹                ← 打开收藏面板
+OTP 验证码            ← 打开 OTP 面板
 ──────────
-OTP 验证码          ← 打开 OTP 面板
+（以下随「设置」勾选显示 / 隐藏，至少保留一个）
+Codex 统计            ← 打开统计面板
+Antigravity 统计        ← 打开统计面板
+WorkBuddy 统计        ← 打开统计面板
+ZCode 统计            ← 打开 ZCode 紧凑统计面板
+DSH 统计              ← 打开 DSH 紧凑统计面板
 ──────────
-待办                ← 打开待办快速录入面板（自然语言 → 提醒事项）
+偏好设置… (⌘,)         ← 打开统一偏好设置面板（通用 / 快捷键 / 待办 AI）
 ──────────
-（以下随「总览」勾选显示 / 隐藏，至少保留一个）
-Codex 统计          ← 打开统计面板
-Antigravity 统计      ← 打开统计面板
-WorkBuddy 统计      ← 打开统计面板
-ZCode 统计          ← 打开 ZCode 紧凑统计面板
-DSH 统计            ← 打开 DSH 紧凑统计面板
-──────────
-设置                ← 子菜单：
-  ├ 总览快捷键       ← 子菜单配置（无默认值）
-  ├ 收藏夹快捷键      ← 子菜单配置
-  ├ OTP 快捷键       ← 子菜单配置
-  ├ Codex 统计快捷键   ← 子菜单配置
-  ├ Antigravity 统计快捷键 ← 子菜单配置
-  ├ WorkBuddy 统计快捷键 ← 子菜单配置
-  ├ ZCode / DSH 统计快捷键 ← 子菜单配置（无默认值）
-  ├ 参与统计的 Agent   ← 勾选（与总览界面联动，至少保留一个）
-  ├ 登录时启动        ← 开关（SMAppService）
-  ├ 待办快捷键       ← 子菜单配置（无默认值）
-  ├ 待办 AI 设置…    ← Base URL / API Key / 模型名 / 测试连接
-  └ 主题            ← 自动 / 浅色 / 深色
-──────────
-退出
+退出 Pinner (⌘Q)      ← 退出应用
 ```
 
 ## 安装

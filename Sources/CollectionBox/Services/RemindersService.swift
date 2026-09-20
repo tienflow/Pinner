@@ -123,26 +123,46 @@ final class RemindersService {
         }
     }
 
-    /// Incomplete reminders due before the end of today (overdue + due today).
-    /// EKReminder does not support free-form NSPredicate string queries — the
-    /// built-in incomplete/due-range predicate is the only supported path.
+    /// Marks a reminder completed or incomplete by its calendar item identifier.
+    func setTaskCompleted(id: String, completed: Bool = true) throws {
+        guard isAuthorized else { throw RemindersError.notAuthorized }
+        guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
+            throw RemindersError.saveFailed("未找到对应待办事项")
+        }
+        reminder.isCompleted = completed
+        reminder.completionDate = completed ? Date() : nil
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            throw RemindersError.saveFailed(error.localizedDescription)
+        }
+    }
+
+    /// Incomplete reminders due on or before today, plus no-due-date reminders.
+    /// Filters out completed reminders and future reminders.
     func fetchTodayAndOverdue() async -> [ReminderItem] {
         guard isAuthorized else { return [] }
+        store.refreshSourcesIfNecessary()
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: Date())
         guard let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday) else { return [] }
-        let predicate = store.predicateForIncompleteReminders(
-            withDueDateStarting: nil,
-            ending: endOfToday,
-            calendars: store.calendars(for: .reminder)
-        )
+        let calendars = store.calendars(for: .reminder)
+        guard !calendars.isEmpty else { return [] }
+
+        let predicate = store.predicateForReminders(in: calendars)
         return await withCheckedContinuation { continuation in
             store.fetchReminders(matching: predicate) { reminders in
-                let items = (reminders ?? []).map { reminder in
-                    ReminderItem(
+                let items = (reminders ?? []).compactMap { reminder -> ReminderItem? in
+                    guard !reminder.isCompleted else { return nil }
+                    let due = reminder.dueDateComponents.flatMap { calendar.date(from: $0) }
+                    // Exclude future tasks (due after end of today)
+                    if let due, due >= endOfToday {
+                        return nil
+                    }
+                    return ReminderItem(
                         id: reminder.calendarItemIdentifier,
                         title: reminder.title ?? "",
-                        dueDate: reminder.dueDateComponents.flatMap { calendar.date(from: $0) },
+                        dueDate: due,
                         priority: reminder.priority,
                         listName: reminder.calendar.title
                     )

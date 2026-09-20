@@ -2,6 +2,7 @@
 .DS_Store
 screenshots/
 *.xcodeproj
+.dsh-vision-toolkit/
 
 # Exclude docs and plan files
 docs/

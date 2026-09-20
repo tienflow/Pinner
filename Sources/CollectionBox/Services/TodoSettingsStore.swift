@@ -1,8 +1,7 @@
 import Foundation
-import Security
 
 /// Three-field LLM configuration for todo parsing (OpenAI-compatible API).
-/// Stored in the login Keychain as a single JSON generic-password item.
+/// Stored in UserDefaults as JSON data/string without Keychain authorization prompts.
 struct TodoLLMConfig: Codable, Equatable {
     var baseURL: String
     var apiKey: String
@@ -15,14 +14,26 @@ struct TodoLLMConfig: Codable, Equatable {
 final class TodoSettingsStore {
     static let shared = TodoSettingsStore()
 
-    private let service = "pinner.todo.llm.config"
-    private let account = "pinner.todo.llm.config"
+    private let defaults: UserDefaults
+    private let key: String
+    private var cachedConfig: TodoLLMConfig?
 
-    private init() {}
+    init(defaults: UserDefaults = .standard, key: String = "CollectionBox.todoLLMConfig") {
+        self.defaults = defaults
+        self.key = key
+    }
 
     var config: TodoLLMConfig {
-        get { load() ?? .empty }
-        set { save(newValue) }
+        get {
+            if let cached = cachedConfig { return cached }
+            let loaded = load() ?? .empty
+            cachedConfig = loaded
+            return loaded
+        }
+        set {
+            cachedConfig = newValue
+            save(newValue)
+        }
     }
 
     var isConfigured: Bool {
@@ -30,42 +41,28 @@ final class TodoSettingsStore {
         return !c.baseURL.isEmpty && !c.apiKey.isEmpty && !c.model.isEmpty
     }
 
-    // MARK: - Keychain
-
-    private func baseQuery() -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            // Ad-hoc signed builds: use the classic file keychain rather than
-            // the data-protection keychain that expects an application-identifier
-            // entitlement.
-            kSecUseDataProtectionKeychain as String: false,
-        ]
-    }
-
     private func load() -> TodoLLMConfig? {
-        var query = baseQuery()
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return try? JSONDecoder().decode(TodoLLMConfig.self, from: data)
+        if let data = defaults.data(forKey: key) {
+            if let decoded = try? JSONDecoder().decode(TodoLLMConfig.self, from: data) {
+                return decoded
+            }
+        }
+        if let str = defaults.string(forKey: key), let data = str.data(using: .utf8) {
+            if let decoded = try? JSONDecoder().decode(TodoLLMConfig.self, from: data) {
+                return decoded
+            }
+        }
+        return nil
     }
 
     private func save(_ config: TodoLLMConfig) {
-        // Delete-then-add: after an ad-hoc re-sign the old item's ACL may no
-        // longer match (errSecItemNotFound on read, errSecDuplicateItem on
-        // add), so a plain update is not reliable.
-        SecItemDelete(baseQuery() as CFDictionary)
-        guard let data = try? JSONEncoder().encode(config) else { return }
-        var query = baseQuery()
-        query[kSecValueData as String] = data
-        SecItemAdd(query as CFDictionary, nil)
+        if let data = try? JSONEncoder().encode(config) {
+            defaults.set(data, forKey: key)
+        }
     }
 
     func clear() {
-        SecItemDelete(baseQuery() as CFDictionary)
+        cachedConfig = .empty
+        defaults.removeObject(forKey: key)
     }
 }

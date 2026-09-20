@@ -7,6 +7,7 @@ import AppKit
 /// the write and overview paths already hit the real EventKit service.
 struct TodoCaptureView: View {
     @State private var input = ""
+    @State private var inputHeight: CGFloat = 30
     @State private var card = EditableTask()
     @State private var isCardPresent = false
     @State private var lists: [String] = []
@@ -16,6 +17,7 @@ struct TodoCaptureView: View {
     @State private var statusIsPositive = false
     @State private var isParsing = false
     @State private var isFallbackCard = false
+    @State private var completingIds: Set<String> = []
 
     private enum AuthState { case unknown, granted, denied }
 
@@ -62,10 +64,20 @@ struct TodoCaptureView: View {
             } else {
                 overviewList
             }
+            Spacer(minLength: 0)
             if let statusText { statusBar(text: statusText) }
         }
-        .frame(width: 360, height: 420)
+        // Flexible root (same as OTPView): the panel's hosting view is 28pt
+        // taller than the content rect because of fullSizeContentView, so a
+        // fixed frame here would float centered under the titlebar.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task { await refreshAll() }
+        .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged)) { _ in
+            Task { await reloadOverview() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await reloadOverview() }
+        }
     }
 
     // MARK: - Header
@@ -85,17 +97,26 @@ struct TodoCaptureView: View {
 
     private var inputSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            NativeTextField(text: $input, placeholder: "说点什么，比如\"明早交周报\"", autoFocus: true) {
+            AutoGrowingTextView(
+                text: $input,
+                height: $inputHeight,
+                placeholder: "输入待办，支持识别时间、优先级与列表…",
+                minHeight: 30,
+                maxHeight: 100,
+                autoFocus: true
+            ) {
                 submitInput()
             }
-            .frame(height: 24)
+            .frame(height: inputHeight)
+            .background(RoundedRectangle(cornerRadius: Design.radiusM).fill(Color(nsColor: .textBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: Design.radiusM).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
             .disabled(isParsing)
             HStack(spacing: 6) {
                 if isParsing {
                     ProgressView().controlSize(.mini)
                     Text("解析中…").font(.system(size: Design.micro)).foregroundStyle(.secondary)
                 } else {
-                    Text("⏎ 解析并确认 · ⎋ 丢弃").font(.system(size: Design.micro)).foregroundStyle(.secondary)
+                    Text("⏎ 解析并确认（Shift+⏎ 换行） · ⎋ 丢弃").font(.system(size: Design.micro)).foregroundStyle(.secondary)
                 }
             }
         }.padding(.horizontal, 12).padding(.vertical, 8)
@@ -106,7 +127,7 @@ struct TodoCaptureView: View {
     private var confirmationCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             if isFallbackCard {
-                Label("未能识别时间，已按原文保存", systemImage: "exclamationmark.circle")
+                Label(fallbackReason ?? "未能识别时间，已按原文保存", systemImage: "exclamationmark.circle")
                     .font(.system(size: Design.micro))
                     .foregroundStyle(.orange)
             }
@@ -174,11 +195,30 @@ struct TodoCaptureView: View {
 
     // MARK: - Overview
 
+    @State private var isRefreshing = false
+
     private var overviewHeader: some View {
-        HStack {
+        HStack(spacing: 6) {
             Image(systemName: "calendar.badge.clock").font(.system(size: 11)).foregroundStyle(.secondary)
             Text("今天 · 逾期").font(.system(size: Design.ui, weight: .semibold))
             Spacer()
+            Button {
+                guard !isRefreshing else { return }
+                isRefreshing = true
+                Task {
+                    defer { isRefreshing = false }
+                    await reloadOverview()
+                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isRefreshing ? 360 : 0))
+                    .animation(isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: isRefreshing)
+            }
+            .buttonStyle(.plain)
+            .help("刷新提醒事项")
+
             Text("\(items.count)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
         }.padding(.horizontal, 12).padding(.vertical, 6)
     }
@@ -203,30 +243,71 @@ struct TodoCaptureView: View {
         }.frame(maxHeight: 140)
     }
 
-    private func overviewRow(_ item: ReminderItem) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(item.title).font(.system(size: Design.body)).lineLimit(1)
-            HStack(spacing: 4) {
-                if let due = item.dueDate {
-                    Text(Self.dueText(due))
-                        .font(.system(size: Design.caption))
-                        .foregroundStyle(item.isOverdue ? .red : .secondary)
+    private func toggleComplete(_ item: ReminderItem) {
+        guard !completingIds.contains(item.id) else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            _ = completingIds.insert(item.id)
+        }
+        Task {
+            do {
+                try service.setTaskCompleted(id: item.id, completed: true)
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                withAnimation(.easeOut(duration: 0.25)) {
+                    items.removeAll { $0.id == item.id }
+                    completingIds.remove(item.id)
                 }
-                if !item.priorityLabel.isEmpty {
-                    Text(item.priorityLabel)
-                        .font(.system(size: Design.micro))
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                showStatus("已完成：\(item.title)", positive: true)
+            } catch {
+                _ = withAnimation {
+                    completingIds.remove(item.id)
                 }
-                if !item.listName.isEmpty {
-                    Text(item.listName).font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                }
+                showStatus("标记完成失败：\(error.localizedDescription)")
             }
         }
+    }
+
+    private func overviewRow(_ item: ReminderItem) -> some View {
+        let isDone = completingIds.contains(item.id)
+        return HStack(alignment: .center, spacing: 8) {
+            Button {
+                toggleComplete(item)
+            } label: {
+                Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isDone ? Color.green : Color.secondary.opacity(0.5))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: Design.body))
+                    .lineLimit(1)
+                    .strikethrough(isDone, color: .secondary)
+                    .foregroundStyle(isDone ? .secondary : .primary)
+                HStack(spacing: 4) {
+                    if let due = item.dueDate {
+                        Text(Self.dueText(due))
+                            .font(.system(size: Design.caption))
+                            .foregroundStyle(item.isOverdue ? .red : .secondary)
+                    }
+                    if !item.priorityLabel.isEmpty {
+                        Text(item.priorityLabel)
+                            .font(.system(size: Design.micro))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    }
+                    if !item.listName.isEmpty {
+                        Text(item.listName).font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                    }
+                }
+                .opacity(isDone ? 0.5 : 1.0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { openRemindersApp() }
+        }
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture { openRemindersApp() }
     }
 
     // MARK: - Status Bar
@@ -269,6 +350,33 @@ struct TodoCaptureView: View {
         items = await service.fetchTodayAndOverdue()
     }
 
+    @State private var fallbackReason: String?
+
+    private func matchedListName(_ candidate: String?) -> String {
+        guard let candidate = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !candidate.isEmpty else {
+            return ""
+        }
+        if lists.contains(candidate) { return candidate }
+        if let exactCase = lists.first(where: { $0.caseInsensitiveCompare(candidate) == .orderedSame }) {
+            return exactCase
+        }
+        let cleanedCandidate = candidate.replacingOccurrences(of: "列表", with: "")
+                                        .replacingOccurrences(of: "清单", with: "")
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanedCandidate.isEmpty {
+            if let matchCleaned = lists.first(where: { $0 == cleanedCandidate || $0.caseInsensitiveCompare(cleanedCandidate) == .orderedSame }) {
+                return matchCleaned
+            }
+        }
+        if let fuzzy = lists.first(where: {
+            let item = $0.replacingOccurrences(of: "列表", with: "").replacingOccurrences(of: "清单", with: "")
+            return candidate.contains(item) || item.contains(cleanedCandidate) || candidate.contains($0) || $0.contains(candidate)
+        }) {
+            return fuzzy
+        }
+        return ""
+    }
+
     /// Parse via the configured LLM; on timeout/network/unparseable response,
     /// fall back to a card holding the raw text (no due date), per plan R1/R3.
     private func submitInput() {
@@ -286,8 +394,13 @@ struct TodoCaptureView: View {
         }
         guard !isParsing else { return } // 防重入
 
+        if lists.isEmpty {
+            lists = service.listNames()
+        }
+
         let config = store.config
         isParsing = true
+        fallbackReason = nil
         Task {
             defer { isParsing = false }
             let client = TodoLLMClient()
@@ -295,26 +408,43 @@ struct TodoCaptureView: View {
                 input: text, now: Date(),
                 lists: lists, lastList: UserDefaults.standard.string(forKey: "CollectionBox.todo.lastList")
             )
-            let result: ParsedTask?
+            var result: ParsedTask?
+            var caughtError: Error?
             do {
                 result = try await client.parse(context: context, config: config)
             } catch {
+                caughtError = error
                 result = nil
             }
+
             if let result, !result.title.isEmpty {
+                let matchedList = matchedListName(result.list)
                 card = EditableTask(
                     title: result.title,
                     due: result.due ?? Date(),
                     hasDue: result.due != nil,
                     priority: result.priority,
-                    list: result.list ?? ""
+                    list: matchedList
                 )
                 isFallbackCard = result.fallback
+                if result.fallback {
+                    fallbackReason = "未能识别明确时间，可手动选择"
+                }
                 isCardPresent = true
             } else {
                 // 降级：原文直接作为标题，无到期日
                 card = EditableTask(title: text, due: Date(), hasDue: false, priority: 0, list: "")
                 isFallbackCard = true
+                if let error = caughtError {
+                    let nsError = error as NSError
+                    if nsError.code == NSURLErrorTimedOut || error.localizedDescription.contains("timed out") || error.localizedDescription.contains("超时") {
+                        fallbackReason = "AI 请求超时，已按原文填入"
+                    } else {
+                        fallbackReason = "\(error.localizedDescription)，已按原文填入"
+                    }
+                } else {
+                    fallbackReason = "未能识别时间，已按原文填入"
+                }
                 isCardPresent = true
             }
         }

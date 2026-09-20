@@ -339,30 +339,29 @@ func testMenuBarMenuFollowsSelection() {
     check(!titlesWithOnlyCodex.contains("ZCode 统计"), "menu hides ZCode stats when disabled")
     check(!titlesWithOnlyCodex.contains("DSH 统计"), "menu hides DSH stats when disabled")
     check(titlesWithOnlyCodex.contains("总览"), "menu keeps the dashboard entry")
-    check(titlesWithOnlyCodex.contains("设置"), "menu keeps settings entry")
-    check(titlesWithOnlyCodex.contains("退出"), "menu keeps quit entry")
+    check(titlesWithOnlyCodex.contains("偏好设置…"), "menu keeps preferences entry")
+    check(titlesWithOnlyCodex.contains { $0.hasPrefix("退出") }, "menu keeps quit entry")
 }
 
 @MainActor
 func testSettingsSubmenuContents() {
     let controller = MenuBarController(store: CollectionStore(inMemory: true))
-    let settings = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases)).items.first { $0.title == "设置" }
-    check(settings != nil, "settings submenu exists")
-    guard let submenu = settings?.submenu else { return }
-    let settingTitles = submenu.items.map { $0.title }
-    check(settingTitles.contains("总览快捷键"), "settings has dashboard hotkey")
-    for agent in StatsAgent.allCases {
-        check(settingTitles.contains("\(agent.label) 统计快捷键"), "settings has \(agent.label) hotkey")
-    }
-    check(settingTitles.contains("主题"), "settings has theme entry")
-    check(settingTitles.contains("登录时启动"), "settings has launch-at-login entry")
+    let menu = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases))
+    let settings = menu.items.first { $0.title == "偏好设置…" }
+    check(settings != nil, "preferences menu item exists")
+    check(settings?.submenu == nil, "menu has no cascading submenus, keeping it flat")
+    check(settings?.keyEquivalent == ",", "preferences shortcut is Cmd+,")
+    check(settings?.action != nil, "preferences item is wired to an action")
 
     // Top-level menu must not expose hotkey config anymore.
-    let topTitles = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases)).items.map { $0.title }
+    let topTitles = menu.items.map { $0.title }
     check(!topTitles.contains { $0.hasSuffix("快捷键") }, "top-level menu hides hotkey items")
+    check(topTitles.contains("待办"), "top-level menu contains todo item")
+    check(topTitles.contains("收藏夹"), "top-level menu contains collection item")
+    check(topTitles.contains("OTP 验证码"), "top-level menu contains OTP item")
 
     // The "总览" item must actually be wired to an action, not a stub.
-    let header = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases)).items.first { $0.title == "总览" }
+    let header = menu.items.first { $0.title == "总览" }
     check(header?.action != nil && header?.target != nil, "dashboard menu item is wired to an action")
 
     // Fire the action for real: the dashboard window must appear. The runner
@@ -372,6 +371,13 @@ func testSettingsSubmenuContents() {
         let found = NSApp.windows.contains { $0.title == "总览" }
         check(found, "dashboard action opens the overview window")
         if found { NSApp.windows.first { $0.title == "总览" }?.close() }
+    }
+
+    // Fire preferences action: settings window should appear
+    if let settings, let action = settings.action, NSApp.sendAction(action, to: settings.target, from: settings) {
+        let found = NSApp.windows.contains { $0.title == "Pinner 设置" }
+        check(found, "preferences action opens the settings window")
+        if found { NSApp.windows.first { $0.title == "Pinner 设置" }?.close() }
     }
 }
 
@@ -515,18 +521,90 @@ func testTodoLLMParseResponse() {
     // markdown 围栏包裹的 JSON
     let fenced = Data("```json\n{\"title\":\"x\",\"due\":null,\"priority\":0,\"fallback\":false}\n```".utf8)
     check(TodoLLMClient.parseResponse(fenced)?.title == "x", "parse strips markdown fences")
+
+    // 标准 OpenAI /chat/completions 响应封装
+    let openAIJson = """
+    {
+      "id": "chatcmpl-123",
+      "object": "chat.completion",
+      "created": 1726822500,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\\"title\\":\\"给客户发合同\\",\\"due\\":\\"2026-09-22T14:30:00+08:00\\",\\"priority\\":1,\\"list\\":\\"合同\\",\\"fallback\\":false}"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+    """
+    if let parsed = TodoLLMClient.parseResponse(Data(openAIJson.utf8)) {
+        check(parsed.title == "给客户发合同", "parse OpenAI envelope title")
+        check(parsed.priority == 1, "parse OpenAI envelope priority")
+        check(parsed.list == "合同", "parse OpenAI envelope list")
+        check(parsed.due != nil, "parse OpenAI envelope due")
+    } else {
+        check(false, "parse OpenAI envelope returns task")
+    }
+
+    // 包含 <think> 思考过程的响应 (如 DeepSeek-R1)
+    let reasoningJson = """
+    {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>用户需要在周五提交周报，优先级为中，列表选工作...</think>```json\\n{\\"title\\":\\"提交周报\\",\\"due\\":\\"2026-09-25T17:00:00+08:00\\",\\"priority\\":5,\\"list\\":\\"工作\\",\\"fallback\\":false}\\n```"
+          }
+        }
+      ]
+    }
+    """
+    if let parsed = TodoLLMClient.parseResponse(Data(reasoningJson.utf8)) {
+        check(parsed.title == "提交周报", "parse reasoning model response title")
+        check(parsed.priority == 5, "parse reasoning model response priority")
+        check(parsed.list == "工作", "parse reasoning model response list")
+    } else {
+        check(false, "parse reasoning model response returns task")
+    }
+
+    // 字符串优先级容错 (high -> 1, 字符串 "9" -> 9, "null" 字符串过滤为 nil)
+    let stringPriorityJson = Data(#"{"title":"紧急修复","due":null,"priority":"high","list":"工作","fallback":false}"#.utf8)
+    if let parsed = TodoLLMClient.parseResponse(stringPriorityJson) {
+        check(parsed.priority == 1, "parse string 'high' priority maps to 1")
+    } else {
+        check(false, "parse string priority returns task")
+    }
+
+    let stringNumPriorityJson = Data(#"{"title":"日常琐事","due":null,"priority":"9","list":"null","fallback":false}"#.utf8)
+    if let parsed = TodoLLMClient.parseResponse(stringNumPriorityJson) {
+        check(parsed.priority == 9, "parse string '9' priority maps to 9")
+        check(parsed.list == nil, "parse 'null' string list filters to nil")
+    } else {
+        check(false, "parse string num priority returns task")
+    }
 }
 
 @MainActor
-func testTodoSettingsStoreKeychain() {
-    // Keychain 往返：读回应等于写入值。使用独立实例（不污染共享 store）。
+func testTodoSettingsStoreStorage() {
+    let testDefaults = UserDefaults(suiteName: "test.pinner.todo.llm")!
+    defer { testDefaults.removePersistentDomain(forName: "test.pinner.todo.llm") }
     let config = TodoLLMConfig(baseURL: "https://example.test/v1", apiKey: "sk-test", model: "gpt-4o-mini")
-    let store = TodoSettingsStore.shared
+    let store = TodoSettingsStore(defaults: testDefaults, key: "test.key")
     store.config = config
     let readBack = store.config
-    check(readBack == config, "todo settings keychain roundtrip")
+    check(readBack == config, "todo settings defaults roundtrip")
     store.clear()
     check(store.config == TodoLLMConfig.empty, "todo settings clear resets to empty")
+}
+
+@MainActor
+func testReminderCompletionModel() {
+    let item = ReminderItem(id: "test-id", title: "测试待办", dueDate: Date(), priority: 1, listName: "工作")
+    check(item.priorityLabel == "高", "reminder priorityLabel high")
+    check(!item.title.isEmpty, "reminder has title")
 }
 
 // MARK: - Entry Point
@@ -555,7 +633,8 @@ let allPassed = await Task { @MainActor () -> Bool in
     testDailySortHelpers()
     testTodoPromptBuild()
     testTodoLLMParseResponse()
-    testTodoSettingsStoreKeychain()
+    testTodoSettingsStoreStorage()
+    testReminderCompletionModel()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

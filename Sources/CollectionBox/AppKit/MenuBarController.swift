@@ -11,6 +11,8 @@ enum AppTheme: Int, CaseIterable, Identifiable {
 }
 
 public final class MenuBarController: NSObject {
+    public static weak var shared: MenuBarController?
+
     private var statusItem: NSStatusItem?
     private let store: CollectionStore
     private var edgeController: EdgeDockWindowController?
@@ -32,7 +34,11 @@ public final class MenuBarController: NSObject {
     private let dshStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.dshStatsHotkey", eventID: 7)
     private let dashboardHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.dashboardHotkey", eventID: 8)
 
-    public init(store: CollectionStore) { self.store = store; super.init() }
+    public init(store: CollectionStore) {
+        self.store = store
+        super.init()
+        Self.shared = self
+    }
 
     public func activate() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -105,25 +111,23 @@ public final class MenuBarController: NSObject {
     }
 
     /// Rebuilt on every right click so dashboard selection changes need no restart.
-    func makeMenu(enabledAgents: Set<StatsAgent> = StatsAgentSelection.shared.enabledAgents) -> NSMenu {
+    public func makeMenu(enabledAgents: Set<StatsAgent> = StatsAgentSelection.shared.enabledAgents) -> NSMenu {
         let m = NSMenu()
         let header = NSMenuItem(title: "总览", action: #selector(openDashboard), keyEquivalent: "")
         header.target = self; m.addItem(header)
         m.addItem(.separator())
 
+        // 待办 quick capture
+        let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
+        todoItem.target = self; m.addItem(todoItem)
+
         // Collection
         let collectionItem = NSMenuItem(title: "收藏夹", action: #selector(openCollection), keyEquivalent: "")
         collectionItem.target = self; m.addItem(collectionItem)
 
-        m.addItem(.separator())
-
         // OTP
         let otpItem = NSMenuItem(title: "OTP 验证码", action: #selector(showOTP), keyEquivalent: "")
         otpItem.target = self; m.addItem(otpItem)
-
-        // 待办 quick capture
-        let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
-        todoItem.target = self; m.addItem(todoItem)
 
         m.addItem(.separator())
 
@@ -135,136 +139,145 @@ public final class MenuBarController: NSObject {
 
         m.addItem(.separator())
 
-        // Settings: all hotkeys (incl. dashboard) + theme.
-        let settingsItem = NSMenuItem(title: "设置", action: nil, keyEquivalent: "")
-        let settingsSub = NSMenu()
-
-        let dashHotkeyItem = NSMenuItem(title: "总览快捷键", action: nil, keyEquivalent: "")
-        dashHotkeyItem.submenu = makeHotkeySubmenu(
-            current: dashboardHotkeyManager.currentCombo?.displayString ?? "未设置",
-            record: #selector(recordDashboardHotkey), clear: #selector(clearDashboardHotkey)
-        )
-        settingsSub.addItem(dashHotkeyItem)
-
-        let collectionHotkeyItem = NSMenuItem(title: "收藏夹快捷键", action: nil, keyEquivalent: "")
-        collectionHotkeyItem.submenu = makeHotkeySubmenu(
-            current: (hotkeyManager?.currentCombo ?? HotkeyManager.defaultCombo).displayString,
-            record: #selector(recordHotkey), clear: #selector(clearHotkey))
-        settingsSub.addItem(collectionHotkeyItem)
-
-        let otpHotkeyItem = NSMenuItem(title: "OTP 快捷键", action: nil, keyEquivalent: "")
-        otpHotkeyItem.submenu = makeHotkeySubmenu(
-            current: (otpHotkeyManager?.currentCombo ?? OTPHotkeyManager.defaultCombo).displayString,
-            record: #selector(recordOTPHotkey), clear: #selector(clearOTPHotkey))
-        settingsSub.addItem(otpHotkeyItem)
-
-        settingsSub.addItem(.separator())
-
-        for agent in StatsAgent.allCases {
-            let item = NSMenuItem(title: "\(agent.label) 统计快捷键", action: nil, keyEquivalent: "")
-            item.representedObject = agent
-            item.submenu = makeAgentHotkeySubmenu(agent)
-            settingsSub.addItem(item)
-        }
-
-        // Agent visibility mirrors the dashboard toggle (same shared state).
-        let agentsItem = NSMenuItem(title: "参与统计的 Agent", action: nil, keyEquivalent: "")
-        let agentsSub = NSMenu()
-        for agent in StatsAgent.allCases {
-            let toggle = NSMenuItem(title: agent.label, action: #selector(toggleAgentStats(_:)), keyEquivalent: "")
-            toggle.target = self
-            toggle.representedObject = agent
-            toggle.state = enabledAgents.contains(agent) ? .on : .off
-            agentsSub.addItem(toggle)
-        }
-        agentsItem.submenu = agentsSub
-        settingsSub.addItem(agentsItem)
-
-        settingsSub.addItem(.separator())
-
-        // 登录时启动（SMAppService，macOS 13+）
-        let launchAtLogin = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        launchAtLogin.target = self
-        launchAtLogin.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
-        settingsSub.addItem(launchAtLogin)
-
-        settingsSub.addItem(.separator())
-
-        // 待办（quick capture）设置，插在「主题」前
-        let todoHotkeyItem = NSMenuItem(title: "待办快捷键", action: nil, keyEquivalent: "")
-        todoHotkeyItem.submenu = makeHotkeySubmenu(
-            current: todoHotkeyManager.currentCombo?.displayString ?? "未设置",
-            record: #selector(recordTodoHotkey), clear: #selector(clearTodoHotkey))
-        settingsSub.addItem(todoHotkeyItem)
-
-        let todoAISettingsItem = NSMenuItem(title: "待办 AI 设置…", action: #selector(showTodoSettings), keyEquivalent: "")
-        todoAISettingsItem.target = self
-        settingsSub.addItem(todoAISettingsItem)
-
-        settingsSub.addItem(.separator())
-
-        let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
-        let themeSub = NSMenu()
-        let curTheme = AppTheme(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.theme")) ?? .auto
-        for t in AppTheme.allCases {
-            let i = NSMenuItem(title: t.label, action: #selector(setTheme(_:)), keyEquivalent: "")
-            i.target = self; i.tag = t.rawValue; i.state = t == curTheme ? .on : .off; i.representedObject = t
-            themeSub.addItem(i)
-        }
-        themeItem.submenu = themeSub
-        settingsSub.addItem(themeItem)
-
-        settingsItem.submenu = settingsSub
+        // Unified Preferences / Settings
+        let settingsItem = NSMenuItem(title: "偏好设置…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        settingsItem.keyEquivalentModifierMask = [.command]
         m.addItem(settingsItem)
 
         m.addItem(.separator())
-        let quit = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+
+        let quit = NSMenuItem(title: "退出 Pinner", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self; quit.keyEquivalentModifierMask = [.command]; m.addItem(quit)
 
         return m
     }
 
-    // MARK: - Menu Helpers
-
-    private func makeHotkeySubmenu(current: String, record: Selector, clear: Selector) -> NSMenu {        let sub = NSMenu()
-        let cur = NSMenuItem(title: "当前: \(current)", action: nil, keyEquivalent: "")
-        cur.isEnabled = false; sub.addItem(cur)
-        sub.addItem(.separator())
-        let recordItem = NSMenuItem(title: "设置快捷键...", action: record, keyEquivalent: "")
-        recordItem.target = self; sub.addItem(recordItem)
-        let clearItem = NSMenuItem(title: "恢复默认快捷键", action: clear, keyEquivalent: "")
-        clearItem.target = self; sub.addItem(clearItem)
-        return sub
+    @objc public func openSettings() {
+        SettingsWindowController.shared.show(tab: .general)
     }
 
-    /// Codex / Antigravity / WorkBuddy route to their legacy managers (with a
-    /// fixed default combo); ZCode / DSH use the generic manager whose
-    /// "恢复默认" clears the binding entirely.
-    private func makeAgentHotkeySubmenu(_ agent: StatsAgent) -> NSMenu {
-        let sub: NSMenu
-        switch agent {
-        case .codex:
-            sub = makeHotkeySubmenu(
-                current: (codexStatsHotkeyManager?.currentCombo ?? CodexStatsHotkeyManager.defaultCombo).displayString,
-                record: #selector(recordCodexStatsHotkey), clear: #selector(clearCodexStatsHotkey))
-        case .gemini:
-            sub = makeHotkeySubmenu(
-                current: (geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo).displayString,
-                record: #selector(recordGeminiStatsHotkey), clear: #selector(clearGeminiStatsHotkey))
-        case .workbuddy:
-            sub = makeHotkeySubmenu(
-                current: (workbuddyStatsHotkeyManager?.currentCombo ?? WorkBuddyStatsHotkeyManager.defaultCombo).displayString,
-                record: #selector(recordWorkBuddyStatsHotkey), clear: #selector(clearWorkBuddyStatsHotkey))
-        case .zcode, .dsh:
-            sub = makeHotkeySubmenu(
-                current: (agent == .zcode ? zcodeStatsHotkeyManager : dshStatsHotkeyManager).currentCombo?.displayString ?? "未设置",
-                record: #selector(recordAgentStatsHotkey(_:)), clear: #selector(clearAgentStatsHotkey(_:)))
+    // MARK: - Hotkey Accessors for Settings
+
+    public func dashboardHotkeyString() -> String {
+        dashboardHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordDashboardHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置总览快捷键") { [weak self] combo in
+            self?.dashboardHotkeyManager.save(combo: combo)
+            completion?()
         }
-        // Generic record/clear actions need the agent; legacy selectors don't.
-        for entry in sub.items where entry.action == #selector(recordAgentStatsHotkey(_:)) || entry.action == #selector(clearAgentStatsHotkey(_:)) {
-            entry.representedObject = agent
+    }
+
+    public func clearDashboardHotkey() {
+        dashboardHotkeyManager.clear()
+    }
+
+    public func todoHotkeyString() -> String {
+        todoHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordTodoHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置待办快捷键") { [weak self] combo in
+            self?.todoHotkeyManager.save(combo: combo)
+            completion?()
         }
-        return sub
+    }
+
+    public func clearTodoHotkey() {
+        todoHotkeyManager.clear()
+    }
+
+    public func collectionHotkeyString() -> String {
+        (hotkeyManager?.currentCombo ?? HotkeyManager.defaultCombo).displayString
+    }
+
+    public func recordHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置收藏夹快捷键") { [weak self] combo in
+            self?.hotkeyManager?.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearHotkey() {
+        hotkeyManager?.clear()
+    }
+
+    public func otpHotkeyString() -> String {
+        (otpHotkeyManager?.currentCombo ?? OTPHotkeyManager.defaultCombo).displayString
+    }
+
+    public func recordOTPHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置 OTP 快捷键") { [weak self] combo in
+            self?.otpHotkeyManager?.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearOTPHotkey() {
+        otpHotkeyManager?.clear()
+    }
+
+    public func codexHotkeyString() -> String {
+        (codexStatsHotkeyManager?.currentCombo ?? CodexStatsHotkeyManager.defaultCombo).displayString
+    }
+
+    public func recordCodexStatsHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置 Codex 统计快捷键") { [weak self] combo in
+            self?.codexStatsHotkeyManager?.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearCodexStatsHotkey() {
+        codexStatsHotkeyManager?.clear()
+    }
+
+    public func geminiHotkeyString() -> String {
+        (geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo).displayString
+    }
+
+    public func recordGeminiStatsHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置 Gemini 统计快捷键") { [weak self] combo in
+            self?.geminiStatsHotkeyManager?.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearGeminiStatsHotkey() {
+        geminiStatsHotkeyManager?.clear()
+    }
+
+    public func workbuddyHotkeyString() -> String {
+        (workbuddyStatsHotkeyManager?.currentCombo ?? WorkBuddyStatsHotkeyManager.defaultCombo).displayString
+    }
+
+    public func recordWorkBuddyStatsHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置 WorkBuddy 统计快捷键") { [weak self] combo in
+            self?.workbuddyStatsHotkeyManager?.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearWorkBuddyStatsHotkey() {
+        workbuddyStatsHotkeyManager?.clear()
+    }
+
+    public func dshHotkeyString() -> String {
+        dshStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordAgentStatsHotkey(for agent: StatsAgent, completion: (() -> Void)? = nil) {
+        guard let manager = genericAgentStatsHotkeyManager(agent) else { return }
+        HotkeyRecorder.present(title: "设置 \(agent.label) 统计快捷键") { combo in
+            manager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearAgentStatsHotkey(for agent: StatsAgent) {
+        genericAgentStatsHotkeyManager(agent)?.clear()
     }
 
     // MARK: - Actions
@@ -313,54 +326,6 @@ public final class MenuBarController: NSObject {
         case .dsh: return dshStatsHotkeyManager
         default: return nil
         }
-    }
-
-    @objc private func recordAgentStatsHotkey(_ sender: NSMenuItem) {
-        guard let agent = sender.representedObject as? StatsAgent,
-              let manager = genericAgentStatsHotkeyManager(agent) else { return }
-        HotkeyRecorder.present(title: "设置 \(agent.label) 统计快捷键") { combo in
-            manager.save(combo: combo)
-        }
-    }
-
-    @objc private func clearAgentStatsHotkey(_ sender: NSMenuItem) {
-        guard let agent = sender.representedObject as? StatsAgent,
-              let manager = genericAgentStatsHotkeyManager(agent) else { return }
-        manager.clear()
-    }
-
-    @objc private func recordDashboardHotkey() {
-        HotkeyRecorder.present(title: "设置总览快捷键") { [weak self] combo in
-            self?.dashboardHotkeyManager.save(combo: combo)
-        }
-    }
-
-    @objc private func clearDashboardHotkey() {
-        dashboardHotkeyManager.clear()
-    }
-
-    @objc private func recordTodoHotkey() {
-        HotkeyRecorder.present(title: "设置待办快捷键") { [weak self] combo in
-            self?.todoHotkeyManager.save(combo: combo)
-        }
-    }
-
-    @objc private func clearTodoHotkey() {
-        todoHotkeyManager.clear()
-    }
-
-    @objc private func showTodoSettings() {
-        TodoSettingsWindowController.shared.show()
-    }
-
-    @objc private func recordHotkey() {
-        HotkeyRecorder.present(title: "设置快捷键") { [weak self] combo in
-            self?.hotkeyManager?.save(combo: combo)
-        }
-    }
-
-    @objc private func clearHotkey() {
-        hotkeyManager?.clear()
     }
 
     @objc private func setTheme(_ s: NSMenuItem) {
@@ -432,46 +397,6 @@ public final class MenuBarController: NSObject {
         } else {
             workbuddyStatsController?.showAtMouse()
         }
-    }
-
-    @objc private func recordWorkBuddyStatsHotkey() {
-        HotkeyRecorder.present(title: "设置 WorkBuddy 统计快捷键") { [weak self] combo in
-            self?.workbuddyStatsHotkeyManager?.save(combo: combo)
-        }
-    }
-
-    @objc private func clearWorkBuddyStatsHotkey() {
-        workbuddyStatsHotkeyManager?.clear()
-    }
-
-    @objc private func recordOTPHotkey() {
-        HotkeyRecorder.present(title: "设置 OTP 快捷键") { [weak self] combo in
-            self?.otpHotkeyManager?.save(combo: combo)
-        }
-    }
-
-    @objc private func clearOTPHotkey() {
-        otpHotkeyManager?.clear()
-    }
-
-    @objc private func recordCodexStatsHotkey() {
-        HotkeyRecorder.present(title: "设置 Codex 统计快捷键") { [weak self] combo in
-            self?.codexStatsHotkeyManager?.save(combo: combo)
-        }
-    }
-
-    @objc private func clearCodexStatsHotkey() {
-        codexStatsHotkeyManager?.clear()
-    }
-
-    @objc private func recordGeminiStatsHotkey() {
-        HotkeyRecorder.present(title: "设置 Antigravity 统计快捷键") { [weak self] combo in
-            self?.geminiStatsHotkeyManager?.save(combo: combo)
-        }
-    }
-
-    @objc private func clearGeminiStatsHotkey() {
-        geminiStatsHotkeyManager?.clear()
     }
 
     @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
