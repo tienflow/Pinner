@@ -34,6 +34,15 @@ killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner"
 
 构建依赖：DSH 统计需要 Homebrew 的 zstd（`brew install zstd`），缺失时链接阶段报 `-lzstd` 找不到。
 
+⚠️ **macOS 26+ CLT（SDK 27）缺 `libSwiftUIMacros.dylib`**：CommandLineTools 的 plugins 目录只有 `libObservationMacros.dylib` / `libSwiftMacros.dylib`，导致任何 SwiftUI `@State` 编译报 `plugin for module 'SwiftUIMacros' not found`（全量重建必现；增量构建因缓存可能不报）。临时方案用旧 SDK 构建：
+
+```
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build --product CollectionBoxApp
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift run PinnerTestRunner
+```
+
+根治：安装完整 Xcode 或等待 Apple 修复 CLT。若环境已恢复正常（plugins 目录出现 `libSwiftUIMacros.dylib`），直接用 `swift build` 即可。
+
 ## 3. 质量验证（🔴 改完必须跑）
 
 - 改完跑项目的构建命令（`npm run build` / `swift build` / `cargo build` / `make` 等）

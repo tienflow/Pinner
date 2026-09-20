@@ -24,6 +24,8 @@ public final class MenuBarController: NSObject {
     private var geminiStatsHotkeyManager: GeminiStatsHotkeyManager?
     private var workbuddyStatsController: WorkBuddyStatsWindowController?
     private var workbuddyStatsHotkeyManager: WorkBuddyStatsHotkeyManager?
+    private var todoController: TodoCaptureWindowController?
+    private let todoHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.todoHotkey", eventID: 9)
     private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
     private let dshStatsController = AgentStatsWindowController(agent: .dsh)
     private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
@@ -69,12 +71,16 @@ public final class MenuBarController: NSObject {
         workbuddyStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showWorkBuddyStats() }
         workbuddyStatsHotkeyManager?.register()
 
+        todoController = todoCaptureController()
+
         dashboardHotkeyManager.onHotkeyTriggered = { [weak self] in self?.openDashboard() }
         zcodeStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.zcode) }
         dshStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.dsh) }
+        todoHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showTodo() }
         dashboardHotkeyManager.register()
         zcodeStatsHotkeyManager.register()
         dshStatsHotkeyManager.register()
+        todoHotkeyManager.register()
 
         applyTheme()
     }
@@ -114,6 +120,10 @@ public final class MenuBarController: NSObject {
         // OTP
         let otpItem = NSMenuItem(title: "OTP 验证码", action: #selector(showOTP), keyEquivalent: "")
         otpItem.target = self; m.addItem(otpItem)
+
+        // 待办 quick capture
+        let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
+        todoItem.target = self; m.addItem(todoItem)
 
         m.addItem(.separator())
 
@@ -177,6 +187,19 @@ public final class MenuBarController: NSObject {
         launchAtLogin.target = self
         launchAtLogin.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         settingsSub.addItem(launchAtLogin)
+
+        settingsSub.addItem(.separator())
+
+        // 待办（quick capture）设置，插在「主题」前
+        let todoHotkeyItem = NSMenuItem(title: "待办快捷键", action: nil, keyEquivalent: "")
+        todoHotkeyItem.submenu = makeHotkeySubmenu(
+            current: todoHotkeyManager.currentCombo?.displayString ?? "未设置",
+            record: #selector(recordTodoHotkey), clear: #selector(clearTodoHotkey))
+        settingsSub.addItem(todoHotkeyItem)
+
+        let todoAISettingsItem = NSMenuItem(title: "待办 AI 设置…", action: #selector(showTodoSettings), keyEquivalent: "")
+        todoAISettingsItem.target = self
+        settingsSub.addItem(todoAISettingsItem)
 
         settingsSub.addItem(.separator())
 
@@ -316,6 +339,20 @@ public final class MenuBarController: NSObject {
         dashboardHotkeyManager.clear()
     }
 
+    @objc private func recordTodoHotkey() {
+        HotkeyRecorder.present(title: "设置待办快捷键") { [weak self] combo in
+            self?.todoHotkeyManager.save(combo: combo)
+        }
+    }
+
+    @objc private func clearTodoHotkey() {
+        todoHotkeyManager.clear()
+    }
+
+    @objc private func showTodoSettings() {
+        TodoSettingsWindowController.shared.show()
+    }
+
     @objc private func recordHotkey() {
         HotkeyRecorder.present(title: "设置快捷键") { [weak self] combo in
             self?.hotkeyManager?.save(combo: combo)
@@ -350,6 +387,23 @@ public final class MenuBarController: NSObject {
             otpController?.showAtMenuBar(buttonFrame: btnFrame)
         } else {
             otpController?.showAtMouse()
+        }
+    }
+
+    /// Lazily created so the runner/test path can also fire the action.
+    private func todoCaptureController() -> TodoCaptureWindowController {
+        if let todoController { return todoController }
+        let controller = TodoCaptureWindowController()
+        todoController = controller
+        return controller
+    }
+
+    @objc private func showTodo() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            todoCaptureController().showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            todoCaptureController().showAtMouse()
         }
     }
 

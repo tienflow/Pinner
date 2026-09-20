@@ -45,6 +45,13 @@
 - **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
 - **快捷键**：默认 `⌘⇧W`，可自定义
 
+**待办快速录入**
+- **自然语言解析**：一句话 → 结构化任务（标题 / 到期 / 优先级 / 列表），由 OpenAI 兼容 API（自带 Key，Base URL / API Key / 模型名可配置，Key 存 Keychain）解析后写入 macOS 提醒事项
+- **预览确认卡**：解析结果先浮出可编辑卡片，四字段均可改，⏎ 保存、⎋ 丢弃
+- **失败降级**：断网 / 超时（5s）/ 响应不可解析时，原文直接作为任务标题保存（无到期日），不阻断录入
+- **今日概览**：面板下半区只读显示「今天 + 已逾期」未完成条目，点击跳转提醒事项 App
+- **可选全局快捷键**：默认不绑定，可在设置中配置（同总览 / ZCode 模式）
+
 **通用**
 - **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换近 7 天 / 30 天 / 全部 / 自定义日期；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
@@ -69,9 +76,9 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount）
-│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService
+│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
+│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, CodexStatsView, GeminiStatsView, AgentStatsView, TodoCaptureView, TodoSettingsView 等）
 │   └── AppKit/                 # AppKit 集成
 │       ├── MenuBarController.swift           # 菜单栏交互
 │       ├── EdgeDockWindowController.swift    # 收藏面板管理
@@ -85,10 +92,12 @@ Sources/
 │       ├── GeminiStatsHotkeyManager.swift    # Antigravity 统计快捷键
 │       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
 │       ├── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
-│       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH 统计快捷键
+│       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH / 待办统计快捷键
 │       ├── AgentStatsWindowController.swift     # ZCode / DSH 紧凑统计窗口
 │       ├── HotkeyRegistrationNotifier.swift     # 快捷键注册失败系统通知
-│       └── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
+│       ├── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
+│       ├── TodoCaptureWindowController.swift    # 待办快速录入面板
+│       └── TodoSettingsWindowController.swift   # 待办 AI 设置窗口
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
 
@@ -105,6 +114,8 @@ Sources/
 | `⌘⇧I`（默认） | 打开 Codex 统计面板 |
 | `⌘⇧G`（默认） | 打开 Antigravity 统计面板 |
 | `⌘⇧W`（默认） | 打开 WorkBuddy 统计面板 |
+
+待办快速录入无默认快捷键，可在菜单栏右键 → 设置 → 待办快捷键 中自定义（未设置时通过菜单「待办」打开）。
 
 Codex / Antigravity / WorkBuddy / ZCode / DSH 统计入口仅在该 Agent 被勾选参与统计时出现在右键菜单；总览 / ZCode / DSH 统计无默认快捷键，可在菜单栏右键 → 设置 中自定义。
 
@@ -135,6 +146,8 @@ Codex / Antigravity / WorkBuddy / ZCode / DSH 统计入口仅在该 Agent 被勾
 ──────────
 OTP 验证码          ← 打开 OTP 面板
 ──────────
+待办                ← 打开待办快速录入面板（自然语言 → 提醒事项）
+──────────
 （以下随「总览」勾选显示 / 隐藏，至少保留一个）
 Codex 统计          ← 打开统计面板
 Antigravity 统计      ← 打开统计面板
@@ -152,6 +165,8 @@ DSH 统计            ← 打开 DSH 紧凑统计面板
   ├ ZCode / DSH 统计快捷键 ← 子菜单配置（无默认值）
   ├ 参与统计的 Agent   ← 勾选（与总览界面联动，至少保留一个）
   ├ 登录时启动        ← 开关（SMAppService）
+  ├ 待办快捷键       ← 子菜单配置（无默认值）
+  ├ 待办 AI 设置…    ← Base URL / API Key / 模型名 / 测试连接
   └ 主题            ← 自动 / 浅色 / 深色
 ──────────
 退出
@@ -162,7 +177,7 @@ DSH 统计            ← 打开 DSH 紧凑统计面板
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.5.0.dmg`
+2. 下载最新版本的 `Pinner-v1.6.0.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 
@@ -186,8 +201,16 @@ brew install zstd
 git clone https://github.com/tienflow/Pinner.git
 cd Pinner
 swift build
-.build/arm64-apple-macosx/debug/CollectionBoxApp
+open .build/debug/CollectionBoxApp
 ```
+
+> 注意：macOS 26+ 的 CommandLineTools（SDK 27）因缺少 `libSwiftUIMacros.dylib` 宏插件无法编译 SwiftUI `@State`（报 `plugin for module 'SwiftUIMacros' not found`）。临时方案是使用旧 SDK 构建：
+>
+> ```bash
+> SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build
+> ```
+>
+> 根治方案是安装完整 Xcode（或等待 Apple 修复 CLT 插件缺失）。
 
 ### 设为开机自启
 

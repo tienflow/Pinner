@@ -463,6 +463,72 @@ func testAgentStatsHotkeyManagerLifecycle() {
     check(manager.currentCombo == nil, "dashboard hotkey cleared")
 }
 
+// MARK: - Todo quick capture (M2/M4 pure-function surfaces)
+
+@MainActor
+func testTodoPromptBuild() {
+    let (system, user) = TodoPrompt.build(
+        input: "周五下午3点提醒我给妈妈打电话，很重要",
+        now: Date(timeIntervalSince1970: 1_782_000_000), // fixed instant
+        lists: ["提醒事项", "工作", "购物"],
+        lastList: "工作"
+    )
+    check(system.contains("待办解析器"), "todo prompt system role")
+    check(system.contains("ISO8601"), "todo prompt system mentions ISO8601")
+    check(user.contains("周五下午3点提醒我给妈妈打电话"), "todo prompt includes raw input")
+    check(user.contains("提醒事项, 工作, 购物"), "todo prompt includes list names")
+    check(user.contains("上次选择的列表: 工作"), "todo prompt includes last list")
+
+    let (_, userNoList) = TodoPrompt.build(
+        input: "买牛奶", now: Date(), lists: [], lastList: nil)
+    check(!userNoList.contains("可选列表"), "todo prompt omits empty list block")
+    check(!userNoList.contains("上次选择的列表"), "todo prompt omits nil last list")
+}
+
+@MainActor
+func testTodoLLMParseResponse() {
+    // 合法 JSON
+    let valid = Data(#"{"title":"给妈妈打电话","due":"2026-09-18T15:00:00+08:00","priority":1,"list":"工作","fallback":false}"#.utf8)
+    if let parsed = TodoLLMClient.parseResponse(valid) {
+        check(parsed.title == "给妈妈打电话", "parse valid title")
+        check(parsed.priority == 1, "parse valid priority")
+        check(parsed.list == "工作", "parse valid list")
+        check(parsed.due != nil, "parse valid due date")
+    } else {
+        check(false, "parse valid JSON returns task")
+    }
+
+    // 缺字段（容错：title 空、priority 非法 → 默认 0）
+    let sparse = Data(#"{"title":"","due":null,"fallback":true}"#.utf8)
+    if let parsed = TodoLLMClient.parseResponse(sparse) {
+        check(parsed.title == "", "parse sparse title empty")
+        check(parsed.priority == 0, "parse invalid priority defaults to 0")
+        check(parsed.due == nil, "parse null due")
+        check(parsed.fallback == true, "parse fallback flag")
+    } else {
+        check(false, "parse sparse JSON returns task")
+    }
+
+    // 非 JSON
+    check(TodoLLMClient.parseResponse(Data("not json".utf8)) == nil, "parse non-JSON returns nil")
+
+    // markdown 围栏包裹的 JSON
+    let fenced = Data("```json\n{\"title\":\"x\",\"due\":null,\"priority\":0,\"fallback\":false}\n```".utf8)
+    check(TodoLLMClient.parseResponse(fenced)?.title == "x", "parse strips markdown fences")
+}
+
+@MainActor
+func testTodoSettingsStoreKeychain() {
+    // Keychain 往返：读回应等于写入值。使用独立实例（不污染共享 store）。
+    let config = TodoLLMConfig(baseURL: "https://example.test/v1", apiKey: "sk-test", model: "gpt-4o-mini")
+    let store = TodoSettingsStore.shared
+    store.config = config
+    let readBack = store.config
+    check(readBack == config, "todo settings keychain roundtrip")
+    store.clear()
+    check(store.config == TodoLLMConfig.empty, "todo settings clear resets to empty")
+}
+
 // MARK: - Entry Point
 
 let allPassed = await Task { @MainActor () -> Bool in
@@ -487,6 +553,9 @@ let allPassed = await Task { @MainActor () -> Bool in
     testAgentSymbolsExist()
     await testDshScanCacheReusesResults()
     testDailySortHelpers()
+    testTodoPromptBuild()
+    testTodoLLMParseResponse()
+    testTodoSettingsStoreKeychain()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

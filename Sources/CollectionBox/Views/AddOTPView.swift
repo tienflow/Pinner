@@ -46,7 +46,7 @@ struct AddOTPView: View {
     private var uriInputView: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("粘贴 otpauth:// URI").font(.caption).foregroundStyle(.secondary)
-            NativeTextField(text: $uriInput, placeholder: "otpauth://totp/...")
+            NativeTextField(text: $uriInput, placeholder: "otpauth://totp/...", autoFocus: true)
                 .frame(height: 24)
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2)))
             if !errorMessage.isEmpty {
@@ -81,6 +81,8 @@ struct AddOTPView: View {
 struct NativeTextField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = ""
+    var autoFocus: Bool = false
+    var onSubmit: (() -> Void)?
 
     func makeNSView(context: Context) -> NSTextField {
         let tf = NSTextField()
@@ -93,7 +95,9 @@ struct NativeTextField: NSViewRepresentable {
         tf.bezelStyle = .roundedBezel
         tf.delegate = context.coordinator
         tf.stringValue = text
-        DispatchQueue.main.async { tf.window?.makeFirstResponder(tf) }
+        if autoFocus {
+            DispatchQueue.main.async { tf.window?.makeFirstResponder(tf) }
+        }
         return tf
     }
 
@@ -108,6 +112,16 @@ struct NativeTextField: NSViewRepresentable {
         init(_ parent: NativeTextField) { self.parent = parent }
         func controlTextDidChange(_ obj: Notification) {
             if let tf = obj.object as? NSTextField { parent.text = tf.stringValue }
+        }
+
+        /// Return key inside the field fires the submit callback instead of
+        /// inserting a newline.
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == Selector(("insertNewline:")), let onSubmit = parent.onSubmit {
+                onSubmit()
+                return true
+            }
+            return false
         }
     }
 }
