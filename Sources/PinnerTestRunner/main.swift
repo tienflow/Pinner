@@ -654,6 +654,55 @@ func testShelfOperations() throws {
     check(clearedStore.shelfEntries.isEmpty, "cleared shelf persists as empty")
 }
 
+@MainActor
+func testShelfAutoRemoveItem() async {
+    let file = makeTempFile()
+    let id1 = UUID()
+    let id2 = UUID()
+
+    final class ResultBox: @unchecked Sendable {
+        var ids: [UUID] = []
+        let lock = NSLock()
+        func append(_ newIDs: [UUID]) {
+            lock.lock()
+            ids.append(contentsOf: newIDs)
+            lock.unlock()
+        }
+    }
+
+    let box = ResultBox()
+    let item = ShelfURLItem(url: file, entryIDs: [id1, id2]) { ids in
+        box.append(ids)
+    }
+
+    let types = ShelfURLItem.writableTypeIdentifiersForItemProvider
+    check(types.contains("public.file-url"), "ShelfURLItem registers public.file-url")
+    check(types.contains("public.url"), "ShelfURLItem registers public.url")
+    check(box.ids.isEmpty, "ShelfURLItem initially unconsumed")
+
+    let provider = NSItemProvider(object: item)
+
+    await withCheckedContinuation { continuation in
+        provider.loadDataRepresentation(forTypeIdentifier: "public.file-url") { _, _ in
+            continuation.resume()
+        }
+    }
+
+    // Yield to allow main queue callback to execute
+    await Task.yield()
+
+    check(box.ids == [id1, id2], "ShelfURLItem passes entry IDs on consumption")
+
+    // Second call should not trigger onConsumed again
+    await withCheckedContinuation { continuation in
+        provider.loadDataRepresentation(forTypeIdentifier: "public.url") { _, _ in
+            continuation.resume()
+        }
+    }
+    await Task.yield()
+    check(box.ids.count == 2, "ShelfURLItem consumption is idempotent")
+}
+
 // MARK: - Entry Point
 
 let allPassed = await Task { @MainActor () -> Bool in
@@ -683,6 +732,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testTodoSettingsStoreStorage()
     testReminderCompletionModel()
     try? testShelfOperations()
+    await testShelfAutoRemoveItem()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

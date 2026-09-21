@@ -431,7 +431,7 @@ struct RootView: View {
             Text("临时中转架")
                 .font(.system(size: Design.body, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Text("拖入任意文件暂存，随时拖到其他窗口\n支持跨桌面倒手，随用随走")
+            Text("拖入任意文件暂存 · 拖出即焚\n拖动松手按住 ⌘ 直接剪切，或右键选择「移动到…」")
                 .font(.system(size: Design.caption))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -448,36 +448,65 @@ struct RootView: View {
     }
 
     private var shelfHeader: some View {
-        HStack {
-            Text("\(store.shelfEntries.count) 个临时文件")
-                .font(.system(size: Design.caption))
-                .foregroundStyle(.secondary)
-            Spacer()
-            // 全部拖出按钮
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("全部拖出")
-                    .font(.system(size: Design.caption, weight: .medium))
-            }
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-            .foregroundStyle(Color.accentColor)
-            .contentShape(Rectangle())
-            .onDrag { dragAllShelfProvider() }
-            .help("按住并拖拽，一次性把暂存架内所有文件拖到目标窗口")
-
-            Button(action: {
-                store.clearShelf()
-                clearSelection()
-            }) {
-                Text("清空")
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("\(store.shelfEntries.count) 个临时文件")
                     .font(.system(size: Design.caption))
                     .foregroundStyle(.secondary)
+                Spacer()
+
+                // 移动全部到… 按钮
+                Button(action: {
+                    let allIDs = store.shelfEntries.map(\.id)
+                    moveShelfEntriesToFolder(allIDs)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10))
+                        Text("移动全部到…")
+                            .font(.system(size: Design.caption))
+                    }
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 3)
+                }
+                .buttonStyle(.plain)
+                .help("选择目标文件夹，将暂存架内所有文件物理移动过去并清空暂存")
+
+                // 全部拖出按钮
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("全部拖出")
+                        .font(.system(size: Design.caption, weight: .medium))
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                .foregroundStyle(Color.accentColor)
+                .contentShape(Rectangle())
+                .onDrag { dragAllShelfProvider() }
+                .help("按住并拖出到任意窗口（拖出自动移除；拖到 Finder 松手按住 ⌘ 可物理剪切）")
+
+                Button(action: {
+                    store.clearShelf()
+                    clearSelection()
+                }) {
+                    Text("清空")
+                        .font(.system(size: Design.caption))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                }
+                .buttonStyle(.plain)
+                .help("清空暂存架")
             }
-            .buttonStyle(.plain)
-            .help("清空暂存架")
+
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 9))
+                Text("拖出后自动移除 · 拖到 Finder 松手时按住 ⌘ 键物理剪切")
+                    .font(.system(size: 10))
+            }
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 2)
         }
         .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 4)
     }
@@ -618,6 +647,21 @@ struct RootView: View {
                 Label("在终端中打开", systemImage: "terminal")
             }
             Button("在 Finder 中显示") { showInFinder(entry.bookmarkData) }
+            Divider()
+            Button {
+                moveShelfEntriesToFolder(ids)
+            } label: {
+                Label(ids.count > 1 ? "移动 \(ids.count) 项到…" : "移动到…", systemImage: "folder")
+            }
+            if !store.tabs.isEmpty {
+                Menu(ids.count > 1 ? "转存 \(ids.count) 项至收藏夹…" : "转存至收藏夹…") {
+                    ForEach(Array(store.tabs.enumerated()), id: \.element.id) { tabIdx, tab in
+                        Button(tab.name) {
+                            saveShelfEntriesToTab(ids, tabIndex: tabIdx)
+                        }
+                    }
+                }
+            }
             Divider()
             Button(ids.count > 1 ? "从暂存架移除 \(ids.count) 项" : "从暂存架移除", role: .destructive) {
                 store.removeShelfEntries(ids)
@@ -788,11 +832,21 @@ struct RootView: View {
     }
 
     private func dragAllShelfProvider() -> NSItemProvider {
-        let urls = store.shelfEntries.compactMap { BookmarkService.resolveURL($0.bookmarkData) }
-        guard let first = urls.first else { return NSItemProvider() }
-        let provider = NSItemProvider(object: first as NSURL)
-        for url in urls.dropFirst() {
-            provider.registerObject(url as NSURL, visibility: .all)
+        let pairs: [(URL, UUID)] = store.shelfEntries.compactMap { entry in
+            guard let url = BookmarkService.resolveURL(entry.bookmarkData) else { return nil }
+            return (url, entry.id)
+        }
+        guard let first = pairs.first else { return NSItemProvider() }
+        let allIDs = store.shelfEntries.map(\.id)
+        let firstItem = ShelfURLItem(url: first.0, entryIDs: allIDs) { [weak store] ids in
+            store?.removeShelfEntries(ids)
+        }
+        let provider = NSItemProvider(object: firstItem)
+        for pair in pairs.dropFirst() {
+            let item = ShelfURLItem(url: pair.0, entryIDs: allIDs) { [weak store] ids in
+                store?.removeShelfEntries(ids)
+            }
+            provider.registerObject(item, visibility: .all)
         }
         return provider
     }
@@ -802,7 +856,34 @@ struct RootView: View {
     /// fallback (some pasteboard matching paths only surface text types).
     private func dragProvider(for entry: BookmarkEntry) -> NSItemProvider {
         var provider = NSItemProvider()
-        if let url = BookmarkService.resolveURL(entry.bookmarkData) {
+        if showingShelf {
+            let targetEntries: [BookmarkEntry]
+            if selectedEntryIDs.contains(entry.id) && selectedEntryIDs.count > 1 {
+                let selectedSet = selectedEntryIDs
+                targetEntries = store.shelfEntries.filter { selectedSet.contains($0.id) }
+            } else {
+                targetEntries = [entry]
+            }
+
+            let pairs: [(URL, UUID)] = targetEntries.compactMap { e in
+                guard let url = BookmarkService.resolveURL(e.bookmarkData) else { return nil }
+                return (url, e.id)
+            }
+
+            if let first = pairs.first {
+                let idsToConsume = pairs.map(\.1)
+                let firstItem = ShelfURLItem(url: first.0, entryIDs: idsToConsume) { [weak store] ids in
+                    store?.removeShelfEntries(ids)
+                }
+                provider = NSItemProvider(object: firstItem)
+                for pair in pairs.dropFirst() {
+                    let item = ShelfURLItem(url: pair.0, entryIDs: idsToConsume) { [weak store] ids in
+                        store?.removeShelfEntries(ids)
+                    }
+                    provider.registerObject(item, visibility: .all)
+                }
+            }
+        } else if let url = BookmarkService.resolveURL(entry.bookmarkData) {
             provider = NSItemProvider(object: url as NSURL)
         }
         let id = entry.id.uuidString
@@ -866,7 +947,7 @@ struct RootView: View {
         if isSearching {
             Text("\(flatDisplay.count) 个结果")
         } else if showingShelf {
-            Text("\(store.shelfEntries.count) 个暂存文件 · 随用随走")
+            Text("\(store.shelfEntries.count) 个暂存文件 · 拖出即焚")
         } else if showingRecents {
             Text("\(store.recentEntries().count) 个最近打开")
         } else {
@@ -940,6 +1021,69 @@ struct RootView: View {
             BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
             flash(entry.id)
         }
+    }
+
+    private func moveShelfEntriesToFolder(_ entryIDs: [UUID]) {
+        guard !entryIDs.isEmpty else { return }
+        let entriesToMove = store.shelfEntries.filter { entryIDs.contains($0.id) }
+        guard !entriesToMove.isEmpty else { return }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "移动到此"
+        panel.message = "选择要将暂存文件移动到的目标文件夹"
+
+        panel.begin { response in
+            guard response == .OK, let targetDirURL = panel.url else { return }
+
+            var movedIDs: [UUID] = []
+            let fm = FileManager.default
+
+            for entry in entriesToMove {
+                guard let srcURL = BookmarkService.resolveURL(entry.bookmarkData) else { continue }
+                guard fm.fileExists(atPath: srcURL.path) else {
+                    movedIDs.append(entry.id)
+                    continue
+                }
+
+                var destURL = targetDirURL.appendingPathComponent(srcURL.lastPathComponent)
+                if fm.fileExists(atPath: destURL.path) {
+                    let stem = srcURL.deletingPathExtension().lastPathComponent
+                    let ext = srcURL.pathExtension
+                    var counter = 2
+                    while fm.fileExists(atPath: destURL.path) {
+                        let newName = ext.isEmpty ? "\(stem) \(counter)" : "\(stem) \(counter).\(ext)"
+                        destURL = targetDirURL.appendingPathComponent(newName)
+                        counter += 1
+                    }
+                }
+
+                do {
+                    try fm.moveItem(at: srcURL, to: destURL)
+                    movedIDs.append(entry.id)
+                } catch {
+                    NSLog("[Pinner] 移动暂存文件失败: \(srcURL.path) -> \(destURL.path), 错误: \(error.localizedDescription)")
+                }
+            }
+
+            if !movedIDs.isEmpty {
+                store.removeShelfEntries(movedIDs)
+                pruneSelection()
+            }
+        }
+    }
+
+    private func saveShelfEntriesToTab(_ entryIDs: [UUID], tabIndex: Int) {
+        guard !entryIDs.isEmpty, store.tabs.indices.contains(tabIndex) else { return }
+        let entries = store.shelfEntries.filter { entryIDs.contains($0.id) }
+        let urls = entries.compactMap { BookmarkService.resolveURL($0.bookmarkData) }
+        guard !urls.isEmpty else { return }
+        store.addEntries(from: urls, to: tabIndex)
+        store.removeShelfEntries(entryIDs)
+        pruneSelection()
     }
 }
 
