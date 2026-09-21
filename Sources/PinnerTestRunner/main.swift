@@ -607,6 +607,53 @@ func testReminderCompletionModel() {
     check(!item.title.isEmpty, "reminder has title")
 }
 
+@MainActor
+func testShelfOperations() throws {
+    let suite = "test.pinner.shelf.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let store = CollectionStore(defaults: defaults)
+    check(store.shelfEntries.isEmpty, "shelf initially empty")
+
+    let tmp = FileManager.default.temporaryDirectory
+    let file1 = tmp.appendingPathComponent("pinner_shelf_test1.txt")
+    let file2 = tmp.appendingPathComponent("pinner_shelf_test2.txt")
+    try "hello".write(to: file1, atomically: true, encoding: .utf8)
+    try "world".write(to: file2, atomically: true, encoding: .utf8)
+    defer {
+        try? FileManager.default.removeItem(at: file1)
+        try? FileManager.default.removeItem(at: file2)
+    }
+
+    let added = store.addShelfEntries(from: [file1, file2])
+    check(added == 2, "shelf added 2 entries")
+    check(store.shelfEntries.count == 2, "shelf has 2 entries")
+
+    // Deduplication test
+    let dupAdded = store.addShelfEntries(from: [file1])
+    check(dupAdded == 0, "shelf ignores duplicate path")
+    check(store.shelfEntries.count == 2, "shelf count remains 2 after duplicate")
+
+    // Persistence test
+    let reloadedStore = CollectionStore(defaults: defaults)
+    check(reloadedStore.shelfEntries.count == 2, "shelf entries persist across store instances")
+    check(reloadedStore.shelfEntries.contains(where: { $0.displayName == file1.lastPathComponent }), "persisted entry matches file1")
+
+    // Remove single entry
+    let firstID = store.shelfEntries[0].id
+    store.removeShelfEntry(firstID)
+    check(store.shelfEntries.count == 1, "shelf has 1 entry after removal")
+
+    // Clear all
+    store.clearShelf()
+    check(store.shelfEntries.isEmpty, "shelf empty after clear")
+
+    // Reloaded after clear
+    let clearedStore = CollectionStore(defaults: defaults)
+    check(clearedStore.shelfEntries.isEmpty, "cleared shelf persists as empty")
+}
+
 // MARK: - Entry Point
 
 let allPassed = await Task { @MainActor () -> Bool in
@@ -635,6 +682,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testTodoLLMParseResponse()
     testTodoSettingsStoreStorage()
     testReminderCompletionModel()
+    try? testShelfOperations()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

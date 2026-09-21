@@ -18,7 +18,9 @@ public struct RecentEntry: Identifiable, Equatable, Sendable {
 @Observable
 public final class CollectionStore {
     public var tabs: [CollectionTab] = []
+    public var shelfEntries: [BookmarkEntry] = []
     private let persistenceKey = "CollectionBox.tabs"
+    private let shelfPersistenceKey = "CollectionBox.shelf"
     private let defaults: UserDefaults
     private var undoStack: [[CollectionTab]] = []
     private let maxUndoSteps = 20
@@ -26,6 +28,7 @@ public final class CollectionStore {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         load()
+        loadShelf()
     }
 
     public init(inMemory: Bool) {
@@ -275,6 +278,43 @@ public final class CollectionStore {
         if changed { save() }
     }
 
+    // MARK: - Shelf Management
+
+    /// Add files to the temporary drop shelf, skipping duplicate paths.
+    /// Returns the number of entries actually added.
+    @discardableResult
+    public func addShelfEntries(from urls: [URL]) -> Int {
+        var existingPaths = Set(shelfEntries.compactMap { BookmarkService.resolvedPath($0.bookmarkData) })
+        var added = 0
+        for url in urls {
+            guard let bd = try? BookmarkService.makeBookmark(for: url) else { continue }
+            let path = BookmarkService.resolvedPath(bd) ?? url.standardizedFileURL.path
+            guard !existingPaths.contains(path) else { continue }
+            existingPaths.insert(path)
+            shelfEntries.append(BookmarkEntry(id: UUID(), displayName: url.lastPathComponent, bookmarkData: bd))
+            added += 1
+        }
+        if added > 0 { saveShelf() }
+        return added
+    }
+
+    public func removeShelfEntry(_ entryID: UUID) {
+        removeShelfEntries([entryID])
+    }
+
+    public func removeShelfEntries(_ entryIDs: [UUID]) {
+        let idSet = Set(entryIDs)
+        guard shelfEntries.contains(where: { idSet.contains($0.id) }) else { return }
+        shelfEntries.removeAll { idSet.contains($0.id) }
+        saveShelf()
+    }
+
+    public func clearShelf() {
+        guard !shelfEntries.isEmpty else { return }
+        shelfEntries.removeAll()
+        saveShelf()
+    }
+
     // MARK: - Persistence
 
     public func save() {
@@ -288,8 +328,21 @@ public final class CollectionStore {
         tabs = decoded
     }
 
+    public func saveShelf() {
+        guard let data = try? JSONEncoder().encode(shelfEntries) else { return }
+        defaults.set(data, forKey: shelfPersistenceKey)
+    }
+
+    public func loadShelf() {
+        guard let data = defaults.data(forKey: shelfPersistenceKey),
+              let decoded = try? JSONDecoder().decode([BookmarkEntry].self, from: data) else { return }
+        shelfEntries = decoded
+    }
+
     public func clearPersistence() {
         defaults.removeObject(forKey: persistenceKey)
+        defaults.removeObject(forKey: shelfPersistenceKey)
         tabs = []
+        shelfEntries = []
     }
 }

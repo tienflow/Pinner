@@ -64,6 +64,9 @@ struct RootView: View {
     /// Cross-tab "最近访问" mode: shows recently opened entries from every tab
     /// instead of a single tab's content.
     @State private var showingRecents = false
+    /// Temporary Drop Shelf mode: a scratchpad for files to drop in and drag out.
+    @State private var showingShelf = false
+    @State private var isShelfTabTargeted = false
 
     // MARK: - Derived Data
 
@@ -125,6 +128,9 @@ struct RootView: View {
                 guard let entries = byTab[i], !entries.isEmpty else { return nil }
                 return EntrySection(id: "tab_\(store.tabs[i].id)", title: store.tabs[i].name, entries: entries)
             }
+        }
+        if showingShelf {
+            return [EntrySection(id: "shelf", title: "", entries: store.shelfEntries)]
         }
         if showingRecents {
             let pairs = store.recentEntries().compactMap { re in re.entry.lastOpened.map { (re.entry, $0) } }
@@ -229,7 +235,7 @@ struct RootView: View {
     private var tabBar: some View {
         HStack(spacing: 4) {
             // 固定"最近访问"入口，独立于收藏夹 Tab
-            Button(action: { showingRecents = true; clearSelection() }) {
+            Button(action: { showingRecents = true; showingShelf = false; clearSelection() }) {
                 HStack(spacing: 3) {
                     Image(systemName: "clock").font(.system(size: 11, weight: .medium))
                     Text("最近").font(.system(size: Design.ui, weight: showingRecents ? .semibold : .regular))
@@ -241,6 +247,30 @@ struct RootView: View {
             .buttonStyle(.plain).fixedSize()
             .help("跨收藏夹查看最近打开的文件")
             .accessibilityLabel("最近访问")
+
+            // 固定"暂存"入口（中转架）
+            Button(action: { showingShelf = true; showingRecents = false; clearSelection() }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "tray.and.arrow.down").font(.system(size: 11, weight: .medium))
+                    Text(store.shelfEntries.isEmpty ? "暂存" : "暂存 \(store.shelfEntries.count)")
+                        .font(.system(size: Design.ui, weight: showingShelf ? .semibold : .regular))
+                }
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(
+                    isShelfTabTargeted
+                        ? Color.accentColor.opacity(0.35)
+                        : (showingShelf ? Color.accentColor.opacity(Design.selectedAlpha) : Color.clear),
+                    in: Capsule()
+                )
+                .foregroundStyle(showingShelf ? Color.accentColor : Color.secondary)
+                .overlay(
+                    Capsule().strokeBorder(isShelfTabTargeted ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                )
+            }
+            .buttonStyle(.plain).fixedSize()
+            .help("临时文件暂存中转架，拖入暂存，随时拖到其他窗口")
+            .accessibilityLabel("临时暂存中转架")
+            .onDrop(of: [.fileURL], isTargeted: $isShelfTabTargeted) { handleShelfDrop(providers: $0) }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
@@ -290,6 +320,7 @@ struct RootView: View {
     private func selectTab(_ id: UUID) {
         selectedTabID = id
         showingRecents = false
+        showingShelf = false
         clearSelection()
     }
 
@@ -338,7 +369,26 @@ struct RootView: View {
 
     @ViewBuilder
     private var entryContent: some View {
-        if showingRecents && !isSearching {
+        if showingShelf && !isSearching {
+            if store.shelfEntries.isEmpty {
+                shelfEmptyState.onDrop(of: [.fileURL], isTargeted: $dropTargeted) { handleShelfDrop(providers: $0) }
+            } else {
+                VStack(spacing: 0) {
+                    shelfHeader
+                    Divider()
+                    ScrollViewReader { proxy in
+                        Group {
+                            if viewMode == .list { sectionedList() } else { sectionedGrid() }
+                        }
+                        .onChange(of: selectedEntryID) { _, id in
+                            guard let id else { return }
+                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                        }
+                    }
+                }
+                .onDrop(of: [.fileURL], isTargeted: nil) { handleShelfDrop(providers: $0) }
+            }
+        } else if showingRecents && !isSearching {
             if store.recentEntries().isEmpty {
                 recentsEmptyState
             } else {
@@ -372,6 +422,66 @@ struct RootView: View {
         } else { VStack { Spacer(); Text("点击 + 创建一个收藏夹").foregroundStyle(.secondary); Spacer() } }
     }
 
+    private var shelfEmptyState: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "shippingbox")
+                .font(.system(size: 36))
+                .foregroundStyle(.tertiary)
+            Text("临时中转架")
+                .font(.system(size: Design.body, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("拖入任意文件暂存，随时拖到其他窗口\n支持跨桌面倒手，随用随走")
+                .font(.system(size: Design.caption))
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.radiusM)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.25))
+                .padding(6)
+        )
+        .padding(6)
+    }
+
+    private var shelfHeader: some View {
+        HStack {
+            Text("\(store.shelfEntries.count) 个临时文件")
+                .font(.system(size: Design.caption))
+                .foregroundStyle(.secondary)
+            Spacer()
+            // 全部拖出按钮
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("全部拖出")
+                    .font(.system(size: Design.caption, weight: .medium))
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+            .foregroundStyle(Color.accentColor)
+            .contentShape(Rectangle())
+            .onDrag { dragAllShelfProvider() }
+            .help("按住并拖拽，一次性把暂存架内所有文件拖到目标窗口")
+
+            Button(action: {
+                store.clearShelf()
+                clearSelection()
+            }) {
+                Text("清空")
+                    .font(.system(size: Design.caption))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+            }
+            .buttonStyle(.plain)
+            .help("清空暂存架")
+        }
+        .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 4)
+    }
+
     private var recentsEmptyState: some View {
         VStack(spacing: 8) { Spacer()
             Image(systemName: "clock").font(.system(size: 32)).foregroundStyle(.tertiary)
@@ -397,6 +507,7 @@ struct RootView: View {
     private func listRow(_ entry: BookmarkEntry) -> some View {
         EntryRow(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id,
                  sourceLabel: showingRecents ? sourceTabName(for: entry) : nil,
+                 onRemove: showingShelf ? { store.removeShelfEntry(entry.id); pruneSelection() } : nil,
                  onReorderDrop: { handleEntryReorderDrop(providers: $0, onto: entry) })
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { openEntry(entry) }
@@ -440,6 +551,7 @@ struct RootView: View {
 
     private func gridCell(_ entry: BookmarkEntry) -> some View {
         GridEntryItem(entry: entry, isSelected: isRowSelected(entry), isFlashing: flashID == entry.id,
+                      onRemove: showingShelf ? { store.removeShelfEntry(entry.id); pruneSelection() } : nil,
                       onReorderDrop: { handleEntryReorderDrop(providers: $0, onto: entry) })
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { openEntry(entry) }
@@ -483,7 +595,9 @@ struct RootView: View {
     }
 
     private func pruneSelection() {
-        let valid = Set(store.tabs.flatMap { $0.entries.map(\.id) })
+        let valid = showingShelf
+            ? Set(store.shelfEntries.map(\.id))
+            : Set(store.tabs.flatMap { $0.entries.map(\.id) })
         selectedEntryIDs = selectedEntryIDs.intersection(valid)
         if let id = selectedEntryID, !valid.contains(id) { selectedEntryID = nil }
     }
@@ -493,7 +607,23 @@ struct RootView: View {
     @ViewBuilder
     private func entryMenu(_ entry: BookmarkEntry) -> some View {
         let ids = batchSelection(containing: entry)
-        if ids.count > 1 {
+        if showingShelf {
+            Button { onQuickLook?(ids) } label: {
+                Label("快速预览", systemImage: "eye")
+            }.keyboardShortcut("y", modifiers: .command)
+            Button { copyPath(entry) } label: {
+                Label("拷贝路径", systemImage: "doc.on.doc")
+            }
+            Button { openInTerminal(entry) } label: {
+                Label("在终端中打开", systemImage: "terminal")
+            }
+            Button("在 Finder 中显示") { showInFinder(entry.bookmarkData) }
+            Divider()
+            Button(ids.count > 1 ? "从暂存架移除 \(ids.count) 项" : "从暂存架移除", role: .destructive) {
+                store.removeShelfEntries(ids)
+                pruneSelection()
+            }
+        } else if ids.count > 1 {
             Menu("移动 \(ids.count) 项到…") {
                 ForEach(Array(store.tabs.enumerated()), id: \.element.id) { dstIndex, dstTab in
                     Button(dstTab.name) { store.moveEntries(ids, to: dstIndex) }
@@ -579,7 +709,11 @@ struct RootView: View {
         case "delete":
             let ids = orderedSelectedIDs
             if !ids.isEmpty {
-                store.removeEntriesGlobally(ids)
+                if showingShelf {
+                    store.removeShelfEntries(ids)
+                } else {
+                    store.removeEntriesGlobally(ids)
+                }
                 pruneSelection()
             }
             return
@@ -631,6 +765,36 @@ struct RootView: View {
             store.addEntries(from: urls, to: ti)
         }
         return true
+    }
+
+    private func handleShelfDrop(providers: [NSItemProvider]) -> Bool {
+        var urls: [URL] = []
+        let group = DispatchGroup()
+        for p in providers {
+            group.enter()
+            p.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                defer { group.leave() }
+                if let d = item as? Data, let url = URL(dataRepresentation: d, relativeTo: nil) {
+                    urls.append(url)
+                } else if let url = item as? URL {
+                    urls.append(url)
+                }
+            }
+        }
+        group.notify(queue: .main) {
+            store.addShelfEntries(from: urls)
+        }
+        return true
+    }
+
+    private func dragAllShelfProvider() -> NSItemProvider {
+        let urls = store.shelfEntries.compactMap { BookmarkService.resolveURL($0.bookmarkData) }
+        guard let first = urls.first else { return NSItemProvider() }
+        let provider = NSItemProvider(object: first as NSURL)
+        for url in urls.dropFirst() {
+            provider.registerObject(url as NSURL, visibility: .all)
+        }
+        return provider
     }
 
     /// Entries drag with multiple representations: a file URL (drag out to
@@ -701,6 +865,8 @@ struct RootView: View {
     private var countText: some View {
         if isSearching {
             Text("\(flatDisplay.count) 个结果")
+        } else if showingShelf {
+            Text("\(store.shelfEntries.count) 个暂存文件 · 随用随走")
         } else if showingRecents {
             Text("\(store.recentEntries().count) 个最近打开")
         } else {
@@ -717,7 +883,13 @@ struct RootView: View {
         HStack(spacing: 8) {
             countText.font(.system(size: Design.caption)).foregroundStyle(.secondary)
             Spacer()
-            if !showingRecents {
+            if showingShelf {
+                if !store.shelfEntries.isEmpty {
+                    Button(action: { store.clearShelf(); clearSelection() }) {
+                        Text("清空暂存").font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            } else if !showingRecents {
                 Button(action: { isShowingImporter = true }) {
                     Image(systemName: "folder.badge.plus").font(.system(size: 11, weight: .medium))
                         .frame(width: 22, height: 22).contentShape(Rectangle())
@@ -761,9 +933,13 @@ struct RootView: View {
     }
 
     private func openEntry(_ entry: BookmarkEntry) {
-        guard let ti = tabIndex(of: entry.id) else { return }
-        BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
-        store.recordOpen(entry.id, in: ti); flash(entry.id)
+        if let ti = tabIndex(of: entry.id) {
+            BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
+            store.recordOpen(entry.id, in: ti); flash(entry.id)
+        } else {
+            BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
+            flash(entry.id)
+        }
     }
 }
 
@@ -779,6 +955,7 @@ struct EntryRow: View {
     var isFlashing = false
     /// Optional source-tab label shown in cross-tab views (recents).
     var sourceLabel: String? = nil
+    var onRemove: (() -> Void)? = nil
     var onReorderDrop: ([NSItemProvider]) -> Bool = { _ in false }
     @State private var isHovered = false
     @State private var isDropTargeted = false
@@ -795,6 +972,15 @@ struct EntryRow: View {
                 Text(sourceLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer()
+            if let onRemove, isHovered {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("从暂存架移除")
+            }
         }.padding(.vertical, 3).padding(.horizontal, 6)
         .background(isFlashing ? Color.accentColor.opacity(Design.flashAlpha)
             : isSelected ? Color.accentColor.opacity(Design.selectedAlpha)
@@ -821,6 +1007,7 @@ struct GridEntryItem: View {
     let entry: BookmarkEntry
     var isSelected = false
     var isFlashing = false
+    var onRemove: (() -> Void)? = nil
     var onReorderDrop: ([NSItemProvider]) -> Bool = { _ in false }
     @State private var isHovered = false
     @State private var isDropTargeted = false
@@ -830,7 +1017,16 @@ struct GridEntryItem: View {
             FileIconView(entry: entry).frame(width: 48, height: 48).frame(width: 56, height: 56)
                 .background(Color.secondary.opacity(Design.wellAlpha)).cornerRadius(Design.radiusM)
                 .overlay(alignment: .topTrailing) {
-                    if entry.isMissing {
+                    if let onRemove, isHovered {
+                        Button(action: onRemove) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .offset(x: 4, y: -4)
+                        .help("从暂存架移除")
+                    } else if entry.isMissing {
                         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundStyle(.orange)
                             .offset(x: 3, y: -3)
                     }
