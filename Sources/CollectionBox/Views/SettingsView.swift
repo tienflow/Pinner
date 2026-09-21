@@ -296,10 +296,12 @@ public struct SettingsView: View {
 
     private var todoAITab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                TodoSettingsView()
+            VStack(alignment: .leading, spacing: 20) {
+                sectionCard(title: "模型服务配置", icon: "sparkles") {
+                    TodoSettingsView()
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(20)
         }
     }
 

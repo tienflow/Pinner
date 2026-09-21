@@ -59,8 +59,7 @@ struct TodoSettingsView: View {
                 .font(.system(size: Design.micro))
                 .foregroundStyle(.tertiary)
         }
-        .padding(20)
-        .frame(width: 440, height: 265)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear(perform: load)
     }
 
