@@ -25,6 +25,9 @@ public struct SettingsView: View {
     @State private var currentTheme: Int = UserDefaults.standard.integer(forKey: "CollectionBox.theme")
     @State private var hotkeyRefreshID = UUID()
 
+    @AppStorage("CollectionBox.shelfTrashOriginalOnDragOut")
+    private var shelfTrashOriginalOnDragOut: Bool = false
+
     public init(initialTab: SettingsTab = .general) {
         _selectedTab = State(initialValue: initialTab)
     }
@@ -89,9 +92,9 @@ public struct SettingsView: View {
 
     private var generalTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Section: System & Launch
-                sectionCard(title: "系统与启动", icon: "power") {
+            VStack(alignment: .leading, spacing: 16) {
+                // Section: Launch
+                sectionCard(title: "启动设置", icon: "bolt") {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("开机自动启动")
@@ -107,6 +110,23 @@ public struct SettingsView: View {
                             .onChange(of: launchAtLogin) { newValue in
                                 toggleLaunchAtLogin(newValue)
                             }
+                    }
+                }
+
+                // Section: Drop Shelf Physical Move
+                sectionCard(title: "临时中转架", icon: "shippingbox") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("拖出后将源文件移至废纸篓（物理剪切）")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("从暂存架拖出文件后，自动将源文件移入废纸篓并移出暂存架，实现物理剪切；可在废纸篓中随时放回")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $shelfTrashOriginalOnDragOut)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
                     }
                 }
 

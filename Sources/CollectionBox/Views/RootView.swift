@@ -58,6 +58,8 @@ struct RootView: View {
     @State private var viewMode: ViewMode = {
         ViewMode(rawValue: UserDefaults.standard.string(forKey: "CollectionBox.viewMode") ?? "list") ?? .list
     }()
+    @AppStorage("CollectionBox.shelfTrashOriginalOnDragOut")
+    private var shelfTrashOriginalOnDragOut: Bool = false
     @State private var gridColumns = 3
     @State private var isShowingImporter = false
     @State private var dropTargeted = false
@@ -431,7 +433,9 @@ struct RootView: View {
             Text("临时中转架")
                 .font(.system(size: Design.body, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Text("拖入任意文件暂存 · 拖出即焚\n拖动松手按住 ⌘ 直接剪切，或右键选择「移动到…」")
+            Text(shelfTrashOriginalOnDragOut
+                ? "拖入任意文件暂存 · 拖出自动物理剪切\n（源文件将自动移入废纸篓，可随时放回）"
+                : "拖入任意文件暂存 · 拖出即焚\n（偏好设置通用中可开启「物理剪切」）")
                 .font(.system(size: Design.caption))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -484,7 +488,9 @@ struct RootView: View {
                 .foregroundStyle(Color.accentColor)
                 .contentShape(Rectangle())
                 .onDrag { dragAllShelfProvider() }
-                .help("按住并拖出到任意窗口（拖出自动移除；拖到 Finder 松手按住 ⌘ 可物理剪切）")
+                .help(shelfTrashOriginalOnDragOut
+                    ? "按住并拖出全部文件（外部接收后自动移入废纸篓完成物理剪切）"
+                    : "按住并拖出全部文件（拖出后自动从暂存架移除）")
 
                 Button(action: {
                     store.clearShelf()
@@ -500,12 +506,14 @@ struct RootView: View {
             }
 
             HStack(spacing: 4) {
-                Image(systemName: "info.circle")
+                Image(systemName: shelfTrashOriginalOnDragOut ? "scissors" : "info.circle")
                     .font(.system(size: 9))
-                Text("拖出后自动移除 · 拖到 Finder 松手时按住 ⌘ 键物理剪切")
+                Text(shelfTrashOriginalOnDragOut
+                    ? "物理剪切模式生效中 · 拖出后源文件自动移入废纸篓"
+                    : "拖出后自动移除暂存 · 偏好设置中可开启物理剪切")
                     .font(.system(size: 10))
             }
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(shelfTrashOriginalOnDragOut ? Color.accentColor : Color.secondary)
             .padding(.horizontal, 2)
         }
         .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 4)
@@ -838,13 +846,13 @@ struct RootView: View {
         }
         guard let first = pairs.first else { return NSItemProvider() }
         let allIDs = store.shelfEntries.map(\.id)
-        let firstItem = ShelfURLItem(url: first.0, entryIDs: allIDs) { [weak store] ids in
-            store?.removeShelfEntries(ids)
+        let firstItem = ShelfFileNSURL(fileURL: first.0, entryIDs: allIDs) { [weak store] ids, url in
+            handleShelfItemConsumed(entryIDs: ids, fileURL: url)
         }
         let provider = NSItemProvider(object: firstItem)
         for pair in pairs.dropFirst() {
-            let item = ShelfURLItem(url: pair.0, entryIDs: allIDs) { [weak store] ids in
-                store?.removeShelfEntries(ids)
+            let item = ShelfFileNSURL(fileURL: pair.0, entryIDs: allIDs) { [weak store] ids, url in
+                handleShelfItemConsumed(entryIDs: ids, fileURL: url)
             }
             provider.registerObject(item, visibility: .all)
         }
@@ -872,13 +880,13 @@ struct RootView: View {
 
             if let first = pairs.first {
                 let idsToConsume = pairs.map(\.1)
-                let firstItem = ShelfURLItem(url: first.0, entryIDs: idsToConsume) { [weak store] ids in
-                    store?.removeShelfEntries(ids)
+                let firstItem = ShelfFileNSURL(fileURL: first.0, entryIDs: idsToConsume) { [weak store] ids, url in
+                    handleShelfItemConsumed(entryIDs: ids, fileURL: url)
                 }
                 provider = NSItemProvider(object: firstItem)
                 for pair in pairs.dropFirst() {
-                    let item = ShelfURLItem(url: pair.0, entryIDs: idsToConsume) { [weak store] ids in
-                        store?.removeShelfEntries(ids)
+                    let item = ShelfFileNSURL(fileURL: pair.0, entryIDs: idsToConsume) { [weak store] ids, url in
+                        handleShelfItemConsumed(entryIDs: ids, fileURL: url)
                     }
                     provider.registerObject(item, visibility: .all)
                 }
@@ -1084,6 +1092,20 @@ struct RootView: View {
         store.addEntries(from: urls, to: tabIndex)
         store.removeShelfEntries(entryIDs)
         pruneSelection()
+    }
+
+    private func handleShelfItemConsumed(entryIDs: [UUID], fileURL: URL) {
+        store.removeShelfEntries(entryIDs)
+        pruneSelection()
+
+        if shelfTrashOriginalOnDragOut {
+            do {
+                try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+                NSLog("[Pinner] 暂存物理剪切完成：已将源文件移至废纸篓: \(fileURL.path)")
+            } catch {
+                NSLog("[Pinner] 移入废纸篓失败: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

@@ -655,30 +655,31 @@ func testShelfOperations() throws {
 }
 
 @MainActor
-func testShelfAutoRemoveItem() async {
+func testShelfFileNSURL() async {
     let file = makeTempFile()
     let id1 = UUID()
     let id2 = UUID()
 
     final class ResultBox: @unchecked Sendable {
         var ids: [UUID] = []
+        var url: URL?
         let lock = NSLock()
-        func append(_ newIDs: [UUID]) {
+        func record(_ newIDs: [UUID], _ newURL: URL) {
             lock.lock()
             ids.append(contentsOf: newIDs)
+            url = newURL
             lock.unlock()
         }
     }
 
     let box = ResultBox()
-    let item = ShelfURLItem(url: file, entryIDs: [id1, id2]) { ids in
-        box.append(ids)
+    let item = ShelfFileNSURL(fileURL: file, entryIDs: [id1, id2]) { ids, u in
+        box.record(ids, u)
     }
 
-    let types = ShelfURLItem.writableTypeIdentifiersForItemProvider
-    check(types.contains("public.file-url"), "ShelfURLItem registers public.file-url")
-    check(types.contains("public.url"), "ShelfURLItem registers public.url")
-    check(box.ids.isEmpty, "ShelfURLItem initially unconsumed")
+    check(item.isFileURL, "ShelfFileNSURL is a file URL")
+    check(item.path == file.path, "ShelfFileNSURL path matches file")
+    check(box.ids.isEmpty, "ShelfFileNSURL initially unconsumed")
 
     let provider = NSItemProvider(object: item)
 
@@ -688,10 +689,10 @@ func testShelfAutoRemoveItem() async {
         }
     }
 
-    // Yield to allow main queue callback to execute
-    await Task.yield()
+    try? await Task.sleep(nanoseconds: 700_000_000)
 
-    check(box.ids == [id1, id2], "ShelfURLItem passes entry IDs on consumption")
+    check(box.ids == [id1, id2], "ShelfFileNSURL passes entry IDs on consumption")
+    check(box.url?.path == file.path, "ShelfFileNSURL passes fileURL on consumption")
 
     // Second call should not trigger onConsumed again
     await withCheckedContinuation { continuation in
@@ -699,8 +700,8 @@ func testShelfAutoRemoveItem() async {
             continuation.resume()
         }
     }
-    await Task.yield()
-    check(box.ids.count == 2, "ShelfURLItem consumption is idempotent")
+    try? await Task.sleep(nanoseconds: 700_000_000)
+    check(box.ids.count == 2, "ShelfFileNSURL consumption is idempotent")
 }
 
 // MARK: - Entry Point
@@ -732,7 +733,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testTodoSettingsStoreStorage()
     testReminderCompletionModel()
     try? testShelfOperations()
-    await testShelfAutoRemoveItem()
+    await testShelfFileNSURL()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value
