@@ -11,9 +11,9 @@
 macOS GUI 应用不能用 `./app &` 后台启动——shell 会话结束时子进程会被 SIGHUP 杀掉，表现为启动后几秒就崩溃。正确方式：
 
 ```
-# 杀掉旧进程 + ad-hoc 签名（解决 Gatekeeper 每次弹窗问题）
+# 杀掉旧进程 + 本地证书签名（解决 Gatekeeper 弹窗与 TCC 权限重置问题）
 pkill -f CollectionBoxApp 2>/dev/null
-codesign --force --deep --sign - .build/debug/CollectionBoxApp  # 或 release 路径
+codesign --force --deep --sign "Pinner Development" .build/debug/CollectionBoxApp  # 或 release 路径
 
 # 构建 + 启动
 swift build -c release --product CollectionBoxApp && open .build/release/CollectionBoxApp
@@ -30,7 +30,7 @@ killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner"
 
 ⚠️ `pkill -f CollectionBoxApp` 只能匹配开发构建；替换 `/Applications/Pinner.app` 前必须先杀安装实例，否则 `open` 会与旧实例并存，菜单栏出现两个图标。
 
-`open` 通过 LaunchServices 启动应用，进程独立于终端。每次 `swift build` 后必须重新 `codesign`，否则 macOS Gatekeeper 会弹窗拦截。
+`open` 通过 LaunchServices 启动应用，进程独立于终端。签名必须使用本地代码签名证书 `Pinner Development`（避免使用 Ad-hoc `sign -` 导致 CDHash 每次变更而丢失提醒事项等 TCC 隐私权限）。
 
 构建依赖：DSH 统计需要 Homebrew 的 zstd（`brew install zstd`），缺失时链接阶段报 `-lzstd` 找不到。
 
@@ -51,7 +51,7 @@ SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift run Pinner
 # 标准重装并平滑重启流程
 SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build -c release --product CollectionBoxApp
 cp .build/release/CollectionBoxApp Pinner.app/Contents/MacOS/Pinner
-codesign --force --deep --sign - Pinner.app
+codesign --force --deep --sign "Pinner Development" Pinner.app
 rm -rf /Applications/Pinner.app && cp -R Pinner.app /Applications/
 killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner" || true
 sleep 1
