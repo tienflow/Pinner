@@ -726,13 +726,65 @@ func testWorkBuddyScanCache() {
 @MainActor
 func testGeminiScanCache() {
     let service = GeminiStatsService()
-    let res1 = service.fetchStatsAndTrend(for: .today)
-    let res2 = service.fetchStatsAndTrend(for: .today)
-    check(res1.stats.currentTokens == res2.stats.currentTokens, "gemini scan cache preserves token count")
+
+    // 1. 确保首次或全量调用后磁盘持久化缓存文件存在且有效
+    _ = service.fetchStatsAndTrend(for: .today)
+    let cachePath = GeminiStatsService.cacheFileURL.path
+    check(FileManager.default.fileExists(atPath: cachePath), "gemini disk cache file exists on disk")
+
+    if let data = try? Data(contentsOf: GeminiStatsService.cacheFileURL),
+       let cacheDict = try? JSONDecoder().decode([String: GeminiStatsService.DiskFileCacheEntry].self, from: data) {
+        check(!cacheDict.isEmpty, "gemini disk cache file decodes with non-empty entries (\(cacheDict.count) files)")
+    } else {
+        check(false, "gemini disk cache file decodes valid JSON")
+    }
+
+    // 2. 模拟冷加载（清空内存缓存，必须读磁盘 JSON 反序列化）vs 热缓存（纯内存复用）时延与数据等价
+    GeminiStatsService.resetMemoryCacheForTesting()
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let resCold = service.fetchStatsAndTrend(for: .today)
+    let dCold = CFAbsoluteTimeGetCurrent() - t0
+
+    let t1 = CFAbsoluteTimeGetCurrent()
+    let resWarm = service.fetchStatsAndTrend(for: .today)
+    let dWarm = CFAbsoluteTimeGetCurrent() - t1
+
+    check(resCold.stats.currentTokens == resWarm.stats.currentTokens, "gemini scan cache preserves token count (\(resCold.stats.currentTokens))")
+    check(resCold.trend.count == resWarm.trend.count, "gemini scan cache preserves trend points (\(resCold.trend.count))")
+    check(dWarm < max(0.05, dCold * 0.5), "gemini hot scan is faster than cold scan (cold \(String(format: "%.3f", dCold))s, warm \(String(format: "%.3f", dWarm))s)")
+
+    // 3. 验证 collectRecords 聚合的一致性与非空保护
+    let records1 = service.collectRecords(sinceUnix: 0)
+    let records2 = service.collectRecords(sinceUnix: 0)
+    check(records1.count == records2.count && !records1.isEmpty, "gemini collectRecords preserves record count (\(records1.count))")
+}
+
+@MainActor
+func testThumbnailDoesNotHitIconCache() throws {
+    // Icons and thumbnails used to share one NSCache key. The row always paints
+    // the icon first, so the thumbnail lookup hit that entry and grid cells
+    // never showed a content preview.
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
+                                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                        isPlanar: false, colorSpaceName: .deviceRGB,
+                                        bytesPerRow: 0, bitsPerPixel: 0),
+          let data = bitmap.representation(using: .png, properties: [:]) else {
+        check(false, "thumbnail regression fixture produced a PNG")
+        return
+    }
+    let png = FileManager.default.temporaryDirectory.appendingPathComponent("pinner-\(UUID().uuidString).png")
+    try data.write(to: png)
+    defer { try? FileManager.default.removeItem(at: png) }
+
+    let item = try entry(for: png)
+    _ = FileIconWrap.baseIcon(for: item)
+
+    var completedSynchronously = false
+    FileIconWrap.loadThumbnailIfAvailable(for: item) { _ in completedSynchronously = true }
+    check(!completedSynchronously, "warmed icon cache does not satisfy a thumbnail lookup")
 }
 
 // MARK: - Entry Point
-
 let allPassed = await Task { @MainActor () -> Bool in
     testTabCRUD()
     testMoveTab()
@@ -748,6 +800,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     try? testPersistenceRoundtrip()
     try? testLegacyJSONCompatibility()
     try? testBookmarkServiceHelpers()
+    try? testThumbnailDoesNotHitIconCache()
     testAgentSelectionPersistence()
     testMenuBarMenuFollowsSelection()
     testSettingsSubmenuContents()

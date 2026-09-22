@@ -72,7 +72,7 @@ final class GeminiStatsService: Sendable {
         }
     }
 
-    private struct DiskFileCacheEntry: Codable, Sendable {
+    struct DiskFileCacheEntry: Codable, Sendable {
         let mtime: TimeInterval
         let size: Int64
         let steps: [StepTokenUsage]
@@ -89,13 +89,19 @@ final class GeminiStatsService: Sendable {
     private static let cacheLock = NSLock()
     private static var persistentCache: [String: DiskFileCacheEntry]?
 
-    private static let cacheFileURL: URL = {
+    static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("gemini_scan_cache.json")
     }()
+
+    static func resetMemoryCacheForTesting() {
+        cacheLock.lock()
+        persistentCache = nil
+        cacheLock.unlock()
+    }
 
     private static func getDiskCache() -> [String: DiskFileCacheEntry] {
         cacheLock.lock()
