@@ -704,6 +704,25 @@ func testShelfFileNSURL() async {
     check(box.ids.count == 2, "ShelfFileNSURL consumption is idempotent")
 }
 
+@MainActor
+func testPinyinMatcher() {
+    check(PinyinMatcher.matches(query: "周报", in: "项目周报.xlsx"), "pinyin exact match")
+    check(PinyinMatcher.matches(query: "zhoubao", in: "项目周报.xlsx"), "pinyin full pinyin match")
+    check(PinyinMatcher.matches(query: "zb", in: "项目周报.xlsx"), "pinyin initials match")
+    check(PinyinMatcher.matches(query: "xmzb", in: "项目周报.xlsx"), "pinyin multi-word initials match")
+    check(PinyinMatcher.matches(query: "pnr", in: "PinnerApp"), "pinyin subsequence fuzzy match")
+    check(!PinyinMatcher.matches(query: "xyz", in: "项目周报.xlsx"), "pinyin mismatch returns false")
+    check(PinyinMatcher.matches(query: "", in: "任意文本"), "pinyin empty query matches all")
+}
+
+@MainActor
+func testWorkBuddyScanCache() {
+    let service = WorkBuddyStatsService()
+    let records1 = service.collectRecords(sinceMs: 0)
+    let records2 = service.collectRecords(sinceMs: 0)
+    check(records1.count == records2.count, "workbuddy scan cache preserves record count")
+}
+
 // MARK: - Entry Point
 
 let allPassed = await Task { @MainActor () -> Bool in
@@ -734,6 +753,8 @@ let allPassed = await Task { @MainActor () -> Bool in
     testReminderCompletionModel()
     try? testShelfOperations()
     await testShelfFileNSURL()
+    testPinyinMatcher()
+    testWorkBuddyScanCache()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

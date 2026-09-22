@@ -8,14 +8,14 @@
 - **拖拽收藏**：从 Finder 拖文件或文件夹到面板，自动收藏（同一路径自动去重）；也可点击面板底部 + 按钮选择文件添加
 - **分类管理**：多个 Tab 收藏夹，支持创建、重命名、删除、拖拽调整顺序、在收藏夹之间移动文件
 - **置顶文件**：右键置顶常用文件，置顶区始终显示在顶部
-- **快速打开**：双击或选中后按空格 / 回车打开文件
-- **快速预览**：选中文件后按 ⌘Y 使用 Quick Look 预览
+- **快速打开**：双击或回车打开文件
+- **快速预览**：选中文件后按空格键或 ⌘Y 使用 Quick Look 预览（预览窗跟随方向键切换实时更新）
 - **多选操作**：⌘ 点击逐个加选、⇧ 点击范围选择，支持批量移动 / 移除，Delete 键删除选中项
 - **拖出文件**：把面板中的条目拖到其他应用（邮件、聊天窗口等）直接作为文件使用
-- **列表 / 宫格**：两种视图模式自由切换，宫格模式下图片 / PDF 显示缩略图
+- **列表 / 宫格**：两种视图模式自由切换，宫格模式下利用 macOS `QLThumbnailGenerator` 硬件加速生成高保真缩略图
 - **排序**：按自定义（拖拽顺序）、名称、添加时间、上次打开时间、文件类型排序，后两者带分区标题
 - **拖拽排序**：按住条目拖到目标位置落下即可调整顺序，自动切换为「自定义」排序；拖到面板外仍是把文件拖出使用
-- **搜索**：实时过滤当前收藏夹；输入关键词后自动跨所有收藏夹搜索并按收藏夹分组
+- **搜索**：实时过滤当前收藏夹，内置高效拼音引擎，支持全拼、拼音首字母简拼（如输入 `zb` 匹配 `项目周报.xlsx`）及子序列模糊匹配；输入关键词后自动跨所有收藏夹搜索并按收藏夹分组
 - **最近访问**：跨收藏夹聚合最近打开的文件，按今天 / 最近 7 天 / 本月 / 更早分组，并标注来源收藏夹
 - **右键菜单**：置顶 / 取消置顶、快速预览、拷贝路径、在终端中打开、在 Finder 中显示、重命名、移动到其他收藏夹、移除
 - **自动刷新**：每次展开面板自动验证所有 bookmark，失效文件（含废纸篓）标灰显示「未找到」并保留，文件恢复后自动清除标记
@@ -49,7 +49,7 @@
 - **自然语言解析**：一句话 → 结构化任务（标题 / 到期 / 优先级 / 列表），由 OpenAI 兼容 API（自带 Key，Base URL / API Key / 模型名可配置，本地持久化无系统弹窗）解析后写入 macOS 提醒事项
 - **预览确认卡**：解析结果先浮出可编辑卡片，四字段均可改，⏎ 保存、⎋ 丢弃
 - **失败降级**：断网 / 超时（5s）/ 响应不可解析时，原文直接作为任务标题保存（无到期日），不阻断录入
-- **今日概览**：面板下半区实时显示「今天 + 已逾期」未完成条目，可直接勾选标记完成，点击外部按钮跳转提醒事项 App
+- **今日概览**：面板下半区实时显示「今天 + 已逾期」未完成条目，可直接勾选标记完成，支持右键快捷推迟（推迟到明天 09:00、推迟到下周一 09:00、清除到期日）、跳转系统提醒事项或直接删除
 - **快捷键直达**：可自定义全局快捷键（默认未设置，可于偏好设置随时录制）
 
 **通用与偏好设置**
@@ -79,7 +79,7 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent）
-│   ├── Services/               # BookmarkService + OTPService + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
+│   ├── Services/               # BookmarkService + OTPService + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
 │   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
 │   └── AppKit/                 # AppKit 集成
@@ -128,7 +128,8 @@ Sources/
 | ↑ ↓ ← → | 选择文件（宫格模式下左右键按列移动） |
 | Tab | 切换到下一个收藏夹 |
 | Shift + Tab | 切换到上一个收藏夹 |
-| 空格 / 回车 | 打开选中文件 |
+| 空格 | Quick Look 预览选中文件（跟随方向键切换实时更新） |
+| 回车 | 打开选中文件 |
 | ⌘Y | Quick Look 预览选中文件 |
 | ⌘Z | 撤销移除 / 删除操作 |
 | Delete | 移除选中的文件 |

@@ -27,7 +27,7 @@ final class DshStatsService {
             .appendingPathComponent(".dsh/sessions")
     }
 
-    private struct Record {
+    private struct Record: Codable, Sendable {
         let tsMs: Int64
         let tokens: Int
         let freshInput: Int
@@ -43,6 +43,12 @@ final class DshStatsService {
         }
     }
 
+    private struct DiskFileCacheEntry: Codable, Sendable {
+        let mtime: TimeInterval
+        let size: Int64
+        let records: [Record]
+    }
+
     // A full scan decompresses every session file; cache the newest scan
     // briefly so dashboard reloads share it (same pattern as WorkBuddy).
     private struct ScanCache {
@@ -53,6 +59,46 @@ final class DshStatsService {
 
     private static let cacheLock = NSLock()
     private static var scanCache: ScanCache?
+    private static var persistentCache: [String: DiskFileCacheEntry]?
+
+    private static let cacheFileURL: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+        let dir = base.appendingPathComponent("com.tienyeung.Pinner")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("dsh_scan_cache.json")
+    }()
+
+    private static func getDiskCache() -> [String: DiskFileCacheEntry] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let existing = persistentCache { return existing }
+        let loaded = loadDiskCache()
+        persistentCache = loaded
+        return loaded
+    }
+
+    private static func loadDiskCache() -> [String: DiskFileCacheEntry] {
+        guard let data = try? Data(contentsOf: cacheFileURL),
+              let dict = try? JSONDecoder().decode([String: DiskFileCacheEntry].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private static func updateDiskCache(_ newEntries: [String: DiskFileCacheEntry]) {
+        guard !newEntries.isEmpty else { return }
+        cacheLock.lock()
+        var current = persistentCache ?? loadDiskCache()
+        for (k, v) in newEntries {
+            current[k] = v
+        }
+        persistentCache = current
+        cacheLock.unlock()
+        if let data = try? JSONEncoder().encode(current) {
+            try? data.write(to: cacheFileURL, options: .atomic)
+        }
+    }
 
     struct PublicRecord {
         let tsMs: Int64
@@ -88,6 +134,9 @@ final class DshStatsService {
         guard let workspaceDirs = try? FileManager.default.contentsOfDirectory(
             at: sessionsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
 
+        let diskCache = Self.getDiskCache()
+        var newEntries: [String: DiskFileCacheEntry] = [:]
+
         for workspace in workspaceDirs where workspace.hasDirectoryPath {
             let projectTitle = decodeWorkspaceName(workspace.lastPathComponent)
             guard let sessionDirs = try? FileManager.default.contentsOfDirectory(
@@ -100,10 +149,21 @@ final class DshStatsService {
                 }
                 let sessionId = sessionDir.lastPathComponent
                 guard let files = try? FileManager.default.contentsOfDirectory(
-                    at: sessionDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { continue }
+                    at: sessionDir, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey], options: [.skipsHiddenFiles]) else { continue }
 
                 for file in files where file.lastPathComponent.hasSuffix(".jsonl.zstd") {
+                    let filePath = file.path
+                    let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                    let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+                    let fileSize = Int64(values?.fileSize ?? 0)
+
+                    if let entry = diskCache[filePath], entry.mtime == mtime && entry.size == fileSize {
+                        records.append(contentsOf: entry.records.filter { $0.tsMs >= sinceMs })
+                        continue
+                    }
+
                     guard let content = Self.decompress(file) else { continue }
+                    var fileRecords: [Record] = []
                     for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
                         guard line.contains("\"usage\""),
                               let data = line.data(using: .utf8),
@@ -114,7 +174,6 @@ final class DshStatsService {
 
                         guard let timeNumber = d["time"] as? NSNumber else { continue }
                         let tsMs = timeNumber.int64Value
-                        if tsMs < sinceMs { continue }
 
                         var model: String?
                         if let message = payload["message"] as? [String: Any],
@@ -123,7 +182,7 @@ final class DshStatsService {
                             model = m
                         }
 
-                        records.append(Record(
+                        fileRecords.append(Record(
                             tsMs: tsMs,
                             tokens: (usage["totalTokens"] as? NSNumber)?.intValue ?? 0,
                             freshInput: (usage["inputTokens"] as? NSNumber)?.intValue ?? 0,
@@ -134,8 +193,15 @@ final class DshStatsService {
                             title: projectTitle
                         ))
                     }
+
+                    newEntries[filePath] = DiskFileCacheEntry(mtime: mtime, size: fileSize, records: fileRecords)
+                    records.append(contentsOf: fileRecords.filter { $0.tsMs >= sinceMs })
                 }
             }
+        }
+
+        if !newEntries.isEmpty {
+            Self.updateDiskCache(newEntries)
         }
         return records
     }

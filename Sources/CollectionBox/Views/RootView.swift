@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import ImageIO
 import PDFKit
+import QuickLookThumbnailing
 
 enum ViewMode: String, CaseIterable { case list, grid }
 enum SortOrder: String, CaseIterable {
@@ -84,16 +85,16 @@ struct RootView: View {
 
     private var allFiltered: [BookmarkEntry] {
         guard let entries = currentTab?.entries else { return [] }
-        return searchText.isEmpty ? entries : entries.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
+        return searchText.isEmpty ? entries : entries.filter { PinyinMatcher.matches(query: searchText, in: $0.displayName) }
     }
 
     /// Cross-tab search matches, current tab first, then the rest in tab order.
     private var searchMatches: [(entry: BookmarkEntry, tabIndex: Int)] {
         guard isSearching, let ci = currentTabIndex else { return [] }
         var out: [(BookmarkEntry, Int)] = []
-        out += store.tabs[ci].entries.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }.map { ($0, ci) }
+        out += store.tabs[ci].entries.filter { PinyinMatcher.matches(query: searchText, in: $0.displayName) }.map { ($0, ci) }
         for i in store.tabs.indices where i != ci {
-            out += store.tabs[i].entries.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }.map { ($0, i) }
+            out += store.tabs[i].entries.filter { PinyinMatcher.matches(query: searchText, in: $0.displayName) }.map { ($0, i) }
         }
         return out
     }
@@ -778,7 +779,10 @@ struct RootView: View {
         case "down": moveSelection(1, in: entries)
         case "left": moveSelection(viewMode == .grid ? -max(1, gridColumns) : -1, in: entries)
         case "right": moveSelection(viewMode == .grid ? max(1, gridColumns) : 1, in: entries)
-        case "space", "return":
+        case "space":
+            let ids = selectedEntryIDs.isEmpty ? (selectedEntryID.map { [$0] } ?? []) : orderedSelectedIDs
+            if !ids.isEmpty { onQuickLook?(ids) }
+        case "return":
             if let id = selectedEntryID, let e = entries.first(where: { $0.id == id }) {
                 openEntry(e)
             }
@@ -796,6 +800,7 @@ struct RootView: View {
         selectedEntryID = entries[next].id
         selectedEntryIDs = [entries[next].id]
         selectionAnchor = selectedEntryID
+        NotificationCenter.default.post(name: .quickLookSelectionDidChange, object: nil, userInfo: ["ids": [entries[next].id]])
     }
 
     // MARK: - Flash + Drop
@@ -1111,7 +1116,11 @@ struct RootView: View {
 
 // MARK: - Notification
 
-extension Notification.Name { static let collectionBoxKeyDown = Notification.Name("CollectionBoxKeyDown"); static let panelShouldCollapse = Notification.Name("PanelShouldCollapse") }
+extension Notification.Name {
+    static let collectionBoxKeyDown = Notification.Name("CollectionBoxKeyDown")
+    static let panelShouldCollapse = Notification.Name("PanelShouldCollapse")
+    static let quickLookSelectionDidChange = Notification.Name("QuickLookSelectionDidChange")
+}
 
 // MARK: - Entry Row (List)
 
@@ -1271,20 +1280,40 @@ struct FileIconWrap: NSViewRepresentable {
         return image
     }
 
-    /// Decodes an image/PDF thumbnail off the main thread and caches it by path.
+    /// Decodes an image/PDF/media/document thumbnail via system QLThumbnailGenerator
+    /// off the main thread with fallback, and caches it by path.
     static func loadThumbnailIfAvailable(for entry: BookmarkEntry, completion: @escaping (NSImage) -> Void) {
-        let ext = (entry.displayName as NSString).pathExtension.lowercased()
-        guard thumbnailableExtensions.contains(ext),
-              let path = cachedResolvedPath(for: entry) else { return }
+        guard let path = cachedResolvedPath(for: entry) else { return }
         let pathKey = path as NSString
         if let cached = iconCache.object(forKey: pathKey) {
             completion(cached)
             return
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard let thumb = Self.thumbnail(at: path, ext: ext, maxPixel: 256) else { return }
-            iconCache.setObject(thumb, forKey: pathKey)
-            DispatchQueue.main.async { completion(thumb) }
+
+        let url = URL(fileURLWithPath: path)
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: CGSize(width: 128, height: 128),
+            scale: scale,
+            representationTypes: .thumbnail
+        )
+
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+            if let rep = rep {
+                let thumb = rep.nsImage
+                iconCache.setObject(thumb, forKey: pathKey)
+                DispatchQueue.main.async { completion(thumb) }
+            } else {
+                let ext = (entry.displayName as NSString).pathExtension.lowercased()
+                if thumbnailableExtensions.contains(ext) {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        guard let thumb = Self.thumbnail(at: path, ext: ext, maxPixel: 256) else { return }
+                        iconCache.setObject(thumb, forKey: pathKey)
+                        DispatchQueue.main.async { completion(thumb) }
+                    }
+                }
+            }
         }
     }
 

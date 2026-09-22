@@ -306,8 +306,76 @@ struct TodoCaptureView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { openRemindersApp() }
+            .contextMenu {
+                Button {
+                    snoozeTask(item, to: tomorrowDate)
+                } label: {
+                    Label("推迟到明天 (09:00)", systemImage: "clock.arrow.circlepath")
+                }
+                Button {
+                    snoozeTask(item, to: nextWeekDate)
+                } label: {
+                    Label("推迟到下周一 (09:00)", systemImage: "calendar.badge.clock")
+                }
+                if item.dueDate != nil {
+                    Button {
+                        snoozeTask(item, to: nil)
+                    } label: {
+                        Label("清除到期时间", systemImage: "xmark.circle")
+                    }
+                }
+                Divider()
+                Button {
+                    openRemindersApp()
+                } label: {
+                    Label("在提醒事项中打开", systemImage: "arrow.up.forward.app")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    deleteTask(item)
+                } label: {
+                    Label("删除待办", systemImage: "trash")
+                }
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
+    }
+
+    private func snoozeTask(_ item: ReminderItem, to date: Date?) {
+        do {
+            try service.updateTaskDueDate(id: item.id, newDue: date)
+            showStatus(date != nil ? "已推迟：\(item.title)" : "已清除到期时间", positive: true)
+            Task { await reloadOverview() }
+        } catch {
+            showStatus("推迟失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func deleteTask(_ item: ReminderItem) {
+        do {
+            try service.deleteTask(id: item.id)
+            withAnimation(.easeOut(duration: 0.2)) {
+                items.removeAll { $0.id == item.id }
+            }
+            showStatus("已删除：\(item.title)", positive: true)
+        } catch {
+            showStatus("删除失败：\(error.localizedDescription)")
+        }
+    }
+
+    private var tomorrowDate: Date {
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+    }
+
+    private var nextWeekDate: Date {
+        let cal = Calendar.current
+        let now = Date()
+        let weekday = cal.component(.weekday, from: now)
+        let daysUntilMonday = (9 - weekday) % 7 == 0 ? 7 : (9 - weekday) % 7
+        let nextMonday = cal.date(byAdding: .day, value: daysUntilMonday, to: now) ?? now
+        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: nextMonday) ?? nextMonday
     }
 
     // MARK: - Status Bar

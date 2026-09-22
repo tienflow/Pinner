@@ -15,6 +15,65 @@ struct StatsDashboardView: View {
         }
     }
 
+    struct RankRow: Identifiable, Sendable {
+        let idx: Int; let name: String; let tokens: Int; let share: Double
+        var id: Int { idx }
+    }
+
+    struct DayRow: Identifiable, Sendable {
+        let id: String
+        let date: String
+        let total: Int
+        let fresh: Int
+        let cached: Int
+        let output: Int
+        let sessions: Int
+    }
+
+    struct SessionRow: Identifiable, Sendable {
+        let id: String
+        let title: String
+        let agent: StatsAgent
+        let tokens: Int
+        let turns: Int
+    }
+
+    struct ModelRankRow: Identifiable, Sendable {
+        let id: String
+        let name: String
+        let agents: String
+        let tokens: Int
+        let sessions: Int
+    }
+
+    struct DashboardSnapshot: Sendable {
+        let d7Tokens: Int
+        let d30Tokens: Int
+        let dailyAvgTokens: Int
+        let allSessionsCount: Int
+        let topModels: [RankRow]
+        let startedText: String
+        let activeDaysCount: Int
+        let heatmapColumns: [[Date]]
+        let heatmapDaily: [Date: Int]
+        let heatmapMaxDay: Int
+        let trendDays: [Date]
+        let trendValues: [Int]
+        let trendMax: Int
+
+        let inRangeTotalTokens: Int
+        let freshInput: Int
+        let cachedInput: Int
+        let outputTokens: Int
+        let cacheHitRate: Double
+        let hasCodexNotice: Bool
+        let agentTokens: [StatsAgent: Int]
+        let agentModelCounts: [StatsAgent: Int]
+        let dayRows: [DayRow]
+        let sessionRows: [SessionRow]
+        let modelRankRows: [ModelRankRow]
+    }
+
     @State private var range: DashRange = .today
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @State private var customEnd = Date()
@@ -31,6 +90,7 @@ struct StatsDashboardView: View {
     @State private var modelSortAsc: Bool = false
     @State private var heatHoverText: String?
     @State private var trendHoverText: String?
+    @State private var snapshot: DashboardSnapshot?
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
     private let service = StatsDashboardService.shared
@@ -43,10 +103,6 @@ struct StatsDashboardView: View {
         StatsAgent.allCases.filter { enabledAgents.contains($0) }
     }
 
-    private var enabledRecords: [UnifiedUsageRecord] {
-        allRecords.filter { enabledAgents.contains($0.agent) }
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             sidebar
@@ -56,11 +112,9 @@ struct StatsDashboardView: View {
         }
         .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
         .onAppear { reload() }
-        .onChange(of: range) { _, newRange in
-            if newRange != .custom { reload() }
-        }
-        .onChange(of: customStart) { _, _ in if range == .custom { reload() } }
-        .onChange(of: customEnd) { _, _ in if range == .custom { reload() } }
+        .onChange(of: range) { _, _ in updateSnapshot() }
+        .onChange(of: customStart) { _, _ in if range == .custom { updateSnapshot() } }
+        .onChange(of: customEnd) { _, _ in if range == .custom { updateSnapshot() } }
         .onChange(of: enabledAgents) { _, _ in reload() }
     }
 
@@ -105,19 +159,11 @@ struct StatsDashboardView: View {
     }
 
     private var quickStats: some View {
-        let all = enabledRecords
-        let now = Date()
-        let cal = Calendar.current
-        let d7 = all.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
-        let d30 = all.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 30 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
-        let activeDays = Set(all.map { cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.tsMs) / 1000)) }).count
-        let dailyAvg = activeDays > 0 ? all.reduce(0) { $0 + $1.tokens } / activeDays : 0
-
-        return HStack(spacing: 6) {
-            miniStat(WorkBuddyStats.formatTokens(d7), "7天")
-            miniStat(WorkBuddyStats.formatTokens(d30), "30天")
-            miniStat(WorkBuddyStats.formatTokens(dailyAvg), "日均")
-            miniStat("\(Set(all.map { "\($0.agent):\($0.sessionId)" }).count)", "会话")
+        HStack(spacing: 6) {
+            miniStat(WorkBuddyStats.formatTokens(snapshot?.d7Tokens ?? 0), "7天")
+            miniStat(WorkBuddyStats.formatTokens(snapshot?.d30Tokens ?? 0), "30天")
+            miniStat(WorkBuddyStats.formatTokens(snapshot?.dailyAvgTokens ?? 0), "日均")
+            miniStat("\(snapshot?.allSessionsCount ?? 0)", "会话")
         }
     }
 
@@ -133,19 +179,10 @@ struct StatsDashboardView: View {
     }
 
     private var modelRanking: some View {
-        struct RankRow: Identifiable {
-            let idx: Int; let name: String; let tokens: Int; let share: Double
-            var id: Int { idx }
-        }
-        let total = enabledRecords.reduce(0) { $0 + $1.tokens }
-        let rows = mergedModelGroups(enabledRecords)
-            .prefix(5).enumerated()
-            .map { i, g in RankRow(idx: i + 1, name: g.name, tokens: g.tokens,
-                                   share: total > 0 ? Double(g.tokens) / Double(total) * 100 : 0) }
-
+        let rows = snapshot?.topModels ?? []
         return VStack(alignment: .leading, spacing: 7) {
             if rows.isEmpty {
-                placeholder("正在扫描…")
+                placeholder(loadedAgents.count < visibleAgents.count ? "正在扫描…" : "暂无数据")
             } else {
                 ForEach(rows) { row in
                     HStack(spacing: 6) {
@@ -174,17 +211,10 @@ struct StatsDashboardView: View {
     }
 
     private var startedInfo: some View {
-        let cal = Calendar.current
-        let first = enabledRecords.map(\.tsMs).min()
-        let activeDays = Set(enabledRecords.map { cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.tsMs) / 1000)) }).count
-        let started: String = first.map { ts in
-            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-            return df.string(from: Date(timeIntervalSince1970: TimeInterval(ts) / 1000))
-        } ?? "—"
-        return HStack {
-            Text("起始 \(started)").font(.system(size: Design.micro)).foregroundStyle(.secondary)
+        HStack {
+            Text("起始 \(snapshot?.startedText ?? "—")").font(.system(size: Design.micro)).foregroundStyle(.secondary)
             Spacer()
-            Text("活跃 \(activeDays) 天").font(.system(size: Design.micro)).foregroundStyle(.secondary)
+            Text("活跃 \(snapshot?.activeDaysCount ?? 0) 天").font(.system(size: Design.micro)).foregroundStyle(.secondary)
         }
     }
 
@@ -200,8 +230,8 @@ struct StatsDashboardView: View {
                     Text(timeZoneLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                 }
             }
-            if enabledRecords.isEmpty {
-                placeholder("正在扫描…")
+            if snapshot?.heatmapColumns.isEmpty ?? true {
+                placeholder(loadedAgents.count < visibleAgents.count ? "正在扫描…" : "暂无数据")
             } else {
                 contributionGrid
                 HStack(spacing: 3) {
@@ -235,40 +265,21 @@ struct StatsDashboardView: View {
             let gap: CGFloat = 2
             let usable = max(120, geo.size.width - rowLabelWidth)
             let cell = max(5, floor((usable - CGFloat(maxWeeks - 1) * gap) / CGFloat(maxWeeks)))
-            let today = cal.startOfDay(for: Date())
-            let weekday = cal.component(.weekday, from: today)
-            let daysToWeekEnd = (7 - weekday) % 7
-            let gridEnd = cal.date(byAdding: .day, value: daysToWeekEnd, to: today)!
-            let gridStart = cal.date(byAdding: .day, value: -(maxWeeks * 7 - 1), to: gridEnd)!
 
-            var daily: [Date: Int] = [:]
-            for r in enabledRecords {
-                let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
-                daily[day, default: 0] += r.tokens
-            }
-            let maxDay = daily.values.max() ?? 0
-
-            var columns: [[Date]] = []
-            var cursor = gridStart
-            while cursor <= gridEnd {
-                var week: [Date] = []
-                for offset in 0..<7 {
-                    if let d = cal.date(byAdding: .day, value: offset, to: cursor) { week.append(d) }
-                }
-                columns.append(week)
-                cursor = cal.date(byAdding: .day, value: 7, to: cursor) ?? gridEnd
-            }
+            let columns = snapshot?.heatmapColumns ?? []
+            let daily = snapshot?.heatmapDaily ?? [:]
+            let maxDay = snapshot?.heatmapMaxDay ?? 0
 
             let dayFormatter = DateFormatter(); dayFormatter.dateFormat = "M/d"
             let monthFormatter = DateFormatter(); monthFormatter.dateFormat = "M月"
-            let rowNames = ["日", "一", "二", "三", "四", "五", "六"]  // gridStart is a Sunday by construction
+            let rowNames = ["日", "一", "二", "三", "四", "五", "六"]
 
             return VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: gap) {
                     Text("").frame(width: rowLabelWidth)
                     ForEach(columns.indices, id: \.self) { ci in
                         VStack(spacing: 0) {
-                            if ci == 0 || cal.component(.month, from: columns[ci][0]) != cal.component(.month, from: columns[ci - 1][0]) {
+                            if ci == 0 || (columns[ci].first != nil && columns[ci - 1].first != nil && cal.component(.month, from: columns[ci][0]) != cal.component(.month, from: columns[ci - 1][0])) {
                                 Text(monthFormatter.string(from: columns[ci][0]))
                                     .font(.system(size: 8)).foregroundStyle(.tertiary)
                             }
@@ -287,20 +298,22 @@ struct StatsDashboardView: View {
                         ForEach(columns.indices, id: \.self) { ci in
                             VStack(spacing: gap) {
                                 ForEach(0..<7, id: \.self) { ri in
-                                    let day = columns[ci][ri]
-                                    let tokens = daily[day] ?? 0
-                                    let hoverText = tokens > 0
-                                        ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens"
-                                        : "\(dayFormatter.string(from: day))：无用量"
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(heatColor(tokens: tokens, maxDay: maxDay))
-                                        .frame(width: cell, height: cell)
-                                        .contentShape(Rectangle())
-                                        .help(hoverText)
-                                        .onHover { hovering in
-                                            if hovering { heatHoverText = hoverText }
-                                            else if heatHoverText == hoverText { heatHoverText = nil }
-                                        }
+                                    if ri < columns[ci].count {
+                                        let day = columns[ci][ri]
+                                        let tokens = daily[day] ?? 0
+                                        let hoverText = tokens > 0
+                                            ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens"
+                                            : "\(dayFormatter.string(from: day))：无用量"
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(heatColor(tokens: tokens, maxDay: maxDay))
+                                            .frame(width: cell, height: cell)
+                                            .contentShape(Rectangle())
+                                            .help(hoverText)
+                                            .onHover { hovering in
+                                                if hovering { heatHoverText = hoverText }
+                                                else if heatHoverText == hoverText { heatHoverText = nil }
+                                            }
+                                    }
                                 }
                             }
                         }
@@ -308,8 +321,6 @@ struct StatsDashboardView: View {
                 }
             }
         }
-        // Sidebar is a fixed 300pt: usable = 300 − 20 (card padding) − 16
-        // (row labels), cell = floor((264 − 25×2) / 26) = 8 → grid ≈ 7×8 + 6×2.
         .frame(height: 96)
     }
 
@@ -326,21 +337,9 @@ struct StatsDashboardView: View {
 
     /// Daily bar chart over the last 30 days (all-time daily totals), green.
     private var sidebarTrendCard: some View {
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -29, to: Date())!)
-        var daily: [Date: Int] = [:]
-        for r in enabledRecords {
-            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
-            daily[day, default: 0] += r.tokens
-        }
-        var days: [Date] = []
-        var cursor = start
-        while cursor <= Date() {
-            days.append(cursor)
-            cursor = cal.date(byAdding: .day, value: 1, to: cursor) ?? Date()
-        }
-        let values = days.map { daily[$0] ?? 0 }
-        let maxV = values.max() ?? 0
+        let days = snapshot?.trendDays ?? []
+        let values = snapshot?.trendValues ?? []
+        let maxV = snapshot?.trendMax ?? 0
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
 
         return VStack(alignment: .leading, spacing: 6) {
@@ -351,8 +350,8 @@ struct StatsDashboardView: View {
                     Text(trendHoverText).font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.primary)
                 }
             }
-            if enabledRecords.isEmpty {
-                placeholder("正在扫描…")
+            if values.isEmpty {
+                placeholder(loadedAgents.count < visibleAgents.count ? "正在扫描…" : "暂无数据")
             } else {
                 HStack(alignment: .bottom, spacing: 2) {
                     ForEach(values.indices, id: \.self) { i in
@@ -370,9 +369,9 @@ struct StatsDashboardView: View {
                 }
                 .frame(height: 74)
                 HStack {
-                    Text(df.string(from: days.first ?? start)).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                    Text(df.string(from: days.first ?? Date())).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                     Spacer()
-                    Text(df.string(from: days.last ?? start)).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                    Text(df.string(from: days.last ?? Date())).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                 }
             }
         }
@@ -456,14 +455,11 @@ struct StatsDashboardView: View {
     }
 
     private var totalTokenHeader: some View {
-        let current = inRange
-        let total = current.reduce(0) { $0 + $1.tokens }
-        let breakdown = current.filter(\.hasBreakdown)
-        let fresh = breakdown.reduce(0) { $0 + $1.freshInput }
-        let cached = breakdown.reduce(0) { $0 + $1.cached }
-        let output = breakdown.reduce(0) { $0 + $1.output }
-        let hitRate: Double = breakdown.reduce(0) { $0 + $1.freshInput + $1.cached } > 0
-            ? Double(cached) / Double(breakdown.reduce(0) { $0 + $1.freshInput + $1.cached }) * 100 : 0
+        let total = snapshot?.inRangeTotalTokens ?? 0
+        let fresh = snapshot?.freshInput ?? 0
+        let output = snapshot?.outputTokens ?? 0
+        let hitRate = snapshot?.cacheHitRate ?? 0.0
+        let hasNotice = snapshot?.hasCodexNotice ?? false
 
         return VStack(spacing: 8) {
             Text("TOKEN 总量").font(.system(size: Design.caption, weight: .medium)).foregroundStyle(.secondary)
@@ -475,7 +471,7 @@ struct StatsDashboardView: View {
             Text("新增输入 \(intervalString(fresh)) · 输出 \(intervalString(output)) · 缓存命中 \(String(format: "%.1f%%", hitRate))")
                 .font(.system(size: Design.body, weight: .medium))
                 .foregroundStyle(.green)
-            if !breakdown.isEmpty && breakdown.count < current.count {
+            if hasNotice {
                 Text("输入/输出/缓存明细不含 Codex（数据源仅提供总量）")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
@@ -495,13 +491,13 @@ struct StatsDashboardView: View {
     }
 
     private var stackedShareBar: some View {
-        let current = inRange
-        let grand = current.reduce(0) { $0 + $1.tokens }
+        let grand = snapshot?.inRangeTotalTokens ?? 0
+        let agentTokens = snapshot?.agentTokens ?? [:]
         return VStack(spacing: 6) {
             GeometryReader { geo in
                 HStack(spacing: 1) {
                     ForEach(visibleAgents, id: \.self) { agent in
-                        let tokens = current.filter { $0.agent == agent }.reduce(0) { $0 + $1.tokens }
+                        let tokens = agentTokens[agent] ?? 0
                         RoundedRectangle(cornerRadius: 1)
                             .fill(agentColor[agent] ?? .gray)
                             .frame(width: grand > 0 ? max(2, geo.size.width * CGFloat(tokens) / CGFloat(grand) - 1) : 0)
@@ -514,12 +510,13 @@ struct StatsDashboardView: View {
     }
 
     private var agentCards: some View {
-        let current = inRange
-        let grand = current.reduce(0) { $0 + $1.tokens }
+        let grand = snapshot?.inRangeTotalTokens ?? 0
+        let agentTokens = snapshot?.agentTokens ?? [:]
+        let agentModels = snapshot?.agentModelCounts ?? [:]
         return HStack(spacing: 10) {
             ForEach(visibleAgents, id: \.self) { agent in
-                let tokens = current.filter { $0.agent == agent }.reduce(0) { $0 + $1.tokens }
-                let models = Set(current.filter { $0.agent == agent }.map { $0.model ?? "unknown" }).count
+                let tokens = agentTokens[agent] ?? 0
+                let models = agentModels[agent] ?? 0
                 let share = grand > 0 ? Double(tokens) / Double(grand) * 100 : 0.0
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 5) {
@@ -586,35 +583,8 @@ struct StatsDashboardView: View {
         .cornerRadius(Design.radiusM)
     }
 
-    struct DayRow: Identifiable {
-        let id: String
-        let date: String
-        let total: Int
-        let fresh: Int
-        let cached: Int
-        let output: Int
-        let sessions: Int
-    }
-
     private var dailyBreakdownTable: some View {
-        let cal = Calendar.current
-        let grouped = Dictionary(grouping: inRange) { rec -> String in
-            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
-            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-            return df.string(from: day)
-        }
-        let rows: [DayRow] = grouped.map { date, recs in
-            let breakdown = recs.filter(\.hasBreakdown)
-            return DayRow(
-                id: date, date: date,
-                total: recs.reduce(0) { $0 + $1.tokens },
-                fresh: breakdown.reduce(0) { $0 + $1.freshInput },
-                cached: breakdown.reduce(0) { $0 + $1.cached },
-                output: breakdown.reduce(0) { $0 + $1.output },
-                sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count
-            )
-        }
-        .sorted(by: dailySort(key: dailySortKey, ascending: dailySortAsc))
+        let rows = (snapshot?.dayRows ?? []).sorted(by: dailySort(key: dailySortKey, ascending: dailySortAsc))
 
         return VStack(spacing: 0) {
             headerRow
@@ -695,26 +665,11 @@ struct StatsDashboardView: View {
         else { dailySortKey = key; dailySortAsc = false }
     }
 
-    struct SessionRow: Identifiable {
-        let id: String
-        let title: String
-        let agent: StatsAgent
-        let tokens: Int
-        let turns: Int
-    }
-
     private var sessionRankTable: some View {
-        let grouped = Dictionary(grouping: inRange) { rec in "\(rec.agent.rawValue)|\(rec.sessionId)" }
-        let rows: [SessionRow] = grouped.map { _, recs in
-            let first = recs[0]
-            let title = first.title ?? "未命名会话（\(String(first.sessionId.prefix(8)))）"
-            return SessionRow(id: "\(first.agent.rawValue)|\(first.sessionId)", title: title,
-                              agent: first.agent, tokens: recs.reduce(0) { $0 + $1.tokens },
-                              turns: recs.count)
-        }
-        .sorted(by: sessionSort(key: sessionSortKey, ascending: sessionSortAsc))
-        .prefix(30)
-        .map { $0 }
+        let rows = (snapshot?.sessionRows ?? [])
+            .sorted(by: sessionSort(key: sessionSortKey, ascending: sessionSortAsc))
+            .prefix(30)
+            .map { $0 }
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -765,26 +720,10 @@ struct StatsDashboardView: View {
     // MARK: - CSV Export
 
     private func exportDailyCSV() {
-        let cal = Calendar.current
-        let grouped = Dictionary(grouping: inRange) { rec -> String in
-            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
-            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-            return df.string(from: day)
-        }
-        let rows: [(String, Int, Int, Int, Int, Int)] = grouped.map { date, recs in
-            let breakdown = recs.filter(\.hasBreakdown)
-            return (date,
-                    recs.reduce(0) { $0 + $1.tokens },
-                    breakdown.reduce(0) { $0 + $1.freshInput },
-                    breakdown.reduce(0) { $0 + $1.output },
-                    breakdown.reduce(0) { $0 + $1.cached },
-                    Set(recs.map { "\($0.agent):\($0.sessionId)" }).count)
-        }
-        .sorted { $0.0 > $1.0 }
-
+        let rows = (snapshot?.dayRows ?? []).sorted { $0.date > $1.date }
         var csv = "日期,合计,净输入,输出,缓存,会话\n"
         for r in rows {
-            csv += "\(r.0),\(r.1),\(r.2),\(r.3),\(r.4),\(r.5)\n"
+            csv += "\(r.date),\(r.total),\(r.fresh),\(r.output),\(r.cached),\(r.sessions)\n"
         }
 
         let panel = NSSavePanel()
@@ -813,24 +752,11 @@ struct StatsDashboardView: View {
 
     /// Cross-agent model ranking: merged by display name, share bar, tokens,
     /// sessions and percentage.
-    struct ModelRankRow: Identifiable {
-        let id: String
-        let name: String
-        let agents: String
-        let tokens: Int
-        let sessions: Int
-    }
-
     private var modelRankTable: some View {
-        let rows: [ModelRankRow] = mergedModelGroups(inRange)
-            .map { g in
-                ModelRankRow(id: g.name.lowercased(), name: g.name,
-                             agents: g.agents.map(\.label).joined(separator: " / "),
-                             tokens: g.tokens, sessions: g.sessions)
-            }
+        let rows: [ModelRankRow] = (snapshot?.modelRankRows ?? [])
             .sorted(by: modelSort(key: modelSortKey, ascending: modelSortAsc))
         let maxTokens = rows.map(\.tokens).max() ?? 0
-        let grand = rows.reduce(0) { $0 + $1.tokens }
+        let grand = snapshot?.inRangeTotalTokens ?? 0
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -899,6 +825,7 @@ struct StatsDashboardView: View {
                     scannedAgents.insert(agent)
                     loadedAgents.insert(agent)
                     lastUpdated = Date()
+                    updateSnapshot()
                 }
             }
         }
@@ -907,6 +834,151 @@ struct StatsDashboardView: View {
         let keep = Set(visibleAgents)
         allRecords.removeAll { !keep.contains($0.agent) }
         if missing.isEmpty { lastUpdated = Date() }
+        updateSnapshot()
+    }
+
+    private func updateSnapshot() {
+        let enabledRecords = allRecords.filter { enabledAgents.contains($0.agent) }
+        let now = Date()
+        let cal = Calendar.current
+
+        // 1. Sidebar all-time stats
+        let d7Tokens = enabledRecords.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
+        let d30Tokens = enabledRecords.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 30 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
+        let activeDays = Set(enabledRecords.map { cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.tsMs) / 1000)) })
+        let activeDaysCount = activeDays.count
+        let dailyAvgTokens = activeDaysCount > 0 ? enabledRecords.reduce(0) { $0 + $1.tokens } / activeDaysCount : 0
+        let allSessionsCount = Set(enabledRecords.map { "\($0.agent):\($0.sessionId)" }).count
+
+        let totalAll = enabledRecords.reduce(0) { $0 + $1.tokens }
+        let topModels = mergedModelGroups(enabledRecords)
+            .prefix(5).enumerated()
+            .map { i, g in RankRow(idx: i + 1, name: g.name, tokens: g.tokens,
+                                   share: totalAll > 0 ? Double(g.tokens) / Double(totalAll) * 100 : 0) }
+
+        let firstTs = enabledRecords.map(\.tsMs).min()
+        let dfDate = DateFormatter(); dfDate.dateFormat = "yyyy-MM-dd"
+        let startedText = firstTs.map { dfDate.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? "—"
+
+        let maxWeeks = 26
+        let today = cal.startOfDay(for: now)
+        let weekday = cal.component(.weekday, from: today)
+        let daysToWeekEnd = (7 - weekday) % 7
+        let gridEnd = cal.date(byAdding: .day, value: daysToWeekEnd, to: today) ?? today
+        let gridStart = cal.date(byAdding: .day, value: -(maxWeeks * 7 - 1), to: gridEnd) ?? today
+
+        var heatmapDaily: [Date: Int] = [:]
+        for r in enabledRecords {
+            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
+            heatmapDaily[day, default: 0] += r.tokens
+        }
+        let heatmapMaxDay = heatmapDaily.values.max() ?? 0
+
+        var heatmapColumns: [[Date]] = []
+        var cursor = gridStart
+        while cursor <= gridEnd {
+            var week: [Date] = []
+            for offset in 0..<7 {
+                if let d = cal.date(byAdding: .day, value: offset, to: cursor) { week.append(d) }
+            }
+            heatmapColumns.append(week)
+            cursor = cal.date(byAdding: .day, value: 7, to: cursor) ?? gridEnd
+        }
+
+        let trendStart = cal.startOfDay(for: cal.date(byAdding: .day, value: -29, to: now) ?? now)
+        var trendDays: [Date] = []
+        var tCursor = trendStart
+        while tCursor <= now {
+            trendDays.append(tCursor)
+            tCursor = cal.date(byAdding: .day, value: 1, to: tCursor) ?? now
+        }
+        let trendValues = trendDays.map { heatmapDaily[$0] ?? 0 }
+        let trendMax = trendValues.max() ?? 0
+
+        // 2. In-range stats
+        let current = inRange
+        let inRangeTotalTokens = current.reduce(0) { $0 + $1.tokens }
+        let breakdown = current.filter(\.hasBreakdown)
+        let freshInput = breakdown.reduce(0) { $0 + $1.freshInput }
+        let cachedInput = breakdown.reduce(0) { $0 + $1.cached }
+        let outputTokens = breakdown.reduce(0) { $0 + $1.output }
+        let totalInput = freshInput + cachedInput
+        let cacheHitRate: Double = totalInput > 0 ? Double(cachedInput) / Double(totalInput) * 100 : 0
+        let hasCodexNotice = !breakdown.isEmpty && breakdown.count < current.count
+
+        var agentTokens: [StatsAgent: Int] = [:]
+        var agentModelCounts: [StatsAgent: Int] = [:]
+        for agent in visibleAgents {
+            let recs = current.filter { $0.agent == agent }
+            agentTokens[agent] = recs.reduce(0) { $0 + $1.tokens }
+            agentModelCounts[agent] = Set(recs.map { $0.model ?? "unknown" }).count
+        }
+
+        let groupedDays = Dictionary(grouping: current) { rec -> String in
+            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
+            return dfDate.string(from: day)
+        }
+        let dayRows: [DayRow] = groupedDays.map { date, recs in
+            let b = recs.filter(\.hasBreakdown)
+            return DayRow(
+                id: date, date: date,
+                total: recs.reduce(0) { $0 + $1.tokens },
+                fresh: b.reduce(0) { $0 + $1.freshInput },
+                cached: b.reduce(0) { $0 + $1.cached },
+                output: b.reduce(0) { $0 + $1.output },
+                sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count
+            )
+        }
+
+        let groupedSessions = Dictionary(grouping: current) { rec in "\(rec.agent.rawValue)|\(rec.sessionId)" }
+        let sessionRows: [SessionRow] = groupedSessions.map { _, recs in
+            let first = recs[0]
+            let title = first.title ?? "未命名会话（\(String(first.sessionId.prefix(8)))）"
+            return SessionRow(
+                id: "\(first.agent.rawValue)|\(first.sessionId)",
+                title: title,
+                agent: first.agent,
+                tokens: recs.reduce(0) { $0 + $1.tokens },
+                turns: recs.count
+            )
+        }
+
+        let modelRankRows: [ModelRankRow] = mergedModelGroups(current).map { g in
+            ModelRankRow(
+                id: g.name.lowercased(),
+                name: g.name,
+                agents: g.agents.map(\.label).joined(separator: " / "),
+                tokens: g.tokens,
+                sessions: g.sessions
+            )
+        }
+
+        snapshot = DashboardSnapshot(
+            d7Tokens: d7Tokens,
+            d30Tokens: d30Tokens,
+            dailyAvgTokens: dailyAvgTokens,
+            allSessionsCount: allSessionsCount,
+            topModels: topModels,
+            startedText: startedText,
+            activeDaysCount: activeDaysCount,
+            heatmapColumns: heatmapColumns,
+            heatmapDaily: heatmapDaily,
+            heatmapMaxDay: heatmapMaxDay,
+            trendDays: trendDays,
+            trendValues: trendValues,
+            trendMax: trendMax,
+            inRangeTotalTokens: inRangeTotalTokens,
+            freshInput: freshInput,
+            cachedInput: cachedInput,
+            outputTokens: outputTokens,
+            cacheHitRate: cacheHitRate,
+            hasCodexNotice: hasCodexNotice,
+            agentTokens: agentTokens,
+            agentModelCounts: agentModelCounts,
+            dayRows: dayRows,
+            sessionRows: sessionRows,
+            modelRankRows: modelRankRows
+        )
     }
 
     // MARK: - Shared Pieces

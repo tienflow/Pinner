@@ -138,6 +138,38 @@ final class RemindersService {
         }
     }
 
+    /// Updates the due date of a reminder by identifier (used for Snooze).
+    func updateTaskDueDate(id: String, newDue: Date?) throws {
+        guard isAuthorized else { throw RemindersError.notAuthorized }
+        guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
+            throw RemindersError.saveFailed("未找到对应待办事项")
+        }
+        if let newDue {
+            reminder.dueDateComponents = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute], from: newDue)
+        } else {
+            reminder.dueDateComponents = nil
+        }
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            throw RemindersError.saveFailed(error.localizedDescription)
+        }
+    }
+
+    /// Deletes a reminder permanently by identifier.
+    func deleteTask(id: String) throws {
+        guard isAuthorized else { throw RemindersError.notAuthorized }
+        guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
+            throw RemindersError.saveFailed("未找到对应待办事项")
+        }
+        do {
+            try store.remove(reminder, commit: true)
+        } catch {
+            throw RemindersError.saveFailed(error.localizedDescription)
+        }
+    }
+
     /// Incomplete reminders due on or before today, plus no-due-date reminders.
     /// Filters out completed reminders and future reminders.
     func fetchTodayAndOverdue() async -> [ReminderItem] {

@@ -9,6 +9,7 @@ final class EdgeDockWindowController: NSObject {
     private var expandedWidth: CGFloat { savedSize.width }
     private var expandedHeight: CGFloat { savedSize.height }
     private var collapseObserver: NSObjectProtocol?
+    private var quickLookObserver: NSObjectProtocol?
     private var keyMonitor: Any?
     private let quickLookSource = QuickLookDataSource()
 
@@ -40,9 +41,16 @@ final class EdgeDockWindowController: NSObject {
         self.isPinned = UserDefaults.standard.bool(forKey: "CollectionBox.isPinned")
         super.init()
         collapseObserver = NotificationCenter.default.addObserver(forName: .panelShouldCollapse, object: nil, queue: .main) { [weak self] _ in self?.collapse() }
+        quickLookObserver = NotificationCenter.default.addObserver(forName: .quickLookSelectionDidChange, object: nil, queue: .main) { [weak self] n in
+            guard let ids = n.userInfo?["ids"] as? [UUID] else { return }
+            self?.updateQuickLookIfVisible(for: ids)
+        }
     }
 
-    deinit { if let o = collapseObserver { NotificationCenter.default.removeObserver(o) } }
+    deinit {
+        if let o = collapseObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = quickLookObserver { NotificationCenter.default.removeObserver(o) }
+    }
 
     // MARK: - Expand
 
@@ -114,18 +122,31 @@ final class EdgeDockWindowController: NSObject {
         guard mainPanel != nil else { return }
         let ids = Set(entryIDs)
         Task { @MainActor in
-            let urls: [URL] = store.tabs
-                .flatMap { $0.entries }
+            let allEntries = store.tabs.flatMap(\.entries) + store.shelfEntries
+            let urls: [URL] = allEntries
                 .filter { ids.contains($0.id) }
                 .compactMap { BookmarkService.resolveURL($0.bookmarkData) }
             guard !urls.isEmpty else { return }
             quickLookSource.items = urls
-            if QLPreviewPanel.shared().isVisible {
+            if QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible {
                 QLPreviewPanel.shared().orderOut(nil)
             } else {
                 QLPreviewPanel.shared().makeKeyAndOrderFront(nil)
             }
         }
+    }
+
+    @MainActor
+    private func updateQuickLookIfVisible(for entryIDs: [UUID]) {
+        guard QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible else { return }
+        let ids = Set(entryIDs)
+        let allEntries = store.tabs.flatMap(\.entries) + store.shelfEntries
+        let urls: [URL] = allEntries
+            .filter { ids.contains($0.id) }
+            .compactMap { BookmarkService.resolveURL($0.bookmarkData) }
+        guard !urls.isEmpty else { return }
+        quickLookSource.items = urls
+        QLPreviewPanel.shared().reloadData()
     }
 
     // MARK: - Collapse

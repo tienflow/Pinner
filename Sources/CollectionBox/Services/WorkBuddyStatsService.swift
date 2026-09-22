@@ -65,13 +65,19 @@ final class WorkBuddyStatsService: Sendable {
             .appendingPathComponent(".workbuddy/projects")
     }
 
-    private struct UsageRecord {
+    private struct UsageRecord: Codable, Sendable {
         let tsMs: Int64
         let sessionId: String
         let input: Int
         let output: Int
         let cacheRead: Int
         let messageId: String?
+    }
+
+    private struct DiskFileCacheEntry: Codable, Sendable {
+        let mtime: TimeInterval
+        let size: Int64
+        let records: [UsageRecord]
     }
 
     // A full scan walks hundreds of MB of session files; cache the newest
@@ -84,6 +90,46 @@ final class WorkBuddyStatsService: Sendable {
 
     private static let cacheLock = NSLock()
     private static var scanCache: ScanCache?
+    private static var persistentCache: [String: DiskFileCacheEntry]?
+
+    private static let cacheFileURL: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+        let dir = base.appendingPathComponent("com.tienyeung.Pinner")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("workbuddy_scan_cache.json")
+    }()
+
+    private static func getDiskCache() -> [String: DiskFileCacheEntry] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let existing = persistentCache { return existing }
+        let loaded = loadDiskCache()
+        persistentCache = loaded
+        return loaded
+    }
+
+    private static func loadDiskCache() -> [String: DiskFileCacheEntry] {
+        guard let data = try? Data(contentsOf: cacheFileURL),
+              let dict = try? JSONDecoder().decode([String: DiskFileCacheEntry].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private static func updateDiskCache(_ newEntries: [String: DiskFileCacheEntry]) {
+        guard !newEntries.isEmpty else { return }
+        cacheLock.lock()
+        var current = persistentCache ?? loadDiskCache()
+        for (k, v) in newEntries {
+            current[k] = v
+        }
+        persistentCache = current
+        cacheLock.unlock()
+        if let data = try? JSONEncoder().encode(current) {
+            try? data.write(to: cacheFileURL, options: .atomic)
+        }
+    }
 
     private func cachedCollect(sinceMs: Int64) -> [UsageRecord] {
         Self.cacheLock.lock()
@@ -294,24 +340,53 @@ final class WorkBuddyStatsService: Sendable {
 
         let enumerator = FileManager.default.enumerator(
             at: projectsDir,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         )
 
-        var files: [URL] = []
+        struct FileMeta {
+            let url: URL
+            let path: String
+            let mtime: TimeInterval
+            let size: Int64
+        }
+
+        var files: [FileMeta] = []
         while let element = enumerator?.nextObject() as? URL {
             guard element.pathExtension == "jsonl" else { continue }
-            if let values = try? element.resourceValues(forKeys: [.contentModificationDateKey]),
-               let mdate = values.contentModificationDate, mdate < minDate {
-                continue
-            }
-            files.append(element)
+            guard let values = try? element.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let mdate = values.contentModificationDate else { continue }
+            if mdate < minDate { continue }
+            files.append(FileMeta(
+                url: element,
+                path: element.path,
+                mtime: mdate.timeIntervalSince1970,
+                size: Int64(values.fileSize ?? 0)
+            ))
         }
         guard !files.isEmpty else { return [] }
 
+        let diskCache = Self.getDiskCache()
         var perFile = [[UsageRecord]](repeating: [], count: files.count)
+        let newEntriesLock = NSLock()
+        var newEntries: [String: DiskFileCacheEntry] = [:]
+
         DispatchQueue.concurrentPerform(iterations: files.count) { i in
-            perFile[i] = Self.processFile(files[i], sinceMs: sinceMs)
+            let f = files[i]
+            if let entry = diskCache[f.path], entry.mtime == f.mtime && entry.size == f.size {
+                perFile[i] = entry.records.filter { $0.tsMs >= sinceMs }
+            } else {
+                let allRecs = Self.processFile(f.url, sinceMs: 0)
+                let entry = DiskFileCacheEntry(mtime: f.mtime, size: f.size, records: allRecs)
+                newEntriesLock.lock()
+                newEntries[f.path] = entry
+                newEntriesLock.unlock()
+                perFile[i] = allRecs.filter { $0.tsMs >= sinceMs }
+            }
+        }
+
+        if !newEntries.isEmpty {
+            Self.updateDiskCache(newEntries)
         }
 
         // Cross-file message-id de-duplication happens at merge, in scan order.
