@@ -1322,26 +1322,37 @@ struct FileIconWrap: NSViewRepresentable {
             representationTypes: .thumbnail
         )
 
-        func finish(_ image: NSImage?) {
-            pendingLock.lock()
-            pendingThumbnails.remove(path)
-            pendingLock.unlock()
-            guard let image else { return }
-            iconCache.setObject(image, forKey: cachedKey)
-            DispatchQueue.main.async { completion(image) }
-        }
-
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
             if let rep = rep {
-                finish(rep.nsImage)
+                Self.publishThumbnail(rep.nsImage, for: path, key: cachedKey, completion: completion)
                 return
             }
             let ext = (entry.displayName as NSString).pathExtension.lowercased()
-            guard thumbnailableExtensions.contains(ext) else { finish(nil); return }
+            guard thumbnailableExtensions.contains(ext) else {
+                Self.clearPendingThumbnail(path)
+                return
+            }
             DispatchQueue.global(qos: .userInitiated).async {
-                finish(Self.thumbnail(at: path, ext: ext, maxPixel: 256))
+                guard let thumb = Self.thumbnail(at: path, ext: ext, maxPixel: 256) else {
+                    Self.clearPendingThumbnail(path)
+                    return
+                }
+                Self.publishThumbnail(thumb, for: path, key: cachedKey, completion: completion)
             }
         }
+    }
+
+    private static func clearPendingThumbnail(_ path: String) {
+        pendingLock.lock()
+        pendingThumbnails.remove(path)
+        pendingLock.unlock()
+    }
+
+    private static func publishThumbnail(_ image: NSImage, for path: String, key: NSString,
+                                         completion: @escaping (NSImage) -> Void) {
+        clearPendingThumbnail(path)
+        iconCache.setObject(image, forKey: key)
+        DispatchQueue.main.async { completion(image) }
     }
 
     static func thumbnail(at path: String, ext: String, maxPixel: Int) -> NSImage? {
