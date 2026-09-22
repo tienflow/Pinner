@@ -56,9 +56,80 @@ struct GeminiStats {
     }
 }
 
-final class GeminiStatsService {
+final class GeminiStatsService: Sendable {
     private let conversationsDir: URL
     private let summaryDbPath: String
+
+    struct StepTokenUsage: Codable, Sendable {
+        let timestamp: Int
+        let inputTokens: Int
+        let outputTokens: Int
+        let cacheReadTokens: Int
+        let model: String?
+
+        var totalTokens: Int {
+            inputTokens + outputTokens + cacheReadTokens
+        }
+    }
+
+    private struct DiskFileCacheEntry: Codable, Sendable {
+        let mtime: TimeInterval
+        let size: Int64
+        let steps: [StepTokenUsage]
+    }
+
+    private struct DbFileMeta {
+        let cid: String
+        let url: URL
+        let path: String
+        let mtime: TimeInterval
+        let size: Int64
+    }
+
+    private static let cacheLock = NSLock()
+    private static var persistentCache: [String: DiskFileCacheEntry]?
+
+    private static let cacheFileURL: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+        let dir = base.appendingPathComponent("com.tienyeung.Pinner")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("gemini_scan_cache.json")
+    }()
+
+    private static func getDiskCache() -> [String: DiskFileCacheEntry] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let existing = persistentCache { return existing }
+        let loaded = loadDiskCache()
+        persistentCache = loaded
+        return loaded
+    }
+
+    private static func loadDiskCache() -> [String: DiskFileCacheEntry] {
+        guard let data = try? Data(contentsOf: cacheFileURL),
+              let dict = try? JSONDecoder().decode([String: DiskFileCacheEntry].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private static func updateDiskCache(_ newEntries: [String: DiskFileCacheEntry]) {
+        guard !newEntries.isEmpty else { return }
+        cacheLock.lock()
+        var current = persistentCache ?? loadDiskCache()
+        for (k, v) in newEntries {
+            current[k] = v
+        }
+        persistentCache = current
+        cacheLock.unlock()
+        if let data = try? JSONEncoder().encode(current) {
+            try? data.write(to: cacheFileURL, options: .atomic)
+        }
+    }
+
+    private let titleLock = NSLock()
+    private var titleMapCache: [String: String]?
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -67,15 +138,17 @@ final class GeminiStatsService {
         summaryDbPath = baseDir.appendingPathComponent("conversation_summaries.db").path
     }
 
-    func fetchStats(for range: StatsTimeRange) -> GeminiStats {
+    func fetchStatsAndTrend(for range: StatsTimeRange) -> (stats: GeminiStats, trend: [TrendPoint]) {
         let now = Date()
         let nowUnix = Int(now.timeIntervalSince1970)
         let cal = Calendar.current
+        let tzOffset = TimeInterval(TimeZone.current.secondsFromGMT())
 
         var currentStart: Int
         var currentEnd = nowUnix
         var previousStart: Int
         var previousEnd: Int
+        var bucketSeconds: Int
 
         switch range {
         case .last5Hours:
@@ -84,6 +157,7 @@ final class GeminiStatsService {
             currentStart = nowUnix - Int(fiveHours)
             previousEnd = currentStart
             previousStart = currentStart - Int(fiveHours)
+            bucketSeconds = 1500
         case .today:
             let todayStart = cal.startOfDay(for: now)
             currentStart = Int(todayStart.timeIntervalSince1970)
@@ -91,21 +165,24 @@ final class GeminiStatsService {
             let yesterdayStart = cal.date(byAdding: .day, value: -1, to: todayStart)!
             previousStart = Int(yesterdayStart.timeIntervalSince1970)
             previousEnd = currentStart
+            bucketSeconds = 3600
         case .last7Days:
             let sevenDays: TimeInterval = 7 * 86400
             currentStart = nowUnix - Int(sevenDays)
             currentEnd = nowUnix
             previousEnd = currentStart
             previousStart = currentStart - Int(sevenDays)
+            bucketSeconds = 86400
         case .last30Days:
             let thirtyDays: TimeInterval = 30 * 86400
             currentStart = nowUnix - Int(thirtyDays)
             currentEnd = nowUnix
             previousEnd = currentStart
             previousStart = currentStart - Int(thirtyDays)
+            bucketSeconds = 86400
         }
 
-        let eligibleFiles = getEligibleDbFiles(since: previousStart)
+        let conversationSteps = collectSteps(sinceUnix: previousStart)
 
         var curTokens = 0
         var prevTokens = 0
@@ -114,9 +191,9 @@ final class GeminiStatsService {
         var curCache = 0
         var curSessions = Set<String>()
         var prevSessions = Set<String>()
+        var bucketMap: [Int: Int] = [:]
 
-        for (cid, fileUrl) in eligibleFiles {
-            let steps = querySteps(from: fileUrl.path)
+        for (cid, steps) in conversationSteps {
             for step in steps {
                 let ts = step.timestamp
                 if ts >= currentStart && ts < currentEnd {
@@ -125,6 +202,9 @@ final class GeminiStatsService {
                     curOutput += step.outputTokens
                     curCache += step.cacheReadTokens
                     curSessions.insert(cid)
+
+                    let bucket = Int((Double(ts) + tzOffset) / Double(bucketSeconds))
+                    bucketMap[bucket, default: 0] += step.totalTokens
                 } else if ts >= previousStart && ts < previousEnd {
                     prevTokens += step.totalTokens
                     prevSessions.insert(cid)
@@ -132,7 +212,7 @@ final class GeminiStatsService {
             }
         }
 
-        return GeminiStats(
+        let stats = GeminiStats(
             currentTokens: curTokens,
             previousTokens: prevTokens,
             currentSessions: curSessions.count,
@@ -141,48 +221,9 @@ final class GeminiStatsService {
             outputTokens: curOutput,
             cacheReadTokens: curCache
         )
-    }
-
-    func fetchTrend(for range: StatsTimeRange) -> [TrendPoint] {
-        let now = Date()
-        let nowUnix = Int(now.timeIntervalSince1970)
-        let cal = Calendar.current
-        let tzOffset = TimeInterval(TimeZone.current.secondsFromGMT())
-
-        var startUnix: Int
-        var bucketSeconds: Int
-
-        switch range {
-        case .last5Hours:
-            startUnix = nowUnix - 5 * 3600
-            bucketSeconds = 1500
-        case .today:
-            startUnix = Int(cal.startOfDay(for: now).timeIntervalSince1970)
-            bucketSeconds = 3600
-        case .last7Days:
-            startUnix = nowUnix - 7 * 86400
-            bucketSeconds = 86400
-        case .last30Days:
-            startUnix = nowUnix - 30 * 86400
-            bucketSeconds = 86400
-        }
-
-        let eligibleFiles = getEligibleDbFiles(since: startUnix)
-        var bucketMap: [Int: Int] = [:]
-
-        for (_, fileUrl) in eligibleFiles {
-            let steps = querySteps(from: fileUrl.path)
-            for step in steps {
-                let ts = step.timestamp
-                if ts >= startUnix && ts < nowUnix {
-                    let bucket = Int((Double(ts) + tzOffset) / Double(bucketSeconds))
-                    bucketMap[bucket, default: 0] += step.totalTokens
-                }
-            }
-        }
 
         var points: [TrendPoint] = []
-        var bucketStart = Int((Double(startUnix) + tzOffset) / Double(bucketSeconds))
+        var bucketStart = Int((Double(currentStart) + tzOffset) / Double(bucketSeconds))
         let currentBucket = Int((Double(nowUnix) + tzOffset) / Double(bucketSeconds))
 
         while bucketStart <= currentBucket {
@@ -208,18 +249,57 @@ final class GeminiStatsService {
             bucketStart += 1
         }
 
-        return points
+        return (stats, points)
     }
 
-    /// Per-step usage records for the dashboard. Antigravity payloads carry
-    /// no model name, so callers bucket these under an "unknown" model.
-    /// `freshInput`/`cached`/`output` give the input/output/cache split
-    /// (input here excludes cached reads).
+    func fetchStats(for range: StatsTimeRange) -> GeminiStats {
+        fetchStatsAndTrend(for: range).stats
+    }
+
+    func fetchTrend(for range: StatsTimeRange) -> [TrendPoint] {
+        fetchStatsAndTrend(for: range).trend
+    }
+
+    /// Collect steps across eligible databases using the persistent disk cache
+    private func collectSteps(sinceUnix: Int) -> [(cid: String, steps: [StepTokenUsage])] {
+        let eligibleFiles = getEligibleDbFiles(since: sinceUnix)
+        guard !eligibleFiles.isEmpty else { return [] }
+
+        let diskCache = Self.getDiskCache()
+        var results = [[(cid: String, steps: [StepTokenUsage])]](repeating: [], count: eligibleFiles.count)
+        let newEntriesLock = NSLock()
+        var newEntries: [String: DiskFileCacheEntry] = [:]
+
+        DispatchQueue.concurrentPerform(iterations: eligibleFiles.count) { i in
+            let f = eligibleFiles[i]
+            if let entry = diskCache[f.path], entry.mtime == f.mtime && entry.size == f.size {
+                let filtered = entry.steps.filter { $0.timestamp >= sinceUnix }
+                results[i] = [(f.cid, filtered)]
+            } else {
+                let allSteps = queryStepsWithModels(from: f.path)
+                let entry = DiskFileCacheEntry(mtime: f.mtime, size: f.size, steps: allSteps)
+                newEntriesLock.lock()
+                newEntries[f.path] = entry
+                newEntriesLock.unlock()
+                let filtered = allSteps.filter { $0.timestamp >= sinceUnix }
+                results[i] = [(f.cid, filtered)]
+            }
+        }
+
+        if !newEntries.isEmpty {
+            Self.updateDiskCache(newEntries)
+        }
+
+        return results.flatMap { $0 }
+    }
+
+    /// Per-step usage records for the dashboard.
     func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
         let titles = conversationTitleMap()
+        let conversationSteps = collectSteps(sinceUnix: sinceUnix)
         var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] = []
-        for (cid, fileUrl) in getEligibleDbFiles(since: sinceUnix) {
-            for step in queryStepsWithModels(from: fileUrl.path) where step.timestamp >= sinceUnix {
+        for (cid, steps) in conversationSteps {
+            for step in steps where step.timestamp >= sinceUnix {
                 records.append((
                     tsMs: Int64(step.timestamp) * 1000,
                     tokens: step.totalTokens,
@@ -238,6 +318,8 @@ final class GeminiStatsService {
     /// conversation_id -> title, read once per service lifetime. Falls back
     /// to an immutable read when the summary DB is WAL-locked.
     private func conversationTitleMap() -> [String: String] {
+        titleLock.lock()
+        defer { titleLock.unlock() }
         if let cached = titleMapCache { return cached }
         var map: [String: String] = [:]
         queryReadOnly(path: summaryDbPath, sql: "SELECT conversation_id, title FROM conversation_summaries") { stmt in
@@ -248,21 +330,9 @@ final class GeminiStatsService {
         titleMapCache = map
         return map
     }
-    private var titleMapCache: [String: String]?
 
     // MARK: - Internal DB & Protobuf Scanning
 
-    private struct StepTokenUsage {
-        let timestamp: Int
-        let inputTokens: Int
-        let outputTokens: Int
-        let cacheReadTokens: Int
-        let model: String?
-
-        var totalTokens: Int {
-            inputTokens + outputTokens + cacheReadTokens
-        }
-    }
 
     /// Read-only query with an immutable fallback: Antigravity keeps its DBs
     /// in WAL mode, and a plain READONLY connection cannot create/access the
@@ -423,22 +493,27 @@ final class GeminiStatsService {
     }
 
     /// Retrieve conversation database files whose last modification date is on or after the timestamp.
-    private func getEligibleDbFiles(since minUnix: Int) -> [(cid: String, url: URL)] {
+    private func getEligibleDbFiles(since minUnix: Int) -> [DbFileMeta] {
         let minDate = Date(timeIntervalSince1970: TimeInterval(minUnix))
-        guard let files = try? FileManager.default.contentsOfDirectory(at: conversationsDir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: conversationsDir, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]) else {
             return []
         }
 
-        var results: [(cid: String, url: URL)] = []
+        var results: [DbFileMeta] = []
         for file in files where file.pathExtension == "db" {
             let cid = file.deletingPathExtension().lastPathComponent
-            if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
-               let mdate = values.contentModificationDate {
+            let values = try? file.resourceValues(forKeys: keys)
+            let mdate = values?.contentModificationDate
+            let mtime = mdate?.timeIntervalSince1970 ?? 0
+            let size = Int64(values?.fileSize ?? 0)
+
+            if let mdate = mdate {
                 if mdate >= minDate {
-                    results.append((cid, file))
+                    results.append(DbFileMeta(cid: cid, url: file, path: file.path, mtime: mtime, size: size))
                 }
             } else {
-                results.append((cid, file))
+                results.append(DbFileMeta(cid: cid, url: file, path: file.path, mtime: mtime, size: size))
             }
         }
         return results

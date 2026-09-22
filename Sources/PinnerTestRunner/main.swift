@@ -723,6 +723,14 @@ func testWorkBuddyScanCache() {
     check(records1.count == records2.count, "workbuddy scan cache preserves record count")
 }
 
+@MainActor
+func testGeminiScanCache() {
+    let service = GeminiStatsService()
+    let res1 = service.fetchStatsAndTrend(for: .today)
+    let res2 = service.fetchStatsAndTrend(for: .today)
+    check(res1.stats.currentTokens == res2.stats.currentTokens, "gemini scan cache preserves token count")
+}
+
 // MARK: - Entry Point
 
 let allPassed = await Task { @MainActor () -> Bool in
@@ -755,6 +763,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     await testShelfFileNSURL()
     testPinyinMatcher()
     testWorkBuddyScanCache()
+    testGeminiScanCache()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

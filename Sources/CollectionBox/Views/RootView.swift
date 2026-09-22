@@ -1137,7 +1137,7 @@ struct EntryRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            FileIconView(entry: entry).frame(width: 20, height: 20).opacity(entry.isMissing ? 0.4 : 1)
+            FileIconView(entry: entry, prefersThumbnail: false).frame(width: 20, height: 20).opacity(entry.isMissing ? 0.4 : 1)
             Text(entry.displayName).font(.system(size: Design.body)).lineLimit(1).truncationMode(.middle)
                 .foregroundStyle(entry.isMissing ? .secondary : .primary)
             if entry.isMissing {
@@ -1231,17 +1231,32 @@ struct GridEntryItem: View {
 
 // MARK: - File Icon
 
-struct FileIconView: View { let entry: BookmarkEntry; var body: some View { FileIconWrap(entry: entry) } }
+struct FileIconView: View {
+    let entry: BookmarkEntry
+    var prefersThumbnail = true
+    var body: some View { FileIconWrap(entry: entry, prefersThumbnail: prefersThumbnail) }
+}
 
 #if canImport(AppKit)
 struct FileIconWrap: NSViewRepresentable {
     let entry: BookmarkEntry
+    /// Grid cells show a content preview; list rows keep the plain file icon.
+    var prefersThumbnail = true
     static let iconCache = NSCache<NSString, NSImage>()
     private static let thumbnailableExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "pdf"]
     /// Bookmark resolution touches the filesystem (milliseconds each), so
     /// results are cached per entry and invalidated when the bookmark data
     /// changes. Main-thread only, like every caller below.
     private static var resolvedPathCache: [UUID: (bookmark: Data, path: String?)] = [:]
+    /// Paths with a thumbnail request already in flight. Without this, every
+    /// re-render of a visible cell would queue another generation request.
+    nonisolated(unsafe) private static var pendingThumbnails: Set<String> = []
+    private static let pendingLock = NSLock()
+
+    // Icons and thumbnails share NSCache but must never share a key: the icon
+    // is written first, so a thumbnail lookup on the same key would hit it.
+    private static func iconKey(_ path: String) -> NSString { ("icon:" + path) as NSString }
+    private static func thumbnailKey(_ path: String) -> NSString { ("thumb:" + path) as NSString }
 
     static func cachedResolvedPath(for entry: BookmarkEntry) -> String? {
         if let hit = resolvedPathCache[entry.id], hit.bookmark == entry.bookmarkData { return hit.path }
@@ -1254,14 +1269,17 @@ struct FileIconWrap: NSViewRepresentable {
         let v = NSImageView(); v.imageScaling = .scaleProportionallyUpOrDown
         v.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
         v.image = Self.baseIcon(for: entry)
-        Self.loadThumbnailIfAvailable(for: entry) { thumbnail in
-            if v.identifier?.rawValue == entry.id.uuidString { v.image = thumbnail }
+        if prefersThumbnail {
+            Self.loadThumbnailIfAvailable(for: entry) { thumbnail in
+                if v.identifier?.rawValue == entry.id.uuidString { v.image = thumbnail }
+            }
         }
         return v
     }
     func updateNSView(_ v: NSImageView, context: Context) {
         v.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
         v.image = Self.baseIcon(for: entry)
+        guard prefersThumbnail else { return }
         Self.loadThumbnailIfAvailable(for: entry) { thumbnail in
             if v.identifier?.rawValue == entry.id.uuidString { v.image = thumbnail }
         }
@@ -1273,7 +1291,7 @@ struct FileIconWrap: NSViewRepresentable {
             ? NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericFolderIcon)))
             : NSWorkspace.shared.icon(forFileType: ext)
         guard let path = cachedResolvedPath(for: entry) else { return fallback }
-        let key = path as NSString
+        let key = iconKey(path)
         if let cached = iconCache.object(forKey: key) { return cached }
         let image = NSWorkspace.shared.icon(forFile: path)
         iconCache.setObject(image, forKey: key)
@@ -1281,14 +1299,19 @@ struct FileIconWrap: NSViewRepresentable {
     }
 
     /// Decodes an image/PDF/media/document thumbnail via system QLThumbnailGenerator
-    /// off the main thread with fallback, and caches it by path.
+    /// off the main thread with fallback, and caches it under its own key.
     static func loadThumbnailIfAvailable(for entry: BookmarkEntry, completion: @escaping (NSImage) -> Void) {
         guard let path = cachedResolvedPath(for: entry) else { return }
-        let pathKey = path as NSString
-        if let cached = iconCache.object(forKey: pathKey) {
+        let cachedKey = thumbnailKey(path)
+        if let cached = iconCache.object(forKey: cachedKey) {
             completion(cached)
             return
         }
+
+        pendingLock.lock()
+        guard !pendingThumbnails.contains(path) else { pendingLock.unlock(); return }
+        pendingThumbnails.insert(path)
+        pendingLock.unlock()
 
         let url = URL(fileURLWithPath: path)
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
@@ -1299,20 +1322,24 @@ struct FileIconWrap: NSViewRepresentable {
             representationTypes: .thumbnail
         )
 
+        func finish(_ image: NSImage?) {
+            pendingLock.lock()
+            pendingThumbnails.remove(path)
+            pendingLock.unlock()
+            guard let image else { return }
+            iconCache.setObject(image, forKey: cachedKey)
+            DispatchQueue.main.async { completion(image) }
+        }
+
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
             if let rep = rep {
-                let thumb = rep.nsImage
-                iconCache.setObject(thumb, forKey: pathKey)
-                DispatchQueue.main.async { completion(thumb) }
-            } else {
-                let ext = (entry.displayName as NSString).pathExtension.lowercased()
-                if thumbnailableExtensions.contains(ext) {
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        guard let thumb = Self.thumbnail(at: path, ext: ext, maxPixel: 256) else { return }
-                        iconCache.setObject(thumb, forKey: pathKey)
-                        DispatchQueue.main.async { completion(thumb) }
-                    }
-                }
+                finish(rep.nsImage)
+                return
+            }
+            let ext = (entry.displayName as NSString).pathExtension.lowercased()
+            guard thumbnailableExtensions.contains(ext) else { finish(nil); return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                finish(Self.thumbnail(at: path, ext: ext, maxPixel: 256))
             }
         }
     }

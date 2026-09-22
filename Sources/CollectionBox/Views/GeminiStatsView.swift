@@ -319,8 +319,15 @@ struct GeminiStatsView: View {
     private func refresh() {
         errorMessage = nil
         hoverIndex = nil
-        stats = service.fetchStats(for: selectedRange)
-        trend = service.fetchTrend(for: selectedRange)
-        lastUpdated = Date()
+        let targetRange = selectedRange
+        Task.detached(priority: .userInitiated) {
+            let result = service.fetchStatsAndTrend(for: targetRange)
+            await MainActor.run {
+                guard selectedRange == targetRange else { return }
+                stats = result.stats
+                trend = result.trend
+                lastUpdated = Date()
+            }
+        }
     }
 }
