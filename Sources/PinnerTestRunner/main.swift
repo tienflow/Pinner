@@ -784,6 +784,18 @@ func testThumbnailDoesNotHitIconCache() throws {
     check(!completedSynchronously, "warmed icon cache does not satisfy a thumbnail lookup")
 }
 
+@MainActor
+func testNonVisualFileDoesNotGenerateThumbnail() throws {
+    let md = FileManager.default.temporaryDirectory.appendingPathComponent("pinner-\(UUID().uuidString).md")
+    try "# test".write(to: md, atomically: true, encoding: .utf8)
+    defer { try? FileManager.default.removeItem(at: md) }
+
+    let item = try entry(for: md)
+    var thumbnailRequested = false
+    FileIconWrap.loadThumbnailIfAvailable(for: item) { _ in thumbnailRequested = true }
+    check(!thumbnailRequested, "markdown and text files do not generate content thumbnails")
+}
+
 // MARK: - Entry Point
 let allPassed = await Task { @MainActor () -> Bool in
     testTabCRUD()
@@ -801,6 +813,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     try? testLegacyJSONCompatibility()
     try? testBookmarkServiceHelpers()
     try? testThumbnailDoesNotHitIconCache()
+    try? testNonVisualFileDoesNotGenerateThumbnail()
     testAgentSelectionPersistence()
     testMenuBarMenuFollowsSelection()
     testSettingsSubmenuContents()

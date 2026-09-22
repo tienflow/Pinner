@@ -1301,7 +1301,9 @@ struct FileIconWrap: NSViewRepresentable {
     /// Decodes an image/PDF/media/document thumbnail via system QLThumbnailGenerator
     /// off the main thread with fallback, and caches it under its own key.
     static func loadThumbnailIfAvailable(for entry: BookmarkEntry, completion: @escaping (NSImage) -> Void) {
-        guard let path = cachedResolvedPath(for: entry) else { return }
+        let ext = (entry.displayName as NSString).pathExtension.lowercased()
+        guard thumbnailableExtensions.contains(ext),
+              let path = cachedResolvedPath(for: entry) else { return }
         let cachedKey = thumbnailKey(path)
         if let cached = iconCache.object(forKey: cachedKey) {
             completion(cached)
@@ -1325,11 +1327,6 @@ struct FileIconWrap: NSViewRepresentable {
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
             if let rep = rep {
                 Self.publishThumbnail(rep.nsImage, for: path, key: cachedKey, completion: completion)
-                return
-            }
-            let ext = (entry.displayName as NSString).pathExtension.lowercased()
-            guard thumbnailableExtensions.contains(ext) else {
-                Self.clearPendingThumbnail(path)
                 return
             }
             DispatchQueue.global(qos: .userInitiated).async {
