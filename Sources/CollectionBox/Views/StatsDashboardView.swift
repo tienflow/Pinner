@@ -2,11 +2,12 @@ import SwiftUI
 
 struct StatsDashboardView: View {
     enum DashRange: Int, CaseIterable, Identifiable {
-        case today = 1, week = 7, month = 30, all = 0, custom = -1
+        case today = 1, yesterday = -2, week = 7, month = 30, all = 0, custom = -1
         var id: Int { rawValue }
         var label: String {
             switch self {
             case .today: return "今天"
+            case .yesterday: return "昨天"
             case .week: return "近 7 天"
             case .month: return "近 30 天"
             case .all: return "全部"
@@ -91,6 +92,7 @@ struct StatsDashboardView: View {
     @State private var heatHoverText: String?
     @State private var trendHoverText: String?
     @State private var snapshot: DashboardSnapshot?
+    @State private var selectedAgentFilter: StatsAgent? = nil
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
     private let service = StatsDashboardService.shared
@@ -125,6 +127,9 @@ struct StatsDashboardView: View {
         let now = Date()
         switch range {
         case .today: return Int64(cal.startOfDay(for: now).timeIntervalSince1970 * 1000)
+        case .yesterday:
+            let yesterday = cal.date(byAdding: .day, value: -1, to: now) ?? now
+            return Int64(cal.startOfDay(for: yesterday).timeIntervalSince1970 * 1000)
         case .week: return Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000)
         case .month: return Int64((now.timeIntervalSince1970 - 30 * 86400) * 1000)
         case .all: return 0
@@ -133,10 +138,16 @@ struct StatsDashboardView: View {
     }
 
     private var effectiveUntilMs: Int64 {
-        if range == .custom {
+        let cal = Calendar.current
+        let now = Date()
+        switch range {
+        case .yesterday:
+            return Int64(cal.startOfDay(for: now).timeIntervalSince1970 * 1000)
+        case .custom:
             return Int64((customEnd.timeIntervalSince1970 + 86400) * 1000) // inclusive end day
+        default:
+            return Int64(now.timeIntervalSince1970 * 1000)
         }
-        return Int64(Date().timeIntervalSince1970 * 1000)
     }
 
     private var inRange: [UnifiedUsageRecord] {
@@ -468,11 +479,48 @@ struct StatsDashboardView: View {
                 .font(.system(size: 48, weight: .heavy, design: .rounded))
                 .contentTransition(.numericText())
                 .lineLimit(1).minimumScaleFactor(0.4)
-            Text("新增输入 \(intervalString(fresh)) · 输出 \(intervalString(output)) · 缓存命中 \(String(format: "%.1f%%", hitRate))")
-                .font(.system(size: Design.body, weight: .medium))
-                .foregroundStyle(.green)
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text("净输入 (未缓存)")
+                        .font(.system(size: Design.caption))
+                        .foregroundStyle(.secondary)
+                    Text(intervalString(fresh))
+                        .font(.system(size: Design.caption, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(0.08)))
+                .help("当前时间范围内未命中缓存、全价计费的首次输入 Token 总量")
+
+                HStack(spacing: 4) {
+                    Text("模型输出")
+                        .font(.system(size: Design.caption))
+                        .foregroundStyle(.secondary)
+                    Text(intervalString(output))
+                        .font(.system(size: Design.caption, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(0.08)))
+                .help("当前时间范围内模型生成的 Output Token 总量")
+
+                HStack(spacing: 4) {
+                    Text("缓存命中")
+                        .font(.system(size: Design.caption))
+                        .foregroundStyle(.secondary)
+                    Text(String(format: "%.1f%%", hitRate))
+                        .font(.system(size: Design.caption, weight: .semibold))
+                        .foregroundStyle(Color.green)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.green.opacity(0.1)))
+                .help("上下文缓存 (Prompt Cache) 命中比例，命中率越高越节省开销")
+            }
             if hasNotice {
-                Text("输入/输出/缓存明细不含 Codex（数据源仅提供总量）")
+                Text("注：Codex 本地库仅记录总量，净输入/输出/缓存由其他 Agent 聚合")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
             if loadedAgents.count < visibleAgents.count {
@@ -518,6 +566,9 @@ struct StatsDashboardView: View {
                 let tokens = agentTokens[agent] ?? 0
                 let models = agentModels[agent] ?? 0
                 let share = grand > 0 ? Double(tokens) / Double(grand) * 100 : 0.0
+                let isFiltered = selectedAgentFilter == agent
+                let isDimmed = selectedAgentFilter != nil && !isFiltered
+
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 5) {
                         Image(systemName: agent.symbolName).font(.system(size: 11, weight: .medium))
@@ -526,7 +577,13 @@ struct StatsDashboardView: View {
                             .font(.system(size: Design.caption, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Spacer()
-                        if !loadedAgents.contains(agent) { ProgressView().controlSize(.mini) }
+                        if isFiltered {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(agentColor[agent] ?? Color.accentColor)
+                        } else if !loadedAgents.contains(agent) {
+                            ProgressView().controlSize(.mini)
+                        }
                     }
                     Text(String(format: "%.1f%%", share))
                         .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -540,8 +597,28 @@ struct StatsDashboardView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
-                .background(Color.secondary.opacity(Design.slotAlpha))
-                .cornerRadius(Design.radiusM)
+                .background(
+                    RoundedRectangle(cornerRadius: Design.radiusM)
+                        .fill(isFiltered ? (agentColor[agent] ?? Color.accentColor).opacity(0.12) : Color.secondary.opacity(Design.slotAlpha))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Design.radiusM)
+                        .strokeBorder(agentColor[agent] ?? Color.accentColor, lineWidth: isFiltered ? 1.5 : 0)
+                )
+                .opacity(isDimmed ? 0.45 : 1.0)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if selectedAgentFilter == agent {
+                            selectedAgentFilter = nil
+                        } else {
+                            selectedAgentFilter = agent
+                        }
+                        updateSnapshot()
+                    }
+                }
+                .help(isFiltered ? "点击取消聚焦 \(agent.label)" : "点击聚焦筛选 \(agent.label) 的明细与排行")
             }
         }
     }
@@ -559,6 +636,31 @@ struct StatsDashboardView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 280)
+
+                if let filter = selectedAgentFilter {
+                    Button {
+                        Haptics.light()
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selectedAgentFilter = nil
+                            updateSnapshot()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: filter.symbolName)
+                                .font(.system(size: 9))
+                            Text("已聚焦：\(filter.label)")
+                                .font(.system(size: Design.caption, weight: .medium))
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill((agentColor[filter] ?? Color.accentColor).opacity(0.15)))
+                        .foregroundStyle(agentColor[filter] ?? Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .help("点击取消聚焦，查看全部 Agent")
+                }
 
                 Spacer()
 
@@ -604,10 +706,6 @@ struct StatsDashboardView: View {
                     .padding(.vertical, 4)
                     Divider().opacity(0.5)
                 }
-                Text("净输入/输出/缓存列不含 Codex（数据源仅提供总量）")
-                    .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
             }
         }
     }
@@ -648,8 +746,11 @@ struct StatsDashboardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             sortHeader("合计", key: "total", current: dailySortKey, ascending: dailySortAsc, width: 110, action: { toggleDailySort("total") })
             sortHeader("净输入", key: "fresh", current: dailySortKey, ascending: dailySortAsc, width: 100, action: { toggleDailySort("fresh") })
+                .help("未命中缓存的首次输入 Tokens (Codex 本地库仅提供总量)")
             sortHeader("输出", key: "output", current: dailySortKey, ascending: dailySortAsc, width: 100, action: { toggleDailySort("output") })
+                .help("模型生成的 Output Tokens (Codex 本地库仅提供总量)")
             sortHeader("缓存", key: "cached", current: dailySortKey, ascending: dailySortAsc, width: 120, action: { toggleDailySort("cached") })
+                .help("命中的上下文缓存 Tokens (Codex 本地库仅提供总量)")
             sortHeader("会话", key: "sessions", current: dailySortKey, ascending: dailySortAsc, width: 60, action: { toggleDailySort("sessions") })
         }
         .padding(.vertical, 4)
@@ -896,7 +997,16 @@ struct StatsDashboardView: View {
         let trendMax = trendValues.max() ?? 0
 
         // 2. In-range stats
-        let current = inRange
+        let rawInRange = inRange
+        var agentTokens: [StatsAgent: Int] = [:]
+        var agentModelCounts: [StatsAgent: Int] = [:]
+        for agent in visibleAgents {
+            let recs = rawInRange.filter { $0.agent == agent }
+            agentTokens[agent] = recs.reduce(0) { $0 + $1.tokens }
+            agentModelCounts[agent] = Set(recs.map { $0.model ?? "unknown" }).count
+        }
+
+        let current = rawInRange.filter { selectedAgentFilter == nil || $0.agent == selectedAgentFilter }
         let inRangeTotalTokens = current.reduce(0) { $0 + $1.tokens }
         let breakdown = current.filter(\.hasBreakdown)
         let freshInput = breakdown.reduce(0) { $0 + $1.freshInput }
@@ -904,15 +1014,7 @@ struct StatsDashboardView: View {
         let outputTokens = breakdown.reduce(0) { $0 + $1.output }
         let totalInput = freshInput + cachedInput
         let cacheHitRate: Double = totalInput > 0 ? Double(cachedInput) / Double(totalInput) * 100 : 0
-        let hasCodexNotice = !breakdown.isEmpty && breakdown.count < current.count
-
-        var agentTokens: [StatsAgent: Int] = [:]
-        var agentModelCounts: [StatsAgent: Int] = [:]
-        for agent in visibleAgents {
-            let recs = current.filter { $0.agent == agent }
-            agentTokens[agent] = recs.reduce(0) { $0 + $1.tokens }
-            agentModelCounts[agent] = Set(recs.map { $0.model ?? "unknown" }).count
-        }
+        let hasCodexNotice = (selectedAgentFilter == nil || selectedAgentFilter == .codex) && !breakdown.isEmpty && breakdown.count < current.count
 
         let groupedDays = Dictionary(grouping: current) { rec -> String in
             let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))

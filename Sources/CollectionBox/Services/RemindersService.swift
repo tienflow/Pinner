@@ -9,6 +9,8 @@ struct ReminderItem: Identifiable, Equatable {
     /// EventKit raw priority: 0 = none, 1 = high, 5 = medium, 9 = low.
     let priority: Int
     let listName: String
+    var completionDate: Date? = nil
+    var listColorHex: String? = nil
 
     var priorityLabel: String {
         switch priority {
@@ -18,6 +20,9 @@ struct ReminderItem: Identifiable, Equatable {
         default: return ""
         }
     }
+
+    var isHighPriority: Bool { (1...4).contains(priority) }
+    var isMediumPriority: Bool { (5...8).contains(priority) }
 
     var isOverdue: Bool {
         guard let dueDate else { return false }
@@ -191,16 +196,67 @@ final class RemindersService {
                     if let due, due >= endOfToday {
                         return nil
                     }
+                    let listColor = Self.hexString(from: reminder.calendar.cgColor)
                     return ReminderItem(
                         id: reminder.calendarItemIdentifier,
                         title: reminder.title ?? "",
                         dueDate: due,
                         priority: reminder.priority,
-                        listName: reminder.calendar.title
+                        listName: reminder.calendar.title,
+                        listColorHex: listColor
                     )
                 }
                 continuation.resume(returning: items.sorted(by: ReminderItem.overviewOrder))
             }
         }
+    }
+
+    /// Completed reminders completed today.
+    func fetchCompletedToday() async -> [ReminderItem] {
+        guard isAuthorized else { return [] }
+        store.refreshSourcesIfNecessary()
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        guard let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday) else { return [] }
+        let calendars = store.calendars(for: .reminder)
+        guard !calendars.isEmpty else { return [] }
+
+        let predicate = store.predicateForCompletedReminders(withCompletionDateStarting: startOfToday, ending: endOfToday, calendars: calendars)
+        return await withCheckedContinuation { continuation in
+            store.fetchReminders(matching: predicate) { reminders in
+                let items = (reminders ?? []).compactMap { reminder -> ReminderItem? in
+                    guard reminder.isCompleted else { return nil }
+                    let due = reminder.dueDateComponents.flatMap { calendar.date(from: $0) }
+                    let listColor = Self.hexString(from: reminder.calendar.cgColor)
+                    return ReminderItem(
+                        id: reminder.calendarItemIdentifier,
+                        title: reminder.title ?? "",
+                        dueDate: due,
+                        priority: reminder.priority,
+                        listName: reminder.calendar.title,
+                        completionDate: reminder.completionDate,
+                        listColorHex: listColor
+                    )
+                }
+                // Sort newest completed first
+                let sorted = items.sorted { lhs, rhs in
+                    switch (lhs.completionDate, rhs.completionDate) {
+                    case let (l?, r?): return l > r
+                    case (_?, nil): return true
+                    case (nil, _?): return false
+                    case (nil, nil): return lhs.title < rhs.title
+                    }
+                }
+                continuation.resume(returning: sorted)
+            }
+        }
+    }
+
+    private static func hexString(from cgColor: CGColor?) -> String? {
+        guard let cgColor, let components = cgColor.components, components.count >= 3 else { return nil }
+        let r = Int(round(components[0] * 255.0))
+        let g = Int(round(components[1] * 255.0))
+        let b = Int(round(components[2] * 255.0))
+        return String(format: "#%02X%02X%02X", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
     }
 }

@@ -70,6 +70,7 @@ struct RootView: View {
     /// Temporary Drop Shelf mode: a scratchpad for files to drop in and drag out.
     @State private var showingShelf = false
     @State private var isShelfTabTargeted = false
+    @State private var isShelfContentTargeted = false
 
     // MARK: - Derived Data
 
@@ -231,6 +232,15 @@ struct RootView: View {
             }
             Button("取消", role: .cancel) { renamingEntryID = nil }
         }
+        .onChange(of: isShelfContentTargeted) { _, targeted in
+            if targeted { Haptics.light() }
+        }
+        .onChange(of: isShelfTabTargeted) { _, targeted in
+            if targeted { Haptics.light() }
+        }
+        .onChange(of: dropTargeted) { _, targeted in
+            if targeted { Haptics.light() }
+        }
     }
 
     // MARK: - Tab Bar
@@ -379,6 +389,9 @@ struct RootView: View {
                 VStack(spacing: 0) {
                     shelfHeader
                     Divider()
+                    if isShelfContentTargeted {
+                        shelfDropSlot
+                    }
                     ScrollViewReader { proxy in
                         Group {
                             if viewMode == .list { sectionedList() } else { sectionedGrid() }
@@ -389,7 +402,17 @@ struct RootView: View {
                         }
                     }
                 }
-                .onDrop(of: [.fileURL], isTargeted: nil) { handleShelfDrop(providers: $0) }
+                .overlay(
+                    Group {
+                        if isShelfContentTargeted {
+                            RoundedRectangle(cornerRadius: Design.radiusM)
+                                .strokeBorder(Color.accentColor, lineWidth: 2)
+                                .padding(4)
+                        }
+                    }
+                )
+                .onDrop(of: [.fileURL], isTargeted: $isShelfContentTargeted) { handleShelfDrop(providers: $0) }
+                .animation(.easeInOut(duration: 0.15), value: isShelfContentTargeted)
             }
         } else if showingRecents && !isSearching {
             if store.recentEntries().isEmpty {
@@ -426,30 +449,57 @@ struct RootView: View {
     }
 
     private var shelfEmptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Spacer()
-            Image(systemName: "shippingbox")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
-            Text("临时中转架")
+            Image(systemName: dropTargeted ? "shippingbox.fill" : "shippingbox")
+                .font(.system(size: 34))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.5))
+                .scaleEffect(dropTargeted ? 1.08 : 1.0)
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: dropTargeted)
+            Text(dropTargeted ? "松开以暂存文件" : "拖入文件即可暂存")
                 .font(.system(size: Design.body, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(shelfTrashOriginalOnDragOut
-                ? "拖入任意文件暂存 · 拖出自动物理剪切\n（源文件将自动移入废纸篓，可随时放回）"
-                : "拖入任意文件暂存 · 拖出即焚\n（偏好设置通用中可开启「物理剪切」）")
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary)
+            Text(shelfTrashOriginalOnDragOut ? "跨窗口中转 · 拖出自动剪切" : "跨窗口中转 · 拖出即用")
                 .font(.system(size: Design.caption))
                 .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: Design.radiusM)
+                .fill(dropTargeted ? Color.accentColor.opacity(0.06) : Color.clear)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: Design.radiusM)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                .strokeBorder(
+                    style: StrokeStyle(lineWidth: dropTargeted ? 2 : 1.5, dash: dropTargeted ? [6, 3] : [5, 3])
+                )
                 .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.25))
                 .padding(6)
         )
         .padding(6)
+        .animation(.easeInOut(duration: 0.15), value: dropTargeted)
+    }
+
+    private var shelfDropSlot: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 12))
+            Text("松开以添加至暂存架")
+                .font(.system(size: Design.caption, weight: .semibold))
+        }
+        .foregroundStyle(Color.accentColor)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 7)
+        .background(Color.accentColor.opacity(0.1))
+        .overlay(
+            RoundedRectangle(cornerRadius: Design.radiusS)
+                .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+        )
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     private var shelfHeader: some View {
@@ -724,18 +774,33 @@ struct RootView: View {
     // MARK: - Empty
 
     private var emptyState: some View {
-        VStack(spacing: 8) { Spacer()
-            Image(systemName: "tray.and.arrow.down").font(.system(size: 32)).foregroundStyle(.tertiary)
-            Text("拖拽文件到此处收藏，或点击下方 +").font(.system(size: Design.body)).foregroundStyle(.secondary)
-        Spacer() }
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: dropTargeted ? "tray.and.arrow.down.fill" : "tray.and.arrow.down")
+                .font(.system(size: 32))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.5))
+                .scaleEffect(dropTargeted ? 1.08 : 1.0)
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: dropTargeted)
+            Text(dropTargeted ? "松开以添加到收藏" : "拖拽文件到此处收藏，或点击下方 +")
+                .font(.system(size: Design.body, weight: dropTargeted ? .semibold : .regular))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary)
+            Spacer()
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: Design.radiusM)
+                .fill(dropTargeted ? Color.accentColor.opacity(0.06) : Color.clear)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: Design.radiusM)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                .strokeBorder(
+                    style: StrokeStyle(lineWidth: dropTargeted ? 2 : 1.5, dash: dropTargeted ? [6, 3] : [5, 3])
+                )
                 .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.25))
                 .padding(6)
         )
         .padding(6)
+        .animation(.easeInOut(duration: 0.15), value: dropTargeted)
     }
 
     // MARK: - Keyboard
@@ -840,6 +905,7 @@ struct RootView: View {
         }
         group.notify(queue: .main) {
             store.addShelfEntries(from: urls)
+            Haptics.success()
         }
         return true
     }
@@ -1014,6 +1080,7 @@ struct RootView: View {
         guard let path = BookmarkService.resolvedPath(entry.bookmarkData) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(path, forType: .string)
+        Haptics.success()
     }
 
     private func openInTerminal(_ entry: BookmarkEntry) {
@@ -1027,6 +1094,7 @@ struct RootView: View {
     }
 
     private func openEntry(_ entry: BookmarkEntry) {
+        Haptics.light()
         if let ti = tabIndex(of: entry.id) {
             BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
             store.recordOpen(entry.id, in: ti); flash(entry.id)
@@ -1100,6 +1168,7 @@ struct RootView: View {
     }
 
     private func handleShelfItemConsumed(entryIDs: [UUID], fileURL: URL) {
+        Haptics.levelChange()
         store.removeShelfEntries(entryIDs)
         pruneSelection()
 

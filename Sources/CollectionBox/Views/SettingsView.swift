@@ -314,14 +314,57 @@ public struct SettingsView: View {
 
     // MARK: - Tab 3: Todo AI
 
+    @AppStorage("CollectionBox.todoSnoozeHour") private var todoSnoozeHour: Int = 9
+    @AppStorage("CollectionBox.todoSnoozeMinute") private var todoSnoozeMinute: Int = 0
+
     private var todoAITab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                sectionCard(title: "待办偏好", icon: "clock.arrow.circlepath") {
+                    todoBehaviorSection
+                }
                 sectionCard(title: "模型服务配置", icon: "sparkles") {
                     TodoSettingsView()
                 }
             }
             .padding(20)
+        }
+    }
+
+    private var todoBehaviorSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("一键推迟默认时刻")
+                        .font(.system(size: 13, weight: .regular))
+                    Text("悬浮时钟按钮与 ⌘T 快捷键推迟到明天的具体时刻")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                DatePicker(
+                    "",
+                    selection: Binding<Date>(
+                        get: {
+                            let cal = Calendar.current
+                            var comps = cal.dateComponents([.year, .month, .day], from: Date())
+                            comps.hour = todoSnoozeHour
+                            comps.minute = todoSnoozeMinute
+                            return cal.date(from: comps) ?? Date()
+                        },
+                        set: { newDate in
+                            let cal = Calendar.current
+                            let comps = cal.dateComponents([.hour, .minute], from: newDate)
+                            todoSnoozeHour = comps.hour ?? 9
+                            todoSnoozeMinute = comps.minute ?? 0
+                        }
+                    ),
+                    displayedComponents: .hourAndMinute
+                )
+                .labelsHidden()
+                .datePickerStyle(.stepperField)
+                .frame(width: 85)
+            }
         }
     }
 

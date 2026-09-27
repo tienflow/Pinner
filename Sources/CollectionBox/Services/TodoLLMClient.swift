@@ -52,12 +52,9 @@ struct TodoLLMClient {
         }
     }
 
-    /// Pure parse of a `/chat/completions` response body (or direct JSON payload).
-    /// Returns nil when the body cannot be interpreted as our JSON schema
-    /// (which triggers the caller's fallback path).
-    static func parseResponse(_ data: Data) -> ParsedTask? {
-        // Step 1: Extract candidate JSON text.
-        // First try standard OpenAI /chat/completions schema: choices[0].message.content
+    /// Pure parse of a `/chat/completions` response body (or direct JSON payload) into an array of tasks.
+    /// Handles both a single JSON object `{"title": ...}` and a JSON array `[{"title": ...}, ...]`.
+    static func parseBatchResponse(_ data: Data) -> [ParsedTask] {
         var candidateText: String?
         struct ChatMessage: Decodable {
             let content: String?
@@ -74,13 +71,12 @@ struct TodoLLMClient {
            !content.isEmpty {
             candidateText = content
         } else {
-            // Otherwise, treat the data as a direct string (e.g. test mock or direct JSON)
             candidateText = String(data: data, encoding: .utf8)
         }
 
-        guard let rawText = candidateText else { return nil }
+        guard let rawText = candidateText else { return [] }
 
-        // Step 2: Strip reasoning tags like <think>...</think> (e.g. DeepSeek R1)
+        // Strip reasoning tags like <think>...</think> (e.g. DeepSeek R1)
         var cleaned = rawText
         if let regex = try? NSRegularExpression(pattern: "(?s)<think>.*?</think>", options: []) {
             cleaned = regex.stringByReplacingMatches(
@@ -95,13 +91,7 @@ struct TodoLLMClient {
         cleaned = cleaned
             .replacingOccurrences(of: "```json", with: "")
             .replacingOccurrences(of: "```", with: "")
-
-        // Find the outer balanced {...} region
-        guard let start = cleaned.firstIndex(of: "{"),
-              let end = cleaned.lastIndex(of: "}"),
-              start < end else { return nil }
-        let json = String(cleaned[start...end])
-        guard let jsonData = json.data(using: .utf8) else { return nil }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         struct AnyPriority: Decodable {
             var value: Int = 0
@@ -145,38 +135,67 @@ struct TodoLLMClient {
             let list: String?
             let fallback: Bool?
         }
-        guard let raw = try? JSONDecoder().decode(Raw.self, from: jsonData) else { return nil }
 
-        let due: Date?
-        if let dueStr = raw.due?.trimmingCharacters(in: .whitespacesAndNewlines), !dueStr.isEmpty {
-            due = parseDate(dueStr)
-        } else {
-            due = nil
-        }
-
-        let priority = raw.priority?.value ?? 0
-
-        let listName: String?
-        if let rawList = raw.list?.trimmingCharacters(in: .whitespacesAndNewlines), !rawList.isEmpty {
-            let lower = rawList.lowercased()
-            if ["null", "nil", "none", "默认", "无"].contains(lower) {
-                listName = nil
+        func makeTask(from raw: Raw) -> ParsedTask {
+            let due: Date?
+            if let dueStr = raw.due?.trimmingCharacters(in: .whitespacesAndNewlines), !dueStr.isEmpty {
+                due = parseDate(dueStr)
             } else {
-                listName = rawList
+                due = nil
             }
-        } else {
-            listName = nil
+            let priority = raw.priority?.value ?? 0
+            let listName: String?
+            if let rawList = raw.list?.trimmingCharacters(in: .whitespacesAndNewlines), !rawList.isEmpty {
+                let lower = rawList.lowercased()
+                if ["null", "nil", "none", "默认", "无"].contains(lower) {
+                    listName = nil
+                } else {
+                    listName = rawList
+                }
+            } else {
+                listName = nil
+            }
+            let title = raw.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return ParsedTask(
+                title: title,
+                due: due,
+                priority: priority,
+                list: listName,
+                fallback: raw.fallback ?? false
+            )
         }
 
-        let title = raw.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Branch 1: Try decoding as JSON Array `[...]`
+        if let arrayStart = cleaned.firstIndex(of: "["),
+           let arrayEnd = cleaned.lastIndex(of: "]"),
+           arrayStart < arrayEnd {
+            let jsonArray = String(cleaned[arrayStart...arrayEnd])
+            if let arrayData = jsonArray.data(using: .utf8),
+               let rawArray = try? JSONDecoder().decode([Raw].self, from: arrayData),
+               !rawArray.isEmpty {
+                return rawArray.map { makeTask(from: $0) }
+            }
+        }
 
-        return ParsedTask(
-            title: title,
-            due: due,
-            priority: priority,
-            list: listName,
-            fallback: raw.fallback ?? false
-        )
+        // Branch 2: Try decoding as single JSON Object `{...}`
+        if let start = cleaned.firstIndex(of: "{"),
+           let end = cleaned.lastIndex(of: "}"),
+           start < end {
+            let json = String(cleaned[start...end])
+            if let jsonData = json.data(using: .utf8),
+               let raw = try? JSONDecoder().decode(Raw.self, from: jsonData) {
+                return [makeTask(from: raw)]
+            }
+        }
+
+        return []
+    }
+
+    /// Pure parse of a `/chat/completions` response body (or direct JSON payload).
+    /// Returns nil when the body cannot be interpreted as our JSON schema
+    /// (which triggers the caller's fallback path).
+    static func parseResponse(_ data: Data) -> ParsedTask? {
+        parseBatchResponse(data).first
     }
 
     /// Flexible date parser supporting various ISO8601 and common datetime strings.
@@ -207,10 +226,8 @@ struct TodoLLMClient {
         return nil
     }
 
-    /// Calls the configured OpenAI-compatible endpoint. Returns nil when the
-    /// body is unparseable (caller falls back to storing the raw text);
-    /// throws on network / timeout / HTTP errors.
-    func parse(context: TodoPromptContext, config: TodoLLMConfig) async throws -> ParsedTask? {
+    /// Calls the configured OpenAI-compatible endpoint. Returns an array of tasks.
+    func parseAll(context: TodoPromptContext, config: TodoLLMConfig) async throws -> [ParsedTask] {
         guard !config.baseURL.isEmpty, !config.apiKey.isEmpty, !config.model.isEmpty else {
             throw TodoLLMError.notConfigured
         }
@@ -252,6 +269,14 @@ struct TodoLLMClient {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw TodoLLMError.httpStatus(http.statusCode)
         }
-        return Self.parseResponse(data)
+        return Self.parseBatchResponse(data)
+    }
+
+    /// Calls the configured OpenAI-compatible endpoint. Returns nil when the
+    /// body is unparseable (caller falls back to storing the raw text);
+    /// throws on network / timeout / HTTP errors.
+    func parse(context: TodoPromptContext, config: TodoLLMConfig) async throws -> ParsedTask? {
+        let tasks = try await parseAll(context: context, config: config)
+        return tasks.first
     }
 }

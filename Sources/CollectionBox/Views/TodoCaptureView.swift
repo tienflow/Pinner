@@ -18,11 +18,25 @@ struct TodoCaptureView: View {
     @State private var isParsing = false
     @State private var isFallbackCard = false
     @State private var completingIds: Set<String> = []
+    @State private var hoveredItemId: String?
+    @State private var undoAction: TodoUndoAction?
+    @State private var batchCards: [EditableTask] = []
+    @State private var isBatchPresent = false
+    @State private var completedTodayItems: [ReminderItem] = []
+    @State private var isCompletedExpanded = false
+    @AppStorage("CollectionBox.todoSnoozeHour") private var snoozeHour = 9
+    @AppStorage("CollectionBox.todoSnoozeMinute") private var snoozeMinute = 0
+
+    private enum TodoUndoAction {
+        case completed(item: ReminderItem)
+        case deleted(item: ReminderItem)
+    }
 
     private enum AuthState { case unknown, granted, denied }
 
     /// Fields under confirmation, all editable before saving.
-    struct EditableTask {
+    struct EditableTask: Identifiable {
+        var id = UUID()
         var title: String = ""
         var due: Date = Date()
         var hasDue: Bool = true
@@ -56,6 +70,7 @@ struct TodoCaptureView: View {
             Divider()
             inputSection
             if isCardPresent { confirmationCard }
+            if isBatchPresent { batchConfirmationCard }
             if authState == .denied { deniedRow }
             Divider()
             overviewHeader
@@ -63,6 +78,9 @@ struct TodoCaptureView: View {
                 emptyOverview
             } else {
                 overviewList
+            }
+            if !completedTodayItems.isEmpty {
+                completedSection
             }
             Spacer(minLength: 0)
             if let statusText { statusBar(text: statusText) }
@@ -78,14 +96,38 @@ struct TodoCaptureView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await reloadOverview() }
         }
+        .background(
+            Button("") {
+                performUndo()
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+        )
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 8) {
             Image(systemName: "checklist").font(.system(size: 13)).foregroundStyle(.secondary)
             Text("待办").font(.system(size: 13, weight: .semibold))
+
+            let completed = completedTodayItems.count
+            let total = completed + items.count
+            if total > 0 {
+                HStack(spacing: 3) {
+                    Image(systemName: completed == total ? "checkmark.circle.fill" : "circle.dashed")
+                        .font(.system(size: 8))
+                    Text("今日 \(completed)/\(total)")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(completed == total ? Color.green.opacity(0.15) : Color.secondary.opacity(0.12)))
+                .foregroundStyle(completed == total ? Color.green : Color.secondary)
+            }
+
             Spacer()
             if isCardPresent {
                 Text("确认后按 ⏎ 保存").font(.system(size: Design.micro)).foregroundStyle(.secondary)
@@ -180,6 +222,64 @@ struct TodoCaptureView: View {
         .padding(.bottom, 8)
     }
 
+    private var batchConfirmationCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("批量识别 (\(batchCards.count) 项)", systemImage: "list.bullet.rectangle")
+                    .font(.system(size: Design.caption, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Button("全部保存") { saveBatchCards() }
+                    .keyboardShortcut(.defaultAction)
+                Button("丢弃") { discardBatchCards() }
+                    .keyboardShortcut(.cancelAction)
+            }
+
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach($batchCards) { $item in
+                        HStack(spacing: 6) {
+                            NativeTextField(text: $item.title, placeholder: "任务标题")
+                                .frame(height: 20)
+                            if item.hasDue {
+                                Text(Self.dueText(item.due))
+                                    .font(.system(size: Design.micro))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 4).padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                            }
+                            if !item.list.isEmpty {
+                                Text(item.list)
+                                    .font(.system(size: Design.micro))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button {
+                                if let idx = batchCards.firstIndex(where: { $0.id == item.id }) {
+                                    batchCards.remove(at: idx)
+                                    if batchCards.isEmpty {
+                                        discardBatchCards()
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "xmark.circle")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("移除此项")
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .frame(maxHeight: 120)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: Design.radiusM).fill(Color(nsColor: .controlBackgroundColor)))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
     // MARK: - Authorization
 
     private var deniedRow: some View {
@@ -219,32 +319,214 @@ struct TodoCaptureView: View {
             .buttonStyle(.plain)
             .help("刷新提醒事项")
 
+            Button {
+                TodoSettingsWindowController.shared.show()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("待办偏好与 AI 设置")
+
             Text("\(items.count)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
         }.padding(.horizontal, 12).padding(.vertical, 6)
     }
 
     private var emptyOverview: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Spacer()
-            Image(systemName: "text.badge.checkmark").font(.system(size: 24)).foregroundStyle(.tertiary)
+            Image(systemName: "text.badge.checkmark").font(.system(size: 26)).foregroundStyle(.tertiary)
             Text("今天没有待办").font(.system(size: Design.caption)).foregroundStyle(.secondary)
             Spacer()
-        }.frame(maxHeight: 140)
+        }.frame(maxHeight: isCardPresent ? 130 : 220)
+    }
+
+    private var overdueItems: [ReminderItem] {
+        items.filter { $0.isOverdue }
+    }
+
+    private var todayItems: [ReminderItem] {
+        items.filter { $0.dueDate != nil && !$0.isOverdue }
+    }
+
+    private var undatedItems: [ReminderItem] {
+        items.filter { $0.dueDate == nil }
+    }
+
+    private func sectionHeader(title: String, count: Int, systemImage: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(color)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(color)
+            Text("\(count)")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.08))
     }
 
     private var overviewList: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(items) { item in
-                    overviewRow(item)
-                    Divider()
+                if !overdueItems.isEmpty {
+                    sectionHeader(title: "已逾期", count: overdueItems.count, systemImage: "exclamationmark.circle.fill", color: .red)
+                    ForEach(overdueItems) { item in
+                        overviewRow(item)
+                        Divider()
+                    }
+                }
+
+                if !todayItems.isEmpty {
+                    if !overdueItems.isEmpty || !undatedItems.isEmpty {
+                        sectionHeader(title: "今天到期", count: todayItems.count, systemImage: "sun.max.fill", color: .orange)
+                    }
+                    ForEach(todayItems) { item in
+                        overviewRow(item)
+                        Divider()
+                    }
+                }
+
+                if !undatedItems.isEmpty {
+                    sectionHeader(title: "随时 · 无到期日", count: undatedItems.count, systemImage: "tray.fill", color: .secondary)
+                    ForEach(undatedItems) { item in
+                        overviewRow(item)
+                        Divider()
+                    }
                 }
             }
-        }.frame(maxHeight: 140)
+        }
+        .frame(maxHeight: isCardPresent || isBatchPresent ? 130 : 250)
+    }
+
+    private var completedSection: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isCompletedExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isCompletedExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        Text("今日已完成 · \(completedTodayItems.count)")
+                            .font(.system(size: Design.caption, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button {
+                    copyCompletedSummary()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 9))
+                        Text("复制今日总结")
+                            .font(.system(size: Design.micro))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("将今日已完成任务复制为 Markdown 格式")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+
+            if isCompletedExpanded {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(completedTodayItems) { item in
+                            completedRow(item)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxHeight: 110)
+            }
+        }
+    }
+
+    private func completedRow(_ item: ReminderItem) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                uncompleteTask(item)
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("反选恢复为未完成")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: Design.body))
+                    .lineLimit(1)
+                    .strikethrough(true, color: .secondary)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let doneDate = item.completionDate {
+                Text(Self.timeFormatter.string(from: doneDate))
+                    .font(.system(size: Design.micro))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+    }
+
+    private func uncompleteTask(_ item: ReminderItem) {
+        do {
+            try service.setTaskCompleted(id: item.id, completed: false)
+            Haptics.light()
+            withAnimation(.easeOut(duration: 0.2)) {
+                completedTodayItems.removeAll { $0.id == item.id }
+            }
+            showStatus("已恢复至未完成：\(item.title)", positive: true)
+            Task { await reloadOverview() }
+        } catch {
+            showStatus("操作失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func copyCompletedSummary() {
+        guard !completedTodayItems.isEmpty else {
+            showStatus("暂无已完成待办可复制")
+            return
+        }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        let dateStr = df.string(from: Date())
+        var md = "### 今日工作总结 (\(dateStr))\n"
+        for item in completedTodayItems {
+            let timeStr = item.completionDate.map { " (\(Self.timeFormatter.string(from: $0)))" } ?? ""
+            md += "- [x] \(item.title)\(timeStr)\n"
+        }
+        let pboard = NSPasteboard.general
+        pboard.clearContents()
+        pboard.setString(md, forType: .string)
+        Haptics.success()
+        showStatus("已复制 \(completedTodayItems.count) 条今日总结到剪贴板", positive: true)
     }
 
     private func toggleComplete(_ item: ReminderItem) {
         guard !completingIds.contains(item.id) else { return }
+        Haptics.success()
         withAnimation(.easeInOut(duration: 0.15)) {
             _ = completingIds.insert(item.id)
         }
@@ -255,7 +537,11 @@ struct TodoCaptureView: View {
                 withAnimation(.easeOut(duration: 0.25)) {
                     items.removeAll { $0.id == item.id }
                     completingIds.remove(item.id)
+                    if hoveredItemId == item.id {
+                        hoveredItemId = nil
+                    }
                 }
+                undoAction = .completed(item: item)
                 showStatus("已完成：\(item.title)", positive: true)
             } catch {
                 _ = withAnimation {
@@ -268,6 +554,7 @@ struct TodoCaptureView: View {
 
     private func overviewRow(_ item: ReminderItem) -> some View {
         let isDone = completingIds.contains(item.id)
+        let isHovered = hoveredItemId == item.id
         return HStack(alignment: .center, spacing: 8) {
             Button {
                 toggleComplete(item)
@@ -293,12 +580,18 @@ struct TodoCaptureView: View {
                     }
                     if !item.priorityLabel.isEmpty {
                         Text(item.priorityLabel)
-                            .font(.system(size: Design.micro))
+                            .font(.system(size: Design.micro, weight: item.isHighPriority ? .semibold : .regular))
                             .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                            .background(Capsule().fill(priorityBgColor(for: item)))
+                            .foregroundStyle(priorityTextColor(for: item))
                     }
                     if !item.listName.isEmpty {
-                        Text(item.listName).font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(listColor(for: item))
+                                .frame(width: 5, height: 5)
+                            Text(item.listName).font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .opacity(isDone ? 0.5 : 1.0)
@@ -306,44 +599,77 @@ struct TodoCaptureView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { openRemindersApp() }
-            .contextMenu {
-                Button {
-                    snoozeTask(item, to: tomorrowDate)
-                } label: {
-                    Label("推迟到明天 (09:00)", systemImage: "clock.arrow.circlepath")
-                }
-                Button {
-                    snoozeTask(item, to: nextWeekDate)
-                } label: {
-                    Label("推迟到下周一 (09:00)", systemImage: "calendar.badge.clock")
-                }
-                if item.dueDate != nil {
-                    Button {
-                        snoozeTask(item, to: nil)
-                    } label: {
-                        Label("清除到期时间", systemImage: "xmark.circle")
+
+            if isHovered && !isDone {
+                HStack(spacing: 6) {
+                    TodoHoverSnoozeButton(timeText: snoozeTimeDescription) {
+                        snoozeTask(item, to: tomorrowDate)
+                    }
+                    TodoHoverDeleteButton {
+                        deleteTask(item)
                     }
                 }
-                Divider()
-                Button {
-                    openRemindersApp()
-                } label: {
-                    Label("在提醒事项中打开", systemImage: "arrow.up.forward.app")
-                }
-                Divider()
-                Button(role: .destructive) {
-                    deleteTask(item)
-                } label: {
-                    Label("删除待办", systemImage: "trash")
-                }
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: Design.radiusS)
+                .fill(isHovered ? Color(nsColor: .quaternaryLabelColor).opacity(0.4) : Color.clear)
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if hovering {
+                    hoveredItemId = item.id
+                } else if hoveredItemId == item.id {
+                    hoveredItemId = nil
+                }
+            }
+        }
+        .contextMenu {
+            Button {
+                snoozeTask(item, to: tomorrowDate)
+            } label: {
+                Label("推迟到明天 (\(snoozeTimeDescription))", systemImage: "clock.arrow.circlepath")
+            }
+            .keyboardShortcut("t", modifiers: .command)
+
+            Button {
+                snoozeTask(item, to: nextWeekDate)
+            } label: {
+                Label("推迟到下周一 (\(snoozeTimeDescription))", systemImage: "calendar.badge.clock")
+            }
+            .keyboardShortcut("m", modifiers: .command)
+
+            if item.dueDate != nil {
+                Button {
+                    snoozeTask(item, to: nil)
+                } label: {
+                    Label("清除到期时间", systemImage: "xmark.circle")
+                }
+            }
+            Divider()
+            Button {
+                openRemindersApp()
+            } label: {
+                Label("在提醒事项中打开", systemImage: "arrow.up.forward.app")
+            }
+            .keyboardShortcut("o", modifiers: .command)
+
+            Divider()
+            Button(role: .destructive) {
+                deleteTask(item)
+            } label: {
+                Label("删除待办", systemImage: "trash")
+            }
+            .keyboardShortcut(.delete, modifiers: .command)
+        }
     }
 
     private func snoozeTask(_ item: ReminderItem, to date: Date?) {
         do {
             try service.updateTaskDueDate(id: item.id, newDue: date)
+            Haptics.light()
             showStatus(date != nil ? "已推迟：\(item.title)" : "已清除到期时间", positive: true)
             Task { await reloadOverview() }
         } catch {
@@ -354,19 +680,72 @@ struct TodoCaptureView: View {
     private func deleteTask(_ item: ReminderItem) {
         do {
             try service.deleteTask(id: item.id)
+            Haptics.levelChange()
             withAnimation(.easeOut(duration: 0.2)) {
                 items.removeAll { $0.id == item.id }
+                if hoveredItemId == item.id {
+                    hoveredItemId = nil
+                }
             }
+            undoAction = .deleted(item: item)
             showStatus("已删除：\(item.title)", positive: true)
         } catch {
             showStatus("删除失败：\(error.localizedDescription)")
         }
     }
 
+    private func performUndo() {
+        guard let action = undoAction else { return }
+        undoAction = nil
+        Haptics.levelChange()
+        switch action {
+        case .completed(let item):
+            do {
+                try service.setTaskCompleted(id: item.id, completed: false)
+                withAnimation(.easeOut(duration: 0.2)) {
+                    if !items.contains(where: { $0.id == item.id }) {
+                        items.append(item)
+                        items.sort(by: ReminderItem.overviewOrder)
+                    }
+                }
+                showStatus("已恢复待办：\(item.title)", positive: true)
+            } catch {
+                showStatus("撤销失败：\(error.localizedDescription)")
+            }
+        case .deleted(let item):
+            do {
+                let newId = try service.createTask(
+                    title: item.title,
+                    due: item.dueDate,
+                    priority: item.priority,
+                    list: item.listName.isEmpty ? nil : item.listName
+                )
+                let restored = ReminderItem(
+                    id: newId,
+                    title: item.title,
+                    dueDate: item.dueDate,
+                    priority: item.priority,
+                    listName: item.listName
+                )
+                withAnimation(.easeOut(duration: 0.2)) {
+                    items.append(restored)
+                    items.sort(by: ReminderItem.overviewOrder)
+                }
+                showStatus("已恢复已删除待办：\(item.title)", positive: true)
+            } catch {
+                showStatus("恢复失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private var snoozeTimeDescription: String {
+        String(format: "%02d:%02d", snoozeHour, snoozeMinute)
+    }
+
     private var tomorrowDate: Date {
         let cal = Calendar.current
         let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) ?? Date()
-        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+        return cal.date(bySettingHour: snoozeHour, minute: snoozeMinute, second: 0, of: tomorrow) ?? tomorrow
     }
 
     private var nextWeekDate: Date {
@@ -375,7 +754,7 @@ struct TodoCaptureView: View {
         let weekday = cal.component(.weekday, from: now)
         let daysUntilMonday = (9 - weekday) % 7 == 0 ? 7 : (9 - weekday) % 7
         let nextMonday = cal.date(byAdding: .day, value: daysUntilMonday, to: now) ?? now
-        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: nextMonday) ?? nextMonday
+        return cal.date(bySettingHour: snoozeHour, minute: snoozeMinute, second: 0, of: nextMonday) ?? nextMonday
     }
 
     // MARK: - Status Bar
@@ -387,7 +766,14 @@ struct TodoCaptureView: View {
                 .foregroundStyle(statusIsPositive ? .green : .orange)
             Text(text).font(.system(size: Design.caption))
             Spacer()
-            if statusIsPositive {
+            if undoAction != nil {
+                Button("撤销 (⌘Z)") {
+                    performUndo()
+                }
+                .font(.system(size: Design.caption, weight: .semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+            } else if statusIsPositive {
                 Button("打开提醒事项") { openRemindersApp() }
                     .font(.system(size: Design.caption))
             }
@@ -397,8 +783,11 @@ struct TodoCaptureView: View {
     private func showStatus(_ text: String, positive: Bool = false) {
         statusText = text
         statusIsPositive = positive
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-            if statusText == text { statusText = nil }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            if statusText == text {
+                statusText = nil
+                undoAction = nil
+            }
         }
     }
 
@@ -416,6 +805,7 @@ struct TodoCaptureView: View {
 
     private func reloadOverview() async {
         items = await service.fetchTodayAndOverdue()
+        completedTodayItems = await service.fetchCompletedToday()
     }
 
     @State private var fallbackReason: String?
@@ -476,16 +866,31 @@ struct TodoCaptureView: View {
                 input: text, now: Date(),
                 lists: lists, lastList: UserDefaults.standard.string(forKey: "CollectionBox.todo.lastList")
             )
-            var result: ParsedTask?
+            var results: [ParsedTask] = []
             var caughtError: Error?
             do {
-                result = try await client.parse(context: context, config: config)
+                results = try await client.parseAll(context: context, config: config)
             } catch {
                 caughtError = error
-                result = nil
+                results = []
             }
 
-            if let result, !result.title.isEmpty {
+            if results.count > 1 {
+                // 多条待办批量识别
+                batchCards = results.map { res in
+                    let matchedList = matchedListName(res.list)
+                    return EditableTask(
+                        title: res.title,
+                        due: res.due ?? Date(),
+                        hasDue: res.due != nil,
+                        priority: res.priority,
+                        list: matchedList
+                    )
+                }
+                isBatchPresent = true
+                isCardPresent = false
+            } else if let result = results.first, !result.title.isEmpty {
+                // 单条待办识别
                 let matchedList = matchedListName(result.list)
                 card = EditableTask(
                     title: result.title,
@@ -499,23 +904,69 @@ struct TodoCaptureView: View {
                     fallbackReason = "未能识别明确时间，可手动选择"
                 }
                 isCardPresent = true
+                isBatchPresent = false
             } else {
-                // 降级：原文直接作为标题，无到期日
-                card = EditableTask(title: text, due: Date(), hasDue: false, priority: 0, list: "")
-                isFallbackCard = true
-                if let error = caughtError {
-                    let nsError = error as NSError
-                    if nsError.code == NSURLErrorTimedOut || error.localizedDescription.contains("timed out") || error.localizedDescription.contains("超时") {
-                        fallbackReason = "AI 请求超时，已按原文填入"
-                    } else {
-                        fallbackReason = "\(error.localizedDescription)，已按原文填入"
+                // 降级：检查多行输入
+                let lines = text.components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
+                if lines.count > 1 {
+                    batchCards = lines.map { line in
+                        EditableTask(title: line, due: Date(), hasDue: false, priority: 0, list: "")
                     }
+                    isBatchPresent = true
+                    isCardPresent = false
+                    showStatus("未能通过 AI 识别，已按多行拆分待办")
                 } else {
-                    fallbackReason = "未能识别时间，已按原文填入"
+                    card = EditableTask(title: text, due: Date(), hasDue: false, priority: 0, list: "")
+                    isFallbackCard = true
+                    if let error = caughtError {
+                        let nsError = error as NSError
+                        if nsError.code == NSURLErrorTimedOut || error.localizedDescription.contains("timed out") || error.localizedDescription.contains("超时") {
+                            fallbackReason = "AI 请求超时，已按原文填入"
+                        } else {
+                            fallbackReason = "\(error.localizedDescription)，已按原文填入"
+                        }
+                    } else {
+                        fallbackReason = "未能识别时间，已按原文填入"
+                    }
+                    isCardPresent = true
+                    isBatchPresent = false
                 }
-                isCardPresent = true
             }
         }
+    }
+
+    private func saveBatchCards() {
+        guard !batchCards.isEmpty else { return }
+        var savedCount = 0
+        for item in batchCards {
+            let trimmed = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            do {
+                try service.createTask(
+                    title: trimmed,
+                    due: item.hasDue ? item.due : nil,
+                    priority: item.priority,
+                    list: item.list.isEmpty ? nil : item.list
+                )
+                savedCount += 1
+            } catch {
+                showStatus("保存第 \(savedCount + 1) 项失败：\(error.localizedDescription)")
+                return
+            }
+        }
+        discardBatchCards()
+        input = ""
+        Haptics.success()
+        showStatus("已批量添加 \(savedCount) 条待办", positive: true)
+        Task { await reloadOverview() }
+    }
+
+    private func discardBatchCards() {
+        isBatchPresent = false
+        batchCards.removeAll()
     }
 
     private func saveCard() {
@@ -540,6 +991,7 @@ struct TodoCaptureView: View {
         }
         discardCard()
         input = ""
+        Haptics.success()
         if isFallbackCard {
             showStatus("已添加（未能解析时间）", positive: true)
         } else {
@@ -568,5 +1020,85 @@ struct TodoCaptureView: View {
             return
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
+    private func priorityBgColor(for item: ReminderItem) -> Color {
+        if item.isHighPriority {
+            return Color.red.opacity(0.14)
+        } else if item.isMediumPriority {
+            return Color.orange.opacity(0.14)
+        } else {
+            return Color.secondary.opacity(0.12)
+        }
+    }
+
+    private func priorityTextColor(for item: ReminderItem) -> Color {
+        if item.isHighPriority {
+            return Color.red
+        } else if item.isMediumPriority {
+            return Color.orange
+        } else {
+            return Color.secondary
+        }
+    }
+
+    private func listColor(for item: ReminderItem) -> Color {
+        if let hex = item.listColorHex, let c = Color(hexString: hex) {
+            return c
+        }
+        let palette: [Color] = [.blue, .orange, .purple, .green, .pink, .teal, .yellow]
+        let hash = abs(item.listName.hashValue)
+        return palette[hash % palette.count]
+    }
+}
+
+private struct TodoHoverSnoozeButton: View {
+    let timeText: String
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 11))
+                .foregroundStyle(isHovering ? Color.accentColor : Color.secondary)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("推迟到明天 \(timeText) (⌘T)")
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+}
+
+private struct TodoHoverDeleteButton: View {
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "trash")
+                .font(.system(size: 11))
+                .foregroundStyle(isHovering ? Color.red : Color.secondary)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("删除待办 (⌘⌫)")
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+}
+
+private extension Color {
+    init?(hexString: String) {
+        var str = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if str.hasPrefix("#") { str.removeFirst() }
+        guard str.count == 6, let val = UInt64(str, radix: 16) else { return nil }
+        let r = Double((val >> 16) & 0xFF) / 255.0
+        let g = Double((val >> 8) & 0xFF) / 255.0
+        let b = Double(val & 0xFF) / 255.0
+        self.init(red: r, green: g, blue: b)
     }
 }

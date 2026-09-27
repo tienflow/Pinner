@@ -49,7 +49,9 @@
 - **自然语言解析**：一句话 → 结构化任务（标题 / 到期 / 优先级 / 列表），由 OpenAI 兼容 API（自带 Key，Base URL / API Key / 模型名可配置，本地持久化无系统弹窗）解析后写入 macOS 提醒事项
 - **预览确认卡**：解析结果先浮出可编辑卡片，四字段均可改，⏎ 保存、⎋ 丢弃
 - **失败降级**：断网 / 超时（5s）/ 响应不可解析时，原文直接作为任务标题保存（无到期日），不阻断录入
-- **今日概览**：面板下半区实时显示「今天 + 已逾期」未完成条目，可直接勾选标记完成，支持右键快捷推迟（推迟到明天 09:00、推迟到下周一 09:00、清除到期日）、跳转系统提醒事项或直接删除
+- **今日概览**：面板下半区自适应弹性撑开（自适应最高 280pt，一屏尽览 8+ 条任务），支持「已逾期 / 今天到期 / 随时无到期日」三段式轻量分组；悬浮快速操作（一键推迟、一键删除）、右键原生快捷键映射（⌘T 推迟到明天、⌘M 推迟到下周一、⌘O 打开提醒事项、⌘⌫ 删除待办）；支持全局 ⌘Z 或状态栏一键撤销（防误完成/误删除）、跳转系统提醒事项
+- **多行批量录入**：支持单次输入或粘贴多行文本，AI 自动拆解多项任务并唤出批量确认卡，支持单独修改/剔除与一键「全部保存 (⏎)」；失败降级时自动按多行分别拆分入库
+- **今日已完成与日报小结**：底部常驻「今日已完成 · N」折叠列表（支持反选恢复），提供「复制今日总结」一键将当日完成条目格式化导出为 Markdown（带完成时间），写日报周报极速闭环
 - **快捷键直达**：可自定义全局快捷键（默认未设置，可于偏好设置随时录制）
 
 **通用与偏好设置**
@@ -57,10 +59,11 @@
 - **统一偏好设置面板 (`⌘,`)**：
   - **通用**：开机自启开关（`SMAppService`）、外观主题（自动 / 浅色 / 深色）、参与统计的 Agent 勾选（双向联动）
   - **快捷键**：可视化呈现总览、收藏夹、OTP、待办及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
-  - **待办 AI**：配置 Base URL、API Key、Model Name，支持连通性一键测试与状态提示
-- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换近 7 天 / 30 天 / 全部 / 自定义日期；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
+  - **待办偏好与 AI**：支持自定义「一键推迟默认时刻」（自选时分，默认 09:00），悬浮时钟与 ⌘T 自动同步该时刻；配置 Base URL、API Key、Model Name，支持连通性一键测试与状态提示
+- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
 - **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
+- **Taptic 震动触感反馈**：深度适配 Mac Force Touch 触控板，在待办勾选完成、批量保存、验证码与路径复制、任务删除、撤销恢复、暂存架拖出即焚等高频场景中提供原生清脆的物理触感反馈（外接普通鼠标或不支持设备上自动静默忽略）
 
 产品落地页位于 `landing/`（单文件静态页，字体已内联，可部署到任意静态托管）。
 
@@ -79,7 +82,7 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent）
-│   ├── Services/               # BookmarkService + OTPService + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
+│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
 │   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
 │   └── AppKit/                 # AppKit 集成
@@ -164,7 +167,7 @@ DSH 统计              ← 打开 DSH 紧凑统计面板
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.6.0.dmg`
+2. 下载最新版本的 `Pinner-v1.7.0.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 

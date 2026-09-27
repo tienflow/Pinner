@@ -96,7 +96,10 @@ struct OTPView: View {
         .contextMenu {
             Button("复制验证码") { copyCode(code, id: account.id) }
             Divider()
-            Button("删除", role: .destructive) { store.removeAccount(account.id) }
+            Button("删除", role: .destructive) {
+                store.removeAccount(account.id)
+                Haptics.levelChange()
+            }
         }
     }
 
@@ -116,6 +119,7 @@ struct OTPView: View {
     private func copyCode(_ code: String, id: UUID) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
+        Haptics.success()
         withAnimation { copiedID = id }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             if copiedID == id { withAnimation { copiedID = nil } }

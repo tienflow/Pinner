@@ -585,6 +585,17 @@ func testTodoLLMParseResponse() {
     } else {
         check(false, "parse string num priority returns task")
     }
+
+    // 批量数组解析测试
+    let batchJson = """
+    [
+      {"title":"买牛奶","due":null,"priority":0,"list":"日常","fallback":false},
+      {"title":"写周报","due":"2026-09-25T17:00:00+08:00","priority":1,"list":"工作","fallback":false}
+    ]
+    """
+    let batchTasks = TodoLLMClient.parseBatchResponse(Data(batchJson.utf8))
+    check(batchTasks.count == 2, "parseBatchResponse parses 2 tasks")
+    check(batchTasks.count == 2 && batchTasks[0].title == "买牛奶" && batchTasks[1].priority == 1, "parseBatchResponse fields intact")
 }
 
 @MainActor
@@ -605,6 +616,8 @@ func testReminderCompletionModel() {
     let item = ReminderItem(id: "test-id", title: "测试待办", dueDate: Date(), priority: 1, listName: "工作")
     check(item.priorityLabel == "高", "reminder priorityLabel high")
     check(!item.title.isEmpty, "reminder has title")
+    let completedItem = ReminderItem(id: "c-id", title: "已完成待办", dueDate: nil, priority: 0, listName: "工作", completionDate: Date())
+    check(completedItem.completionDate != nil, "reminder carries completionDate")
 }
 
 @MainActor
