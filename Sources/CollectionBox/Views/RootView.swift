@@ -193,9 +193,11 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            tabBar; Divider(); searchBar; Divider(); entryContent; Divider(); bottomBar
+            topBar; tabBar; Divider().opacity(0.35); searchBar; Divider().opacity(0.35); entryContent; Divider().opacity(0.35); bottomBar
         }
         .frame(minWidth: 280, idealWidth: 320, minHeight: 400)
+        .liquidGlassBackground(cornerRadius: Design.radiusL)
+        .ignoresSafeArea()
         .onAppear {
             if selectedTabID == nil { selectedTabID = store.tabs.first?.id }
             isPinnedState = UserDefaults.standard.bool(forKey: "CollectionBox.isPinned")
@@ -243,7 +245,39 @@ struct RootView: View {
         }
     }
 
-    // MARK: - Tab Bar
+    // MARK: - Top Window Control Bar & Tab Bar
+
+    private var topBar: some View {
+        HStack(spacing: 6) {
+            Spacer()
+            Button(action: { onPinToggle?(); isPinnedState.toggle() }) {
+                Image(systemName: isPinnedState ? "pin.fill" : "pin.slash")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isPinnedState ? .orange : .secondary)
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain).fixedSize()
+                .help(isPinnedState ? "取消置顶（点击外部会隐藏）" : "置顶（点击外部不隐藏）")
+                .accessibilityLabel(isPinnedState ? "取消置顶面板" : "置顶面板")
+
+            Button(action: { viewMode = viewMode == .list ? .grid : .list; UserDefaults.standard.set(viewMode.rawValue, forKey: "CollectionBox.viewMode") }) {
+                Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain).fixedSize()
+                .help(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
+                .accessibilityLabel(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
+
+            Button(action: { newTabName = ""; isShowingNewTabAlert = true }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain).fixedSize()
+                .help("新建收藏夹").accessibilityLabel("新建收藏夹")
+        }
+        .frame(height: 26)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+    }
 
     private var tabBar: some View {
         HStack(spacing: 4) {
@@ -253,7 +287,7 @@ struct RootView: View {
                     Image(systemName: "clock").font(.system(size: 11, weight: .medium))
                     Text("最近").font(.system(size: Design.ui, weight: showingRecents ? .semibold : .regular))
                 }
-                .padding(.horizontal, 10).padding(.vertical, 4)
+                .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(showingRecents ? Color.accentColor.opacity(Design.selectedAlpha) : Color.clear, in: Capsule())
                 .foregroundStyle(showingRecents ? Color.accentColor : Color.secondary)
             }
@@ -268,7 +302,7 @@ struct RootView: View {
                     Text(store.shelfEntries.isEmpty ? "暂存" : "暂存 \(store.shelfEntries.count)")
                         .font(.system(size: Design.ui, weight: showingShelf ? .semibold : .regular))
                 }
-                .padding(.horizontal, 10).padding(.vertical, 4)
+                .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(
                     isShelfTabTargeted
                         ? Color.accentColor.opacity(0.35)
@@ -294,29 +328,10 @@ struct RootView: View {
                     }
                 }
             }
-            .layoutPriority(1)
-            Button(action: { onPinToggle?(); isPinnedState.toggle() }) {
-                Image(systemName: isPinnedState ? "pin.fill" : "pin.slash")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(isPinnedState ? .orange : .secondary)
-                    .frame(width: 22, height: 22).contentShape(Rectangle())
-            }.buttonStyle(.plain).fixedSize()
-                .help(isPinnedState ? "取消置顶（点击外部会隐藏）" : "置顶（点击外部不隐藏）")
-                .accessibilityLabel(isPinnedState ? "取消置顶面板" : "置顶面板")
-            Button(action: { viewMode = viewMode == .list ? .grid : .list; UserDefaults.standard.set(viewMode.rawValue, forKey: "CollectionBox.viewMode") }) {
-                Image(systemName: viewMode == .list ? "square.grid.2x2" : "list.bullet")
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: 22, height: 22).contentShape(Rectangle())
-            }.buttonStyle(.plain).fixedSize()
-                .help(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
-                .accessibilityLabel(viewMode == .list ? "切换到宫格视图" : "切换到列表视图")
-            Button(action: { newTabName = ""; isShowingNewTabAlert = true }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: 22, height: 22).contentShape(Rectangle())
-            }.buttonStyle(.plain).fixedSize()
-                .help("新建收藏夹").accessibilityLabel("新建收藏夹")
-        }.padding(.horizontal, 12).padding(.vertical, 6)
+        }
+        .frame(height: 30)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 2)
     }
 
     private func tabButton(for tab: CollectionTab) -> some View {
@@ -375,7 +390,10 @@ struct RootView: View {
             Menu { ForEach(SortOrder.allCases, id: \.self) { o in Button { sortOrder = o; UserDefaults.standard.set(o.rawValue, forKey: "CollectionBox.sortOrder") } label: { HStack { Text(o.label); if sortOrder == o { Image(systemName: "checkmark") } } } } }
             label: { Image(systemName: "arrow.up.arrow.down").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary) }.menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("排序方式")
-        }.padding(.horizontal, 12).padding(.vertical, 6)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .liquidGlassCard(cornerRadius: Design.radiusM)
+        .padding(.horizontal, 10).padding(.vertical, 4)
     }
 
     // MARK: - Entry Content
@@ -589,7 +607,9 @@ struct RootView: View {
             } else {
                 ForEach(sec.entries) { entry in listRow(entry) }
             }
-        }}.listStyle(.plain)
+        }}
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 
     private func listRow(_ entry: BookmarkEntry) -> some View {

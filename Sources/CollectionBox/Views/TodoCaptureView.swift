@@ -67,12 +67,12 @@ struct TodoCaptureView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Divider().opacity(0.35)
             inputSection
             if isCardPresent { confirmationCard }
             if isBatchPresent { batchConfirmationCard }
             if authState == .denied { deniedRow }
-            Divider()
+            Divider().opacity(0.35)
             overviewHeader
             if items.isEmpty {
                 emptyOverview
@@ -89,6 +89,8 @@ struct TodoCaptureView: View {
         // taller than the content rect because of fullSizeContentView, so a
         // fixed frame here would float centered under the titlebar.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .liquidGlassBackground(cornerRadius: Design.radiusL)
+        .ignoresSafeArea()
         .task { await refreshAll() }
         .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged)) { _ in
             Task { await reloadOverview() }
@@ -110,29 +112,39 @@ struct TodoCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            Spacer().frame(width: 58)
             Image(systemName: "checklist").font(.system(size: 13)).foregroundStyle(.secondary)
             Text("待办").font(.system(size: 13, weight: .semibold))
 
             let completed = completedTodayItems.count
             let total = completed + items.count
             if total > 0 {
-                HStack(spacing: 3) {
-                    Image(systemName: completed == total ? "checkmark.circle.fill" : "circle.dashed")
-                        .font(.system(size: 8))
+                let isAllDone = completed == total
+                HStack(spacing: 4) {
+                    Image(systemName: isAllDone ? "checkmark.circle.fill" : "circle.dashed")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(isAllDone ? Color.green : Color.secondary)
                     Text("今日 \(completed)/\(total)")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.primary)
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(completed == total ? Color.green.opacity(0.15) : Color.secondary.opacity(0.12)))
-                .foregroundStyle(completed == total ? Color.green : Color.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule().fill(isAllDone ? Color.green.opacity(0.16) : Color.secondary.opacity(0.10))
+                )
+                .overlay(
+                    Capsule().strokeBorder(isAllDone ? Color.green.opacity(0.45) : Color.secondary.opacity(0.2), lineWidth: 0.5)
+                )
             }
 
             Spacer()
             if isCardPresent {
                 Text("确认后按 ⏎ 保存").font(.system(size: Design.micro)).foregroundStyle(.secondary)
             }
-        }.padding(.horizontal, 12).padding(.vertical, 8)
+        }
+        .frame(height: 32)
+        .padding(.horizontal, 12)
     }
 
     // MARK: - Input
@@ -150,8 +162,7 @@ struct TodoCaptureView: View {
                 submitInput()
             }
             .frame(height: inputHeight)
-            .background(RoundedRectangle(cornerRadius: Design.radiusM).fill(Color(nsColor: .textBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: Design.radiusM).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
+            .liquidGlassCard(cornerRadius: Design.radiusM)
             .disabled(isParsing)
             HStack(spacing: 6) {
                 if isParsing {
@@ -217,7 +228,7 @@ struct TodoCaptureView: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: Design.radiusM).fill(Color(nsColor: .controlBackgroundColor)))
+        .liquidGlassCard(cornerRadius: Design.radiusM)
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
     }
@@ -275,7 +286,7 @@ struct TodoCaptureView: View {
             .frame(maxHeight: 120)
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: Design.radiusM).fill(Color(nsColor: .controlBackgroundColor)))
+        .liquidGlassCard(cornerRadius: Design.radiusM)
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
     }
@@ -379,7 +390,7 @@ struct TodoCaptureView: View {
                     sectionHeader(title: "已逾期", count: overdueItems.count, systemImage: "exclamationmark.circle.fill", color: .red)
                     ForEach(overdueItems) { item in
                         overviewRow(item)
-                        Divider()
+                        Divider().opacity(0.35)
                     }
                 }
 
@@ -389,7 +400,7 @@ struct TodoCaptureView: View {
                     }
                     ForEach(todayItems) { item in
                         overviewRow(item)
-                        Divider()
+                        Divider().opacity(0.35)
                     }
                 }
 
@@ -397,7 +408,7 @@ struct TodoCaptureView: View {
                     sectionHeader(title: "随时 · 无到期日", count: undatedItems.count, systemImage: "tray.fill", color: .secondary)
                     ForEach(undatedItems) { item in
                         overviewRow(item)
-                        Divider()
+                        Divider().opacity(0.35)
                     }
                 }
             }
@@ -407,7 +418,7 @@ struct TodoCaptureView: View {
 
     private var completedSection: some View {
         VStack(spacing: 0) {
-            Divider()
+            Divider().opacity(0.35)
             HStack(spacing: 6) {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -449,7 +460,7 @@ struct TodoCaptureView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(completedTodayItems) { item in
                             completedRow(item)
-                            Divider()
+                            Divider().opacity(0.35)
                         }
                     }
                 }

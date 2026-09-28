@@ -13,26 +13,32 @@ struct CodexStatsView: View {
         VStack(spacing: 0) {
             rangePicker
             metricContent
-            Divider()
+            Divider().opacity(0.35)
             trendChart
             bottomBar
         }
         .frame(minWidth: 360, idealWidth: 400, minHeight: 300)
+        .liquidGlassBackground(cornerRadius: Design.radiusL)
+        .ignoresSafeArea()
         .onAppear { refresh() }
     }
 
     // MARK: - Picker
 
     private var rangePicker: some View {
-        Picker("时间范围", selection: $selectedRange) {
-            ForEach(StatsTimeRange.allCases) { range in
-                Text(range.title).tag(range)
+        HStack(spacing: 8) {
+            Spacer().frame(width: 58)
+            Picker("时间范围", selection: $selectedRange) {
+                ForEach(StatsTimeRange.allCases) { range in
+                    Text(range.title).tag(range)
+                }
             }
+            .pickerStyle(.segmented)
         }
-        .pickerStyle(.segmented)
+        .frame(height: 32)
         .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
         .onChange(of: selectedRange) { _, _ in refresh() }
     }
 
@@ -69,9 +75,8 @@ struct CodexStatsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.secondary.opacity(Design.slotAlpha))
-        .cornerRadius(Design.radiusM)
+        .padding(.vertical, 8)
+        .liquidGlassCard(cornerRadius: Design.radiusM)
     }
 
     private func trendView(_ value: Double) -> some View {

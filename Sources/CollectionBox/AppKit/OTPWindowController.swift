@@ -27,7 +27,7 @@ final class OTPWindowController: NSObject {
     func showAtMenuBar(buttonFrame: NSRect) {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 280, h: CGFloat = 400
+        let w: CGFloat = 330, h: CGFloat = 440
         let x = buttonFrame.maxX - w
         let y = buttonFrame.origin.y - h - 2
         let frame = NSRect(x: x, y: y, width: w, height: h)
@@ -39,7 +39,7 @@ final class OTPWindowController: NSObject {
     func showAtMouse(autoCopy: Bool = false) {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 280, h: CGFloat = 400
+        let w: CGFloat = 330, h: CGFloat = 440
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
         let x: CGFloat
@@ -58,8 +58,8 @@ final class OTPWindowController: NSObject {
                         styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                         backing: .buffered, defer: true)
         p.level = .floating
-        p.isOpaque = true
-        p.backgroundColor = .windowBackgroundColor
+        p.isOpaque = false
+        p.backgroundColor = .clear
         p.hasShadow = true
         p.titlebarAppearsTransparent = true
         p.titleVisibility = .hidden

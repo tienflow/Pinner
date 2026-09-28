@@ -64,6 +64,7 @@
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
 - **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
 - **Taptic 震动触感反馈**：深度适配 Mac Force Touch 触控板，在待办勾选完成、批量保存、验证码与路径复制、任务删除、撤销恢复、暂存架拖出即焚等高频场景中提供原生清脆的物理触感反馈（外接普通鼠标或不支持设备上自动静默忽略）
+- **macOS 26 原生 Liquid Glass (质感玻璃) 视觉体验**：全应用浮动面板、卡片与数据总览深度接入 macOS 26 原生 `NSGlassEffectView` 与 `NSGlassEffectContainerView` 质感玻璃元材质，拥有边缘物理折射、倒角景深与镜面高光；独创底层 90%~94% 系统底衬的光学物理分层架构，兼顾晶莹高级通透感与极致锐利的高反差可读性（旧版系统优雅平滑降级）
 
 产品落地页位于 `landing/`（单文件静态页，字体已内联，可部署到任意静态托管）。
 
@@ -74,7 +75,7 @@
 - Security-Scoped Bookmarks（安全持久化文件访问）
 - Carbon API（全局快捷键）
 - RFC 6238 TOTP（HMAC-SHA1，6 位，30 秒周期）
-- macOS 14+ (Sonoma)
+- macOS 14+ (Sonoma) / 深度适配 macOS 26 Liquid Glass 质感玻璃架构
 
 ## 项目结构
 

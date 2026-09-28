@@ -13,14 +13,16 @@ struct OTPView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Divider().opacity(0.35)
             if store.accounts.isEmpty {
                 emptyState
             } else {
                 accountList
             }
         }
-        .frame(minWidth: 260, idealWidth: 280, minHeight: 360, idealHeight: 400)
+        .frame(minWidth: 300, idealWidth: 330, minHeight: 380, idealHeight: 440)
+        .liquidGlassBackground(cornerRadius: Design.radiusL)
+        .ignoresSafeArea()
         .onReceive(timer) { now = $0 }
         .onAppear {
             if autoCopyOnAppear, let first = store.accounts.first,
@@ -34,22 +36,30 @@ struct OTPView: View {
 
     private var header: some View {
         HStack {
+            Spacer().frame(width: 58)
             Image(systemName: "key.2").font(.system(size: 13)).foregroundStyle(.secondary)
             Text("OTP 验证码").font(.system(size: 13, weight: .semibold))
             Spacer()
             Button(action: { onAddRequested?() }) {
                 Image(systemName: "plus").font(.system(size: 12))
             }.buttonStyle(.plain)
-        }.padding(.horizontal, 12).padding(.vertical, 8)
+        }
+        .frame(height: 32)
+        .padding(.horizontal, 12)
     }
 
     // MARK: - Account List
 
     private var accountList: some View {
-        List { ForEach(store.accounts) { account in
-            accountRow(account)
-        }}
-        .listStyle(.plain)
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 12) {
+                ForEach(store.accounts) { account in
+                    accountRow(account)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
     }
 
     private func accountRow(_ account: OTPAccount) -> some View {
@@ -60,28 +70,31 @@ struct OTPView: View {
         let isCopied = copiedID == account.id
         let isUrgent = countdown <= 10
 
-        return VStack(spacing: 4) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
+        return VStack(spacing: 8) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 3) {
                     if !account.issuer.isEmpty {
-                        Text(account.issuer).font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text(account.issuer).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                     }
-                    Text(account.name).font(.system(size: Design.body, weight: .medium)).lineLimit(1)
+                    Text(account.name).font(.system(size: Design.body, weight: .semibold)).lineLimit(1)
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 Button(action: { copyCode(code, id: account.id) }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Text(code)
-                            .font(.system(size: 18, weight: .medium, design: .monospaced))
+                            .font(.system(size: 19, weight: .semibold, design: .monospaced))
                             .foregroundStyle(isCopied ? .green : isUrgent ? .red : .primary)
                         Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundStyle(isCopied ? .green : .secondary)
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(isCopied ? 0.15 : 0.08), in: RoundedRectangle(cornerRadius: 6))
                 }.buttonStyle(.plain)
             }
-            HStack {
-                Text("\(countdown)s").font(.system(size: Design.micro)).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("\(countdown)s").font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.secondary)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 2).fill(Color.secondary.opacity(0.12)).frame(height: 4)
@@ -92,7 +105,8 @@ struct OTPView: View {
                 }.frame(height: 4)
             }
         }
-        .padding(.vertical, 4).padding(.horizontal, 4)
+        .padding(.vertical, 12).padding(.horizontal, 14)
+        .liquidGlassCard(cornerRadius: Design.radiusM)
         .contextMenu {
             Button("复制验证码") { copyCode(code, id: account.id) }
             Divider()

@@ -10,9 +10,13 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
     func show() {
         if window == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
-                             styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
             w.title = "总览"
+            w.titlebarAppearsTransparent = true
+            w.isOpaque = false
+            w.backgroundColor = .clear
+            w.hasShadow = true
             w.isReleasedWhenClosed = false
             w.setFrameAutosaveName("PinnerDashboardWindow")
             w.contentView = NSHostingView(rootView: StatsDashboardView())

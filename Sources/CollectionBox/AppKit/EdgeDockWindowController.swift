@@ -90,7 +90,7 @@ final class EdgeDockWindowController: NSObject {
 
     private func showPanel(in frame: NSRect) {
         let p = KeyPanel(contentRect: frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: true)
-        p.level = .floating; p.isOpaque = true; p.backgroundColor = .windowBackgroundColor; p.hasShadow = true
+        p.level = .floating; p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true
         p.titlebarAppearsTransparent = true; p.titleVisibility = .hidden; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; p.isMovableByWindowBackground = false; p.delegate = self
         p.quickLookSource = quickLookSource

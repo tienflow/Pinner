@@ -109,10 +109,12 @@ struct StatsDashboardView: View {
         HStack(alignment: .top, spacing: 0) {
             sidebar
                 .frame(width: 300)
-            Divider()
+            Divider().opacity(0.35)
             mainArea
         }
         .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
+        .liquidGlassBackground(cornerRadius: 16)
+        .ignoresSafeArea()
         .onAppear { reload() }
         .onChange(of: range) { _, _ in updateSnapshot() }
         .onChange(of: customStart) { _, _ in if range == .custom { updateSnapshot() } }
@@ -165,7 +167,9 @@ struct StatsDashboardView: View {
                 sidebarHeatmapCard
                 sidebarTrendCard
             }
-            .padding(14)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
+            .padding(.top, 36)
         }
     }
 
@@ -403,7 +407,9 @@ struct StatsDashboardView: View {
                 agentCards
                 detailTabs
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+            .padding(.top, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

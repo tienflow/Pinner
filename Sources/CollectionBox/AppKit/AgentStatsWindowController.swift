@@ -63,8 +63,8 @@ final class AgentStatsWindowController: NSObject {
                                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                                    backing: .buffered, defer: true)
         p.level = .floating
-        p.isOpaque = true
-        p.backgroundColor = .windowBackgroundColor
+        p.isOpaque = false
+        p.backgroundColor = .clear
         p.hasShadow = true
         p.titlebarAppearsTransparent = true
         p.titleVisibility = .hidden

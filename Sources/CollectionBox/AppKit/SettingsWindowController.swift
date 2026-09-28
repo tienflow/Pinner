@@ -14,11 +14,17 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         if window == nil {
             let w = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 520, height: 580),
-                styleMask: [.titled, .closable, .miniaturizable],
+                styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
             w.title = "Pinner 设置"
+            w.isOpaque = false
+            w.backgroundColor = .clear
+            w.hasShadow = true
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isMovableByWindowBackground = true
             w.isReleasedWhenClosed = false
             w.setContentSize(NSSize(width: 520, height: 580))
             w.delegate = self

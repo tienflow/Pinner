@@ -34,17 +34,20 @@ public struct SettingsView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Tab Header
+            // Unified Titlebar & Tab Header
             HStack(spacing: 4) {
+                Spacer().frame(width: 68)
+                Spacer()
                 ForEach(SettingsTab.allCases) { tab in
                     tabButton(for: tab)
                 }
+                Spacer()
+                Spacer().frame(width: 68)
             }
+            .frame(height: 50)
             .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
 
-            Divider()
+            Divider().opacity(0.35)
 
             // Content Area
             Group {
@@ -59,8 +62,9 @@ public struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 520, height: 580)
-        .background(Color(NSColor.windowBackgroundColor))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .liquidGlassBackground(cornerRadius: 16)
+        .ignoresSafeArea()
     }
 
     // MARK: - Tab Selector Button
