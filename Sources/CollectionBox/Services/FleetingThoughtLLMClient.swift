@@ -130,7 +130,7 @@ public struct FleetingThoughtLLMClient {
             folder: folder.isEmpty ? "Notes" : folder,
             targetNoteTitle: title.isEmpty ? "灵感闪念" : title,
             mode: mode,
-            formattedContent: defaultInput,
+            formattedContent: content,
             confidence: decoded.confidence ?? 0.9,
             fallback: false
         )

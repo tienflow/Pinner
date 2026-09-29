@@ -27,7 +27,7 @@ public final class StatsAgentSelection: ObservableObject {
     }
 }
 
-public enum StatsAgent: String, CaseIterable, Sendable {    case codex, gemini, workbuddy, zcode, dsh
+public enum StatsAgent: String, CaseIterable, Sendable, Codable {    case codex, gemini, workbuddy, zcode, dsh
 
     var label: String {        switch self {
         case .codex: return "Codex"
@@ -60,6 +60,7 @@ struct UnifiedUsageRecord: Sendable {
     let output: Int
     let hasBreakdown: Bool  // false → only `tokens` is meaningful (Codex)
     let sessionId: String
+    let durationMs: Int?    // nil when the source has no duration (Codex, WorkBuddy)
 }
 
 /// Aggregates all three agents' local usage into one record stream for the
@@ -80,31 +81,35 @@ final class StatsDashboardService {
             return codex.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
                 UnifiedUsageRecord(agent: .codex, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: 0, cached: 0, output: 0,
-                                   hasBreakdown: false, sessionId: $0.sessionId)
+                                   hasBreakdown: false, sessionId: $0.sessionId, durationMs: nil)
             }
         case .gemini:
             return gemini.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
                 UnifiedUsageRecord(agent: .gemini, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
-                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,
+                                   durationMs: $0.durationMs)
             }
         case .workbuddy:
             return workbuddy.collectRecords(sinceMs: sinceMs).map {
                 UnifiedUsageRecord(agent: .workbuddy, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
-                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,
+                                   durationMs: nil)
             }
         case .zcode:
             return zcode.collectRecords(sinceMs: sinceMs).map {
                 UnifiedUsageRecord(agent: .zcode, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
-                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,
+                                   durationMs: $0.durationMs)
             }
         case .dsh:
             return dsh.collectRecords(sinceMs: sinceMs).map {
                 UnifiedUsageRecord(agent: .dsh, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
-                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId)
+                                   output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,
+                                   durationMs: $0.durationMs)
             }
         }
     }

@@ -66,9 +66,33 @@ final class GeminiStatsService: Sendable {
         let outputTokens: Int
         let cacheReadTokens: Int
         let model: String?
+        let durationMs: Int?
 
         var totalTokens: Int {
             inputTokens + outputTokens + cacheReadTokens
+        }
+
+        init(timestamp: Int, inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, model: String?, durationMs: Int? = nil) {
+            self.timestamp = timestamp
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.cacheReadTokens = cacheReadTokens
+            self.model = model
+            self.durationMs = durationMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case timestamp, inputTokens, outputTokens, cacheReadTokens, model, durationMs
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            timestamp = try container.decode(Int.self, forKey: .timestamp)
+            inputTokens = try container.decode(Int.self, forKey: .inputTokens)
+            outputTokens = try container.decode(Int.self, forKey: .outputTokens)
+            cacheReadTokens = try container.decode(Int.self, forKey: .cacheReadTokens)
+            model = try container.decodeIfPresent(String.self, forKey: .model)
+            durationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
         }
     }
 
@@ -94,7 +118,9 @@ final class GeminiStatsService: Sendable {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("gemini_scan_cache.json")
+        let legacy = dir.appendingPathComponent("gemini_scan_cache.json")
+        try? FileManager.default.removeItem(at: legacy)
+        return dir.appendingPathComponent("gemini_scan_cache_v2.json")
     }()
 
     static func resetMemoryCacheForTesting() {
@@ -300,10 +326,10 @@ final class GeminiStatsService: Sendable {
     }
 
     /// Per-step usage records for the dashboard.
-    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
+    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?, durationMs: Int?)] {
         let titles = conversationTitleMap()
         let conversationSteps = collectSteps(sinceUnix: sinceUnix)
-        var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] = []
+        var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?, durationMs: Int?)] = []
         for (cid, steps) in conversationSteps {
             for step in steps where step.timestamp >= sinceUnix {
                 records.append((
@@ -314,7 +340,8 @@ final class GeminiStatsService: Sendable {
                     output: step.outputTokens,
                     sessionId: cid,
                     model: step.model,
-                    title: titles[cid]
+                    title: titles[cid],
+                    durationMs: step.durationMs
                 ))
             }
         }
@@ -418,7 +445,8 @@ final class GeminiStatsService: Sendable {
                 inputTokens: parsed.inputTokens,
                 outputTokens: parsed.outputTokens,
                 cacheReadTokens: parsed.cacheReadTokens,
-                model: model
+                model: model,
+                durationMs: parsed.durationMs
             ))
         }
         return usages
@@ -545,6 +573,32 @@ final class GeminiStatsService: Sendable {
         queryStepsWithModels(from: dbPath)
     }
 
+    private func parseTimestampSubmessage<C: Collection>(_ bytes: C) -> (sec: Int, nanos: Int)? where C.Element == UInt8, C.Index == Int {
+        var i = bytes.startIndex
+        let end = bytes.endIndex
+        var sec: Int? = nil
+        var nanos = 0
+        while i < end {
+            guard let (k, nextI) = readVarint(bytes, from: i) else { break }
+            i = nextI
+            let fnum = k >> 3
+            let wtype = k & 7
+            if wtype == 0 {
+                guard let (val, vNext) = readVarint(bytes, from: i) else { break }
+                i = vNext
+                if fnum == 1 { sec = Int(val) }
+                else if fnum == 2 { nanos = Int(val) }
+            } else if wtype == 2 {
+                guard let (len, vNext) = readVarint(bytes, from: i) else { break }
+                i = vNext + Int(len)
+            } else if wtype == 1 { i += 8 }
+            else if wtype == 5 { i += 4 }
+            else { break }
+        }
+        guard let s = sec else { return nil }
+        return (sec: s, nanos: nanos)
+    }
+
     /// Parse Step protobuf payload: extract CortexStepMetadata (tag 5) -> created_at (tag 1) and model_usage (tag 9).
     private func parseProtobufStep<C: Collection>(_ bytes: C) -> StepTokenUsage? where C.Element == UInt8, C.Index == Int {
         var i = bytes.startIndex
@@ -581,10 +635,12 @@ final class GeminiStatsService: Sendable {
 
         guard let mRange = metaRange else { return nil }
 
-        // Parse CortexStepMetadata: field 1 (Timestamp), field 9 (ModelUsageStats)
+        // Parse CortexStepMetadata: field 1 (Timestamp), field 7/8 (Completed Timestamp), field 9 (ModelUsageStats)
         var mI = mRange.lowerBound
         let mEnd = mRange.upperBound
         var tsSec: Int? = nil
+        var startTs: (sec: Int, nanos: Int)? = nil
+        var endTs: (sec: Int, nanos: Int)? = nil
         var usageRange: Range<Int>? = nil
 
         while mI < mEnd {
@@ -600,13 +656,13 @@ final class GeminiStatsService: Sendable {
                 mI = nextI
                 let length = Int(len)
                 guard mI + length <= mEnd else { break }
+                let subSlice = bytes[mI..<(mI + length)]
                 if fnum == 1 {
-                    // Timestamp message: tag 1 is seconds (varint)
-                    let tsSub = bytes[mI..<(mI + length)]
-                    if let (tsK, tsI1) = readVarint(tsSub, from: mI), (tsK >> 3) == 1 {
-                        if let (secVal, _) = readVarint(tsSub, from: tsI1) {
-                            tsSec = Int(secVal)
-                        }
+                    startTs = parseTimestampSubmessage(subSlice)
+                    tsSec = startTs?.sec
+                } else if fnum == 7 || fnum == 8 {
+                    if endTs == nil {
+                        endTs = parseTimestampSubmessage(subSlice)
                     }
                 } else if fnum == 9 {
                     usageRange = mI..<(mI + length)
@@ -653,12 +709,23 @@ final class GeminiStatsService: Sendable {
             }
         }
 
+        var durationMs: Int? = nil
+        if let s = startTs, let e = endTs {
+            let startMs = Int64(s.sec) * 1000 + Int64(s.nanos / 1_000_000)
+            let endMs = Int64(e.sec) * 1000 + Int64(e.nanos / 1_000_000)
+            let diff = endMs - startMs
+            if diff >= 100 {
+                durationMs = Int(diff)
+            }
+        }
+
         return StepTokenUsage(
             timestamp: ts,
             inputTokens: inputTokens,
             outputTokens: outputTokens,
             cacheReadTokens: cacheReadTokens,
-            model: nil
+            model: nil,
+            durationMs: durationMs
         )
     }
 

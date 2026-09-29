@@ -24,6 +24,7 @@ final class ZCodeStatsService {
         let sessionId: String
         let model: String?
         let title: String?
+        let durationMs: Int?
     }
 
     func collectRecords(sinceMs: Int64) -> [Record] {
@@ -31,7 +32,8 @@ final class ZCodeStatsService {
         queryReadOnly(sql: """
             SELECT mu.started_at, mu.computed_total_tokens, mu.input_tokens,
                    mu.output_tokens, mu.cache_read_input_tokens,
-                   mu.cache_creation_input_tokens, mu.model_id, mu.session_id, s.title
+                   mu.cache_creation_input_tokens, mu.model_id, mu.session_id, s.title,
+                   mu.duration_ms
             FROM model_usage mu
             LEFT JOIN session s ON s.id = mu.session_id
             WHERE mu.status = 'completed' AND mu.started_at >= ?
@@ -45,6 +47,7 @@ final class ZCodeStatsService {
             let model = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
             let sessionId = sqlite3_column_text(stmt, 7).map { String(cString: $0) } ?? UUID().uuidString
             let title = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+            let durationMs = sqlite3_column_type(stmt, 9) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 9)) : nil
             // ZCode's input_tokens includes cached reads (like WorkBuddy);
             // computed_total = input + output.
             records.append(Record(
@@ -55,7 +58,8 @@ final class ZCodeStatsService {
                 output: output,
                 sessionId: sessionId,
                 model: (model?.isEmpty == false) ? model : nil,
-                title: (title?.isEmpty == false) ? title : nil
+                title: (title?.isEmpty == false) ? title : nil,
+                durationMs: durationMs
             ))
         }
         return records

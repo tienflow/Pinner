@@ -411,28 +411,103 @@ func testAgentSymbolsExist() {
 @MainActor
 func testDailySortHelpers() {
     // Real comparator behavior over synthetic rows (internal via @testable).
-    let a = StatsDashboardView.DayRow(id: "1", date: "2026-09-17", total: 100, fresh: 10, cached: 20, output: 30, sessions: 2)
-    let b = StatsDashboardView.DayRow(id: "2", date: "2026-09-18", total: 300, fresh: 40, cached: 50, output: 60, sessions: 5)
+    let a = StatsDashboardView.DayRow(id: "1", date: "2026-09-17", total: 100, fresh: 10, cached: 20, output: 30, sessions: 2, tps: 15.0)
+    let b = StatsDashboardView.DayRow(id: "2", date: "2026-09-18", total: 300, fresh: 40, cached: 50, output: 60, sessions: 5, tps: 45.0)
     let view = StatsDashboardView()
 
     let dateDesc = view.dailySort(key: "date", ascending: false)
     check(!dateDesc(a, b) && dateDesc(b, a), "daily date sort desc puts newer first")
     let totalAsc = view.dailySort(key: "total", ascending: true)
     check(totalAsc(a, b) && !totalAsc(b, a), "daily total sort asc orders by tokens")
+    let dailyTpsDesc = view.dailySort(key: "tps", ascending: false)
+    check(dailyTpsDesc(b, a) && !dailyTpsDesc(a, b), "daily tps desc orders by tps")
 
-    let s1 = StatsDashboardView.SessionRow(id: "s1", title: "a 会话", agent: .codex, tokens: 500, turns: 3)
-    let s2 = StatsDashboardView.SessionRow(id: "s2", title: "b 会话", agent: .dsh, tokens: 900, turns: 1)
+    let s1 = StatsDashboardView.SessionRow(id: "s1", title: "a 会话", agent: .codex, tokens: 500, turns: 3, tps: nil)
+    let s2 = StatsDashboardView.SessionRow(id: "s2", title: "b 会话", agent: .dsh, tokens: 900, turns: 1, tps: 60.0)
     let tokensDesc = view.sessionSort(key: "tokens", ascending: false)
     check(tokensDesc(s2, s1), "session tokens desc puts bigger first")
     let turnsAsc = view.sessionSort(key: "turns", ascending: true)
     check(turnsAsc(s2, s1) && !turnsAsc(s1, s2), "session turns asc orders by turns")
+    let sessionTpsDesc = view.sessionSort(key: "tps", ascending: false)
+    check(sessionTpsDesc(s2, s1) && !sessionTpsDesc(s1, s2), "session tps desc orders by tps")
 
-    let m1 = StatsDashboardView.ModelRankRow(id: "x", name: "model-a", agents: "Codex", tokens: 700, sessions: 4)
-    let m2 = StatsDashboardView.ModelRankRow(id: "y", name: "model-b", agents: "DSH", tokens: 200, sessions: 9)
+    let m1 = StatsDashboardView.ModelRankRow(id: "x", name: "model-a", agents: "Codex", tokens: 700, sessions: 4, tps: 20.0)
+    let m2 = StatsDashboardView.ModelRankRow(id: "y", name: "model-b", agents: "DSH", tokens: 200, sessions: 9, tps: 80.0)
     let modelDesc = view.modelSort(key: "tokens", ascending: false)
     check(modelDesc(m1, m2) && !modelDesc(m2, m1), "model tokens desc orders by tokens")
     let modelSessions = view.modelSort(key: "sessions", ascending: true)
     check(modelSessions(m1, m2), "model sessions asc orders by sessions")
+    let modelTpsDesc = view.modelSort(key: "tps", ascending: false)
+    check(modelTpsDesc(m2, m1) && !modelTpsDesc(m1, m2), "model tps desc orders by tps")
+
+    let k1 = SkillRankRow(rank: 1, name: "anysearch", count: 50, agents: [.zcode], lastUsedMs: 1000, share: 60.0)
+    let k2 = SkillRankRow(rank: 2, name: "frontend-design", count: 20, agents: [.dsh], lastUsedMs: 2000, share: 40.0)
+    let skillCallsDesc = view.skillSort(key: "calls", ascending: false)
+    check(skillCallsDesc(k1, k2) && !skillCallsDesc(k2, k1), "skill calls desc orders by calls")
+    let skillNameAsc = view.skillSort(key: "name", ascending: true)
+    check(skillNameAsc(k1, k2) && !skillNameAsc(k2, k1), "skill name asc orders by name")
+    let skillLastUsedDesc = view.skillSort(key: "lastUsed", ascending: false)
+    check(skillLastUsedDesc(k2, k1) && !skillLastUsedDesc(k1, k2), "skill lastUsed desc orders by lastUsedMs")
+}
+
+@MainActor
+func testHourlyFlowMetrics() {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+
+    // Case 1: Empty records
+    let emptyResult = StatsDashboardView.computeHourlyMetrics(records: [], calendar: cal)
+    check(emptyResult.buckets.count == 24, "empty records produces 24 hourly buckets")
+    check(emptyResult.maxTokens == 0, "empty records maxTokens is 0")
+    check(emptyResult.peakHour == nil, "empty records peakHour is nil")
+    check(emptyResult.activeHours == 0, "empty records activeHours is 0")
+    check(emptyResult.goldenWindow == nil, "empty records goldenWindow is nil")
+
+    // Case 2: Synthetic records
+    var comps = DateComponents()
+    comps.year = 2026; comps.month = 9; comps.day = 29
+    comps.hour = 0; comps.minute = 0; comps.second = 0
+    let baseDate = cal.date(from: comps)!
+    let baseMs = Int64(baseDate.timeIntervalSince1970 * 1000)
+
+    // 10:15 UTC -> 50,000 tokens
+    let r1 = UnifiedUsageRecord(
+        agent: .gemini, model: "gemini-pro", title: nil,
+        tsMs: baseMs + Int64(10 * 3600 + 15 * 60) * 1000,
+        tokens: 50_000, freshInput: 10_000, cached: 35_000, output: 5_000,
+        hasBreakdown: true, sessionId: "s1", durationMs: 1000
+    )
+    // 10:45 UTC -> 30,000 tokens (Hour 10 total = 80,000)
+    let r2 = UnifiedUsageRecord(
+        agent: .gemini, model: "gemini-pro", title: nil,
+        tsMs: baseMs + Int64(10 * 3600 + 45 * 60) * 1000,
+        tokens: 30_000, freshInput: 5_000, cached: 20_000, output: 5_000,
+        hasBreakdown: true, sessionId: "s1", durationMs: 1000
+    )
+    // 14:00 UTC -> 200,000 tokens (Hour 14 total = 200,000, peak)
+    let r3 = UnifiedUsageRecord(
+        agent: .workbuddy, model: "claude-3-5", title: nil,
+        tsMs: baseMs + Int64(14 * 3600) * 1000,
+        tokens: 200_000, freshInput: 20_000, cached: 170_000, output: 10_000,
+        hasBreakdown: true, sessionId: "s2", durationMs: 2000
+    )
+    // 15:30 UTC -> 100,000 tokens (Hour 15 total = 100,000)
+    let r4 = UnifiedUsageRecord(
+        agent: .zcode, model: "glm-4", title: nil,
+        tsMs: baseMs + Int64(15 * 3600 + 30 * 60) * 1000,
+        tokens: 100_000, freshInput: 10_000, cached: 82_000, output: 8_000,
+        hasBreakdown: true, sessionId: "s3", durationMs: 1500
+    )
+
+    let metrics = StatsDashboardView.computeHourlyMetrics(records: [r1, r2, r3, r4], calendar: cal)
+    check(metrics.buckets[10].tokens == 80_000, "hourly bucket 10 aggregates 80k tokens")
+    check(metrics.buckets[10].turns == 2, "hourly bucket 10 counts 2 turns")
+    check(metrics.buckets[14].tokens == 200_000, "hourly bucket 14 aggregates 200k tokens")
+    check(metrics.maxTokens == 200_000, "hourly maxTokens matches 200k")
+    check(metrics.peakHour == 14, "hourly peakHour is 14")
+    check(metrics.peakTokens == 200_000, "hourly peakTokens is 200k")
+    check(metrics.activeHours == 3, "hourly activeHours is 3 (10, 14, 15)")
+    check(metrics.goldenWindow?.contains("12:00–16:00") == true, "hourly goldenWindow identifies the peak block")
 }
 
 @MainActor
@@ -850,7 +925,7 @@ func testFleetingCapture() {
     check(jevParsed?.folder == "清醒备忘", "Jev decodes target folder")
     check(jevParsed?.targetNoteTitle == "【断联日志】", "Jev decodes target note title")
     check(jevParsed?.mode == .prepend, "Jev decodes prepend mode for diary")
-    check(jevParsed?.formattedContent == "- 今天断联第 37 天，心情很平静", "Jev preserves authentic text verbatim")
+    check(jevParsed?.formattedContent == "今天断联第 37 天，心情很平静", "Jev preserves authentic text verbatim")
 
     // 2. HTML stripping and markdown to HTML conversion
     let sampleHTML = "<h1>标题</h1><div>正文内容</div><ul><li>第 1 天<br></li></ul>"
@@ -906,7 +981,7 @@ func testFleetingCapture() {
     let fallback = FleetingThoughtLLMClient.localFallback(context: ctx)
     check(fallback.folder == "清醒备忘" && fallback.targetNoteTitle == "【断联日志】", "fallback routes breakup diary to 清醒备忘 / 【断联日志】")
     check(fallback.mode == .prepend, "fallback uses prepend mode")
-    check(fallback.formattedContent == "- 今天去咖啡馆看了会儿书，心情很平静", "fallback preserves user verbatim input without day modification")
+    check(fallback.formattedContent == "今天去咖啡馆看了会儿书，心情很平静", "fallback preserves user verbatim input without day modification")
 
     // 6.1 Semantic routing fallback when lastNote is clean/nil
     let cleanCtx = FleetingPrompt.Context(
@@ -981,6 +1056,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testAgentSymbolsExist()
     await testDshScanCacheReusesResults()
     testDailySortHelpers()
+    testHourlyFlowMetrics()
     testTodoPromptBuild()
     testTodoLLMParseResponse()
     testTodoSettingsStoreStorage()
@@ -991,7 +1067,31 @@ let allPassed = await Task { @MainActor () -> Bool in
     testWorkBuddyScanCache()
     testGeminiScanCache()
     testFleetingCapture()
+    testSkillStatsService()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value
 exit(allPassed ? 0 : 1)
+
+@MainActor
+func testSkillStatsService() {
+    let service = SkillStatsService.shared
+    service.clearCacheForTesting()
+    let installed = service.scanInstalledSkills()
+    check(!installed.isEmpty, "scanInstalledSkills finds installed skills (\(installed.count) found)")
+
+    let (records, installedSet) = service.collectAll(force: true)
+    check(!records.isEmpty, "collectAll returns skill records (\(records.count) found)")
+    check(installedSet == installed, "collectAll returns matching installed skills set")
+
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let (cachedRecords, _) = service.collectAll(force: false)
+    let elapsed = CFAbsoluteTimeGetCurrent() - t0
+    check(cachedRecords.count == records.count, "SkillStatsService cache preserves record count")
+    check(elapsed < 0.05, "SkillStatsService cache lookup is fast (\(String(format: "%.4f", elapsed))s)")
+
+    check(FileManager.default.fileExists(atPath: SkillStatsService.cacheFileURL.path), "skill_scan_cache.json exists on disk")
+    let hasWebgen = records.contains { $0.skillName.lowercased() == "gemini-webgen" }
+    check(hasWebgen, "SkillStatsService detects gemini-webgen call records")
+}
+

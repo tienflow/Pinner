@@ -29,6 +29,7 @@ struct StatsDashboardView: View {
         let cached: Int
         let output: Int
         let sessions: Int
+        let tps: Double?
     }
 
     struct SessionRow: Identifiable, Sendable {
@@ -37,6 +38,7 @@ struct StatsDashboardView: View {
         let agent: StatsAgent
         let tokens: Int
         let turns: Int
+        let tps: Double?
     }
 
     struct ModelRankRow: Identifiable, Sendable {
@@ -45,6 +47,16 @@ struct StatsDashboardView: View {
         let agents: String
         let tokens: Int
         let sessions: Int
+        let tps: Double?
+    }
+
+    struct HourlyBucket: Identifiable, Sendable {
+        let hour: Int           // 0...23
+        let tokens: Int
+        let turns: Int
+        let fresh: Int
+        let output: Int
+        var id: Int { hour }
     }
 
     struct DashboardSnapshot: Sendable {
@@ -67,18 +79,32 @@ struct StatsDashboardView: View {
         let cachedInput: Int
         let outputTokens: Int
         let cacheHitRate: Double
+        let avgTPS: Double?
         let hasCodexNotice: Bool
         let agentTokens: [StatsAgent: Int]
         let agentModelCounts: [StatsAgent: Int]
         let dayRows: [DayRow]
         let sessionRows: [SessionRow]
         let modelRankRows: [ModelRankRow]
+        let skillRows: [SkillRankRow]
+        let totalSkillCalls: Int
+        let activeSkillCount: Int
+        let dormantSkills: [String]
+
+        let hourlyBuckets: [HourlyBucket]
+        let hourlyMaxTokens: Int
+        let peakHour: Int?
+        let peakHourTokens: Int
+        let activeHoursCount: Int
+        let goldenWindowText: String?
     }
 
     @State private var range: DashRange = .today
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @State private var customEnd = Date()
     @State private var allRecords: [UnifiedUsageRecord] = []   // one full scan; all views slice in memory
+    @State private var allSkillRecords: [SkillRecord] = []
+    @State private var installedSkills: Set<String> = []
     @State private var loadedAgents: Set<StatsAgent> = []
     @State private var scannedAgents: Set<StatsAgent> = []
     @State private var lastUpdated: Date?
@@ -89,8 +115,13 @@ struct StatsDashboardView: View {
     @State private var sessionSortAsc: Bool = false
     @State private var modelSortKey: String = "tokens"
     @State private var modelSortAsc: Bool = false
+    @State private var skillSortKey: String = "calls"
+    @State private var skillSortAsc: Bool = false
+    @State private var showDormantSkills: Bool = false
     @State private var heatHoverText: String?
     @State private var trendHoverText: String?
+    @State private var hourlyHoverText: String?
+    @State private var isHourlyExpanded: Bool = true
     @State private var snapshot: DashboardSnapshot?
     @State private var selectedAgentFilter: StatsAgent? = nil
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
@@ -405,6 +436,7 @@ struct StatsDashboardView: View {
                 totalTokenHeader
                 stackedShareBar
                 agentCards
+                hourlyFlowCard
                 detailTabs
             }
             .padding(.horizontal, 20)
@@ -524,6 +556,21 @@ struct StatsDashboardView: View {
                 .padding(.vertical, 3)
                 .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.green.opacity(0.1)))
                 .help("上下文缓存 (Prompt Cache) 命中比例，命中率越高越节省开销")
+
+                if let avgTPS = snapshot?.avgTPS {
+                    HStack(spacing: 4) {
+                        Text("平均速度")
+                            .font(.system(size: Design.caption))
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "%.1f tok/s", avgTPS))
+                            .font(.system(size: Design.caption, weight: .semibold))
+                            .foregroundStyle(Color.cyan)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.cyan.opacity(0.1)))
+                    .help("当前时间范围内具备耗时统计的调用之加权平均生成速度 (TPS)")
+                }
             }
             if hasNotice {
                 Text("注：Codex 本地库仅记录总量，净输入/输出/缓存由其他 Agent 聚合")
@@ -629,6 +676,170 @@ struct StatsDashboardView: View {
         }
     }
 
+    // MARK: - Hourly Flow Rhythm Card
+
+    private var hourlyFlowCard: some View {
+        let buckets = snapshot?.hourlyBuckets ?? (0..<24).map { HourlyBucket(hour: $0, tokens: 0, turns: 0, fresh: 0, output: 0) }
+        let maxTokens = snapshot?.hourlyMaxTokens ?? 0
+        let peakHour = snapshot?.peakHour
+        let peakTokens = snapshot?.peakHourTokens ?? 0
+        let activeHours = snapshot?.activeHoursCount ?? 0
+        let goldenWindow = snapshot?.goldenWindowText
+
+        return VStack(alignment: .leading, spacing: 8) {
+            // Header
+            HStack(spacing: 8) {
+                HStack(spacing: 5) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text("24 小时心流节律")
+                        .font(.system(size: Design.caption, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                if let peak = peakHour, peakTokens > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.orange)
+                        Text(String(format: "高峰：%02d:00 (%@)", peak, WorkBuddyStats.formatTokens(peakTokens)))
+                            .font(.system(size: Design.micro, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.orange.opacity(0.12)))
+                }
+
+                if let golden = goldenWindow {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.yellow)
+                        Text("黄金时段：\(golden)")
+                            .font(.system(size: Design.micro, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.yellow.opacity(0.12)))
+                }
+
+                Spacer()
+
+                if let hover = hourlyHoverText {
+                    Text(hover)
+                        .font(.system(size: Design.micro, weight: .medium))
+                        .foregroundStyle(.primary)
+                } else {
+                    Text("活跃 \(activeHours) 小时")
+                        .font(.system(size: Design.micro))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isHourlyExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: isHourlyExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isHourlyExpanded ? "折叠心流图表" : "展开心流图表")
+            }
+
+            if isHourlyExpanded {
+                VStack(spacing: 4) {
+                    GeometryReader { geo in
+                        let spacing: CGFloat = 3
+                        let totalSpacing = CGFloat(23) * spacing
+                        let barWidth = max(4, (geo.size.width - totalSpacing) / 24)
+                        let chartHeight: CGFloat = 46
+
+                        VStack(spacing: 4) {
+                            HStack(alignment: .bottom, spacing: spacing) {
+                                ForEach(buckets) { b in
+                                    let isPeak = peakHour == b.hour && b.tokens > 0
+                                    let ratio = maxTokens > 0 ? CGFloat(b.tokens) / CGFloat(maxTokens) : 0
+                                    let barH = b.tokens > 0 ? max(4, ratio * chartHeight) : 2
+                                    let hoverMsg = String(
+                                        format: "%02d:00 - %02d:59 · %@ tokens · %d 轮交互%@",
+                                        b.hour, b.hour,
+                                        WorkBuddyStats.formatTokens(b.tokens),
+                                        b.turns,
+                                        isPeak ? " 🔥" : ""
+                                    )
+
+                                    let barColor: Color = {
+                                        if b.tokens == 0 { return Color.secondary.opacity(0.08) }
+                                        if let filter = selectedAgentFilter {
+                                            return (agentColor[filter] ?? Color.accentColor).opacity(0.35 + 0.65 * Double(ratio))
+                                        }
+                                        if isPeak {
+                                            return Color.orange
+                                        }
+                                        return Color.accentColor.opacity(0.35 + 0.65 * Double(ratio))
+                                    }()
+
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(barColor)
+                                        .frame(width: barWidth, height: barH)
+                                        .contentShape(Rectangle().size(width: barWidth, height: chartHeight))
+                                        .help(hoverMsg)
+                                        .onHover { hovering in
+                                            if hovering {
+                                                hourlyHoverText = hoverMsg
+                                            } else if hourlyHoverText == hoverMsg {
+                                                hourlyHoverText = nil
+                                            }
+                                        }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .bottom)
+
+                            HStack(spacing: spacing) {
+                                ForEach(0..<24, id: \.self) { h in
+                                    Group {
+                                        if h % 3 == 0 || h == 23 {
+                                            Text(String(format: "%02d", h))
+                                                .font(.system(size: Design.micro, weight: .medium, design: .monospaced))
+                                                .foregroundStyle(.secondary)
+                                        } else {
+                                            Text("")
+                                        }
+                                    }
+                                    .frame(width: barWidth, alignment: .center)
+                                }
+                            }
+                        }
+                    }
+                    .frame(height: 64)
+
+                    HStack(spacing: 8) {
+                        Text("🌙 深夜 (00–06)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                        Spacer()
+                        Text("🌅 早晨 (06–12)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                        Spacer()
+                        Text("☀️ 下午 (12–18)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                        Spacer()
+                        Text("🌃 晚间 (18–24)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(Design.slotAlpha))
+        .cornerRadius(Design.radiusM)
+    }
+
     // MARK: - Detail Tabs
 
     private var detailTabs: some View {
@@ -638,10 +849,11 @@ struct StatsDashboardView: View {
                     Text("每日明细").tag(0)
                     Text("会话排行").tag(1)
                     Text("模型排行").tag(2)
+                    Text("Skill 排行").tag(3)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 280)
+                .frame(width: 360)
 
                 if let filter = selectedAgentFilter {
                     Button {
@@ -670,20 +882,32 @@ struct StatsDashboardView: View {
 
                 Spacer()
 
-                if detailTab == 0 {
+                if detailTab == 0 || detailTab == 3 {
                     Button {
-                        exportDailyCSV()
+                        if detailTab == 3 {
+                            exportSkillCSV()
+                        } else {
+                            exportDailyCSV()
+                        }
                     } label: {
                         Label("导出 CSV", systemImage: "square.and.arrow.down")
                             .font(.system(size: Design.caption, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("将每日明细导出为 CSV")
+                    .help(detailTab == 3 ? "将 Skill 排行导出为 CSV" : "将每日明细导出为 CSV")
                 }
             }
 
-            if detailTab == 0 { dailyBreakdownTable } else if detailTab == 1 { sessionRankTable } else { modelRankTable }
+            if detailTab == 0 {
+                dailyBreakdownTable
+            } else if detailTab == 1 {
+                sessionRankTable
+            } else if detailTab == 2 {
+                modelRankTable
+            } else {
+                skillRankTable
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -703,11 +927,15 @@ struct StatsDashboardView: View {
                 ForEach(rows) { row in
                     HStack(spacing: 0) {
                         Text(row.date).font(.system(size: Design.caption)).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(intervalString(row.total)).font(.system(size: Design.caption, weight: .semibold)).frame(width: 110, alignment: .trailing)
-                        Text(intervalString(row.fresh)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 100, alignment: .trailing)
-                        Text(intervalString(row.output)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 100, alignment: .trailing)
-                        Text(intervalString(row.cached)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 120, alignment: .trailing)
-                        Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 60, alignment: .trailing)
+                        Text(intervalString(row.total)).font(.system(size: Design.caption, weight: .semibold)).frame(width: 105, alignment: .trailing)
+                        Text(intervalString(row.fresh)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 95, alignment: .trailing)
+                        Text(intervalString(row.output)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 95, alignment: .trailing)
+                        Text(intervalString(row.cached)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 110, alignment: .trailing)
+                        Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 55, alignment: .trailing)
+                        Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
+                            .font(.system(size: Design.caption))
+                            .foregroundStyle(row.tps != nil ? .primary : .secondary)
+                            .frame(width: 75, alignment: .trailing)
                     }
                     .padding(.vertical, 4)
                     Divider().opacity(0.5)
@@ -724,6 +952,10 @@ struct StatsDashboardView: View {
             case "output": return ascending ? a.output < b.output : a.output > b.output
             case "cached": return ascending ? a.cached < b.cached : a.cached > b.cached
             case "sessions": return ascending ? a.sessions < b.sessions : a.sessions > b.sessions
+            case "tps":
+                let tpsA = a.tps ?? -1
+                let tpsB = b.tps ?? -1
+                return ascending ? tpsA < tpsB : tpsA > tpsB
             default: return ascending ? a.date < b.date : a.date > b.date
             }
         }
@@ -750,14 +982,16 @@ struct StatsDashboardView: View {
         HStack(spacing: 0) {
             sortHeader("日期", key: "date", current: dailySortKey, ascending: dailySortAsc, action: toggleDailySortDate)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            sortHeader("合计", key: "total", current: dailySortKey, ascending: dailySortAsc, width: 110, action: { toggleDailySort("total") })
-            sortHeader("净输入", key: "fresh", current: dailySortKey, ascending: dailySortAsc, width: 100, action: { toggleDailySort("fresh") })
+            sortHeader("合计", key: "total", current: dailySortKey, ascending: dailySortAsc, width: 105, action: { toggleDailySort("total") })
+            sortHeader("净输入", key: "fresh", current: dailySortKey, ascending: dailySortAsc, width: 95, action: { toggleDailySort("fresh") })
                 .help("未命中缓存的首次输入 Tokens (Codex 本地库仅提供总量)")
-            sortHeader("输出", key: "output", current: dailySortKey, ascending: dailySortAsc, width: 100, action: { toggleDailySort("output") })
+            sortHeader("输出", key: "output", current: dailySortKey, ascending: dailySortAsc, width: 95, action: { toggleDailySort("output") })
                 .help("模型生成的 Output Tokens (Codex 本地库仅提供总量)")
-            sortHeader("缓存", key: "cached", current: dailySortKey, ascending: dailySortAsc, width: 120, action: { toggleDailySort("cached") })
+            sortHeader("缓存", key: "cached", current: dailySortKey, ascending: dailySortAsc, width: 110, action: { toggleDailySort("cached") })
                 .help("命中的上下文缓存 Tokens (Codex 本地库仅提供总量)")
-            sortHeader("会话", key: "sessions", current: dailySortKey, ascending: dailySortAsc, width: 60, action: { toggleDailySort("sessions") })
+            sortHeader("会话", key: "sessions", current: dailySortKey, ascending: dailySortAsc, width: 55, action: { toggleDailySort("sessions") })
+            sortHeader("TPS", key: "tps", current: dailySortKey, ascending: dailySortAsc, width: 75, action: { toggleDailySort("tps") })
+                .help("该日期的加权平均输出速度 (Tokens Per Second)")
         }
         .padding(.vertical, 4)
     }
@@ -783,8 +1017,10 @@ struct StatsDashboardView: View {
                 sortHeader("会话", key: "title", current: sessionSortKey, ascending: sessionSortAsc, action: { toggleSessionSort("title") })
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 90, alignment: .leading)
-                sortHeader("Tokens", key: "tokens", current: sessionSortKey, ascending: sessionSortAsc, width: 110, action: { toggleSessionSort("tokens") })
-                sortHeader("轮次", key: "turns", current: sessionSortKey, ascending: sessionSortAsc, width: 60, action: { toggleSessionSort("turns") })
+                sortHeader("Tokens", key: "tokens", current: sessionSortKey, ascending: sessionSortAsc, width: 105, action: { toggleSessionSort("tokens") })
+                sortHeader("轮次", key: "turns", current: sessionSortKey, ascending: sessionSortAsc, width: 55, action: { toggleSessionSort("turns") })
+                sortHeader("TPS", key: "tps", current: sessionSortKey, ascending: sessionSortAsc, width: 75, action: { toggleSessionSort("tps") })
+                    .help("该会话模型生成的平均每秒 Token 数")
             }
             .padding(.vertical, 4)
             Divider()
@@ -798,9 +1034,13 @@ struct StatsDashboardView: View {
                         Text(row.agent.label).font(.system(size: Design.caption)).foregroundStyle(.secondary)
                             .frame(width: 90, alignment: .leading)
                         Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
-                            .frame(width: 110, alignment: .trailing)
+                            .frame(width: 105, alignment: .trailing)
                         Text("\(row.turns)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 60, alignment: .trailing)
+                            .frame(width: 55, alignment: .trailing)
+                        Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
+                            .font(.system(size: Design.caption))
+                            .foregroundStyle(row.tps != nil ? .primary : .secondary)
+                            .frame(width: 75, alignment: .trailing)
                     }
                     .padding(.vertical, 4)
                     Divider().opacity(0.5)
@@ -814,6 +1054,10 @@ struct StatsDashboardView: View {
             switch key {
             case "name": return ascending ? a.name < b.name : a.name > b.name
             case "sessions": return ascending ? a.sessions < b.sessions : a.sessions > b.sessions
+            case "tps":
+                let tpsA = a.tps ?? -1
+                let tpsB = b.tps ?? -1
+                return ascending ? tpsA < tpsB : tpsA > tpsB
             default: return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
             }
         }
@@ -828,9 +1072,10 @@ struct StatsDashboardView: View {
 
     private func exportDailyCSV() {
         let rows = (snapshot?.dayRows ?? []).sorted { $0.date > $1.date }
-        var csv = "日期,合计,净输入,输出,缓存,会话\n"
+        var csv = "日期,合计,净输入,输出,缓存,会话,TPS\n"
         for r in rows {
-            csv += "\(r.date),\(r.total),\(r.fresh),\(r.output),\(r.cached),\(r.sessions)\n"
+            let tpsStr = r.tps.map { String(format: "%.1f", $0) } ?? ""
+            csv += "\(r.date),\(r.total),\(r.fresh),\(r.output),\(r.cached),\(r.sessions),\(tpsStr)\n"
         }
 
         let panel = NSSavePanel()
@@ -847,6 +1092,10 @@ struct StatsDashboardView: View {
             switch key {
             case "title": return ascending ? a.title < b.title : a.title > b.title
             case "turns": return ascending ? a.turns < b.turns : a.turns > b.turns
+            case "tps":
+                let tpsA = a.tps ?? -1
+                let tpsB = b.tps ?? -1
+                return ascending ? tpsA < tpsB : tpsA > tpsB
             default: return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
             }
         }
@@ -869,11 +1118,13 @@ struct StatsDashboardView: View {
             HStack(spacing: 0) {
                 sortHeader("模型", key: "name", current: modelSortKey, ascending: modelSortAsc, action: { toggleModelSort("name") })
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 100, alignment: .leading)
-                Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 140, alignment: .leading)
-                sortHeader("Tokens", key: "tokens", current: modelSortKey, ascending: modelSortAsc, width: 110, action: { toggleModelSort("tokens") })
-                sortHeader("会话", key: "sessions", current: modelSortKey, ascending: modelSortAsc, width: 60, action: { toggleModelSort("sessions") })
-                Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 60, alignment: .trailing)
+                Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 95, alignment: .leading)
+                Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 120, alignment: .leading)
+                sortHeader("Tokens", key: "tokens", current: modelSortKey, ascending: modelSortAsc, width: 105, action: { toggleModelSort("tokens") })
+                sortHeader("会话", key: "sessions", current: modelSortKey, ascending: modelSortAsc, width: 55, action: { toggleModelSort("sessions") })
+                sortHeader("TPS", key: "tps", current: modelSortKey, ascending: modelSortAsc, width: 75, action: { toggleModelSort("tps") })
+                    .help("该模型的平均输出速度 (Tokens Per Second)")
+                Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 55, alignment: .trailing)
             }
             .padding(.vertical, 4)
             Divider()
@@ -885,7 +1136,7 @@ struct StatsDashboardView: View {
                         Text(row.name).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 100, alignment: .leading)
+                            .frame(width: 95, alignment: .leading)
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
@@ -894,14 +1145,197 @@ struct StatsDashboardView: View {
                                     .frame(width: maxTokens > 0 ? geo.size.width * CGFloat(row.tokens) / CGFloat(maxTokens) : 0)
                             }
                         }
-                        .frame(width: 140, height: 12)
+                        .frame(width: 120, height: 12)
                         Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
-                            .frame(width: 110, alignment: .trailing)
+                            .frame(width: 105, alignment: .trailing)
                         Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 60, alignment: .trailing)
+                            .frame(width: 55, alignment: .trailing)
+                        Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
+                            .font(.system(size: Design.caption))
+                            .foregroundStyle(row.tps != nil ? .primary : .secondary)
+                            .frame(width: 75, alignment: .trailing)
                         Text("\(grand > 0 ? Int(Double(row.tokens) / Double(grand) * 100) : 0)%")
                             .font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 60, alignment: .trailing)
+                            .frame(width: 55, alignment: .trailing)
+                    }
+                    .padding(.vertical, 4)
+                    Divider().opacity(0.5)
+                }
+            }
+        }
+    }
+
+    // MARK: - Skill Ranking Table
+
+    func skillSort(key: String, ascending: Bool) -> (SkillRankRow, SkillRankRow) -> Bool {
+        { a, b in
+            switch key {
+            case "name": return ascending ? a.name < b.name : a.name > b.name
+            case "lastUsed":
+                let tA = a.lastUsedMs ?? 0
+                let tB = b.lastUsedMs ?? 0
+                return ascending ? tA < tB : tA > tB
+            default: return ascending ? a.count < b.count : a.count > b.count
+            }
+        }
+    }
+
+    private func toggleSkillSort(_ key: String) {
+        if skillSortKey == key { skillSortAsc.toggle() }
+        else { skillSortKey = key; skillSortAsc = false }
+    }
+
+    private func exportSkillCSV() {
+        let rows = (snapshot?.skillRows ?? []).sorted(by: skillSort(key: skillSortKey, ascending: skillSortAsc))
+        var csv = "排名,Skill,调用次数,活跃Agent,最近调用,占比\n"
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        for r in rows {
+            let lastUsedStr = r.lastUsedMs.map { df.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? ""
+            let agentsStr = r.agents.map(\.label).joined(separator: " / ")
+            csv += "\(r.rank),\"\(r.name)\",\(r.count),\"\(agentsStr)\",\"\(lastUsedStr)\",\(Int(r.share))%\n"
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "Pinner-Skill排行-\(range.label).csv"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            try? csv.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    private var skillRankTable: some View {
+        let rows: [SkillRankRow] = (snapshot?.skillRows ?? [])
+            .sorted(by: skillSort(key: skillSortKey, ascending: skillSortAsc))
+        let maxCalls = rows.map(\.count).max() ?? 0
+        let totalCalls = snapshot?.totalSkillCalls ?? 0
+        let dormant = snapshot?.dormantSkills ?? []
+
+        let dfTime = DateFormatter()
+        dfTime.dateFormat = "M/d HH:mm"
+
+        return VStack(spacing: 0) {
+            // Dormant skills warning card
+            if !dormant.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "moon.stars.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                        Text("沉睡技能预警")
+                            .font(.system(size: Design.caption, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text("(\(dormant.count) 个本地技能在所选时间内 0 次调用)")
+                            .font(.system(size: Design.micro))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                showDormantSkills.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(showDormantSkills ? "收起" : "展开查看")
+                                Image(systemName: showDormantSkills ? "chevron.up" : "chevron.down")
+                            }
+                            .font(.system(size: Design.micro, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if showDormantSkills {
+                        Text("以下本地技能未被任何 Agent 触发，可评估是否需精简或优化触发词：")
+                            .font(.system(size: Design.micro))
+                            .foregroundStyle(.secondary)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(dormant, id: \.self) { name in
+                                    Text(name)
+                                        .font(.system(size: Design.micro, design: .monospaced))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.orange.opacity(0.12))
+                                        .foregroundStyle(.orange)
+                                        .cornerRadius(Design.radiusS)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.08))
+                .cornerRadius(Design.radiusS)
+                .padding(.bottom, 8)
+            }
+
+            // Table Header
+            HStack(spacing: 0) {
+                Text("#").font(.system(size: Design.caption, weight: .semibold)).frame(width: 32, alignment: .leading)
+                sortHeader("Skill 名称", key: "name", current: skillSortKey, ascending: skillSortAsc, action: { toggleSkillSort("name") })
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("活跃 Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 110, alignment: .leading)
+                Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 100, alignment: .leading)
+                sortHeader("最近调用", key: "lastUsed", current: skillSortKey, ascending: skillSortAsc, width: 95, action: { toggleSkillSort("lastUsed") })
+                sortHeader("调用次数", key: "calls", current: skillSortKey, ascending: skillSortAsc, width: 80, action: { toggleSkillSort("calls") })
+                Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 55, alignment: .trailing)
+            }
+            .padding(.vertical, 4)
+            Divider()
+
+            if rows.isEmpty {
+                placeholder("所选范围内没有 Skill 调用记录").padding(.vertical, 16)
+            } else {
+                ForEach(rows) { row in
+                    HStack(spacing: 0) {
+                        Text("\(row.rank)")
+                            .font(.system(size: Design.micro, weight: .bold, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 32, alignment: .leading)
+                        HStack(spacing: 5) {
+                            Image(systemName: "puzzlepiece.extension.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.accentColor.opacity(0.85))
+                            Text(row.name)
+                                .font(.system(size: Design.caption, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        HStack(spacing: 4) {
+                            ForEach(row.agents, id: \.self) { ag in
+                                Image(systemName: ag.symbolName)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(agentColor[ag] ?? .secondary)
+                                    .help(ag.label)
+                            }
+                        }
+                        .frame(width: 110, alignment: .leading)
+
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
+                                RoundedRectangle(cornerRadius: Design.radiusS)
+                                    .fill(Color.accentColor.opacity(0.75))
+                                    .frame(width: maxCalls > 0 ? geo.size.width * CGFloat(row.count) / CGFloat(maxCalls) : 0)
+                            }
+                        }
+                        .frame(width: 100, height: 12)
+
+                        Text(row.lastUsedMs.map { dfTime.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? "—")
+                            .font(.system(size: Design.micro))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 95, alignment: .trailing)
+
+                        Text(intervalString(row.count))
+                            .font(.system(size: Design.caption, weight: .semibold))
+                            .frame(width: 80, alignment: .trailing)
+
+                        Text("\(totalCalls > 0 ? Int(Double(row.count) / Double(totalCalls) * 100) : 0)%")
+                            .font(.system(size: Design.caption))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 55, alignment: .trailing)
                     }
                     .padding(.vertical, 4)
                     Divider().opacity(0.5)
@@ -940,6 +1374,14 @@ struct StatsDashboardView: View {
         // totals don't include them.
         let keep = Set(visibleAgents)
         allRecords.removeAll { !keep.contains($0.agent) }
+        Task.detached(priority: .userInitiated) {
+            let (skills, installed) = SkillStatsService.shared.collectAll(force: force)
+            await MainActor.run {
+                self.allSkillRecords = skills
+                self.installedSkills = installed
+                updateSnapshot()
+            }
+        }
         if missing.isEmpty { lastUpdated = Date() }
         updateSnapshot()
     }
@@ -1022,19 +1464,30 @@ struct StatsDashboardView: View {
         let cacheHitRate: Double = totalInput > 0 ? Double(cachedInput) / Double(totalInput) * 100 : 0
         let hasCodexNotice = (selectedAgentFilter == nil || selectedAgentFilter == .codex) && !breakdown.isEmpty && breakdown.count < current.count
 
+        // Avg TPS in range
+        let validInRange = current.filter { ($0.durationMs ?? 0) >= 100 && $0.output > 0 }
+        let totalOutInRange = validInRange.reduce(0) { $0 + $1.output }
+        let totalDurInRange = validInRange.reduce(0) { $0 + ($1.durationMs ?? 0) }
+        let avgTPS: Double? = totalDurInRange > 0 ? (Double(totalOutInRange) / (Double(totalDurInRange) / 1000.0)) : nil
+
         let groupedDays = Dictionary(grouping: current) { rec -> String in
             let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
             return dfDate.string(from: day)
         }
         let dayRows: [DayRow] = groupedDays.map { date, recs in
             let b = recs.filter(\.hasBreakdown)
+            let valid = recs.filter { ($0.durationMs ?? 0) >= 100 && $0.output > 0 }
+            let dur = valid.reduce(0) { $0 + ($1.durationMs ?? 0) }
+            let out = valid.reduce(0) { $0 + $1.output }
+            let tps = dur > 0 ? Double(out) / (Double(dur) / 1000.0) : nil
             return DayRow(
                 id: date, date: date,
                 total: recs.reduce(0) { $0 + $1.tokens },
                 fresh: b.reduce(0) { $0 + $1.freshInput },
                 cached: b.reduce(0) { $0 + $1.cached },
                 output: b.reduce(0) { $0 + $1.output },
-                sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count
+                sessions: Set(recs.map { "\($0.agent):\($0.sessionId)" }).count,
+                tps: tps
             )
         }
 
@@ -1042,12 +1495,17 @@ struct StatsDashboardView: View {
         let sessionRows: [SessionRow] = groupedSessions.map { _, recs in
             let first = recs[0]
             let title = first.title ?? "未命名会话（\(String(first.sessionId.prefix(8)))）"
+            let valid = recs.filter { ($0.durationMs ?? 0) >= 100 && $0.output > 0 }
+            let dur = valid.reduce(0) { $0 + ($1.durationMs ?? 0) }
+            let out = valid.reduce(0) { $0 + $1.output }
+            let tps = dur > 0 ? Double(out) / (Double(dur) / 1000.0) : nil
             return SessionRow(
                 id: "\(first.agent.rawValue)|\(first.sessionId)",
                 title: title,
                 agent: first.agent,
                 tokens: recs.reduce(0) { $0 + $1.tokens },
-                turns: recs.count
+                turns: recs.count,
+                tps: tps
             )
         }
 
@@ -1057,9 +1515,59 @@ struct StatsDashboardView: View {
                 name: g.name,
                 agents: g.agents.map(\.label).joined(separator: " / "),
                 tokens: g.tokens,
-                sessions: g.sessions
+                sessions: g.sessions,
+                tps: g.tps
             )
         }
+
+        // 3. Skill ranking and dormant detection in range
+        let skillFiltered = allSkillRecords.filter { rec in
+            enabledAgents.contains(rec.agent) &&
+            rec.tsMs >= effectiveSinceMs &&
+            rec.tsMs <= effectiveUntilMs &&
+            (selectedAgentFilter == nil || rec.agent == selectedAgentFilter)
+        }
+        let totalSkillCalls = skillFiltered.count
+
+        struct SkillGroup {
+            var count = 0
+            var agents = Set<StatsAgent>()
+            var casings: [String: Int] = [:]
+            var lastUsedMs: Int64?
+        }
+        var skillGroups: [String: SkillGroup] = [:]
+        for r in skillFiltered {
+            let key = r.skillName.lowercased()
+            var g = skillGroups[key] ?? SkillGroup()
+            g.count += 1
+            g.agents.insert(r.agent)
+            g.casings[r.skillName, default: 0] += 1
+            if let cur = g.lastUsedMs {
+                g.lastUsedMs = max(cur, r.tsMs)
+            } else {
+                g.lastUsedMs = r.tsMs
+            }
+            skillGroups[key] = g
+        }
+
+        let activeSkillCount = skillGroups.count
+        let skillRows: [SkillRankRow] = skillGroups
+            .map { key, g in
+                let displayName = g.casings.max { $0.value < $1.value }?.key ?? key
+                let share = totalSkillCalls > 0 ? (Double(g.count) / Double(totalSkillCalls) * 100) : 0.0
+                return (name: displayName, count: g.count, agents: g.agents.sorted { $0.rawValue < $1.rawValue }, lastUsedMs: g.lastUsedMs, share: share)
+            }
+            .sorted { $0.count > $1.count }
+            .enumerated()
+            .map { i, r in
+                SkillRankRow(rank: i + 1, name: r.name, count: r.count, agents: r.agents, lastUsedMs: r.lastUsedMs, share: r.share)
+            }
+
+        let activeKeys = Set(skillGroups.keys)
+        let dormantSkills = installedSkills.filter { !activeKeys.contains($0.lowercased()) }.sorted()
+
+        // 4. Hourly Flow Rhythm
+        let hourly = Self.computeHourlyMetrics(records: current, calendar: cal)
 
         snapshot = DashboardSnapshot(
             d7Tokens: d7Tokens,
@@ -1080,27 +1588,112 @@ struct StatsDashboardView: View {
             cachedInput: cachedInput,
             outputTokens: outputTokens,
             cacheHitRate: cacheHitRate,
+            avgTPS: avgTPS,
             hasCodexNotice: hasCodexNotice,
             agentTokens: agentTokens,
             agentModelCounts: agentModelCounts,
             dayRows: dayRows,
             sessionRows: sessionRows,
-            modelRankRows: modelRankRows
+            modelRankRows: modelRankRows,
+            skillRows: skillRows,
+            totalSkillCalls: totalSkillCalls,
+            activeSkillCount: activeSkillCount,
+            dormantSkills: dormantSkills,
+            hourlyBuckets: hourly.buckets,
+            hourlyMaxTokens: hourly.maxTokens,
+            peakHour: hourly.peakHour,
+            peakHourTokens: hourly.peakTokens,
+            activeHoursCount: hourly.activeHours,
+            goldenWindowText: hourly.goldenWindow
         )
     }
 
     // MARK: - Shared Pieces
 
+    /// Aggregates records into 24 hour buckets (00:00 to 23:59 local time),
+    /// identifying the peak hour, active hours count, and the rolling 4-hour golden window.
+    static func computeHourlyMetrics(
+        records: [UnifiedUsageRecord],
+        calendar: Calendar = .current
+    ) -> (
+        buckets: [HourlyBucket],
+        maxTokens: Int,
+        peakHour: Int?,
+        peakTokens: Int,
+        activeHours: Int,
+        goldenWindow: String?
+    ) {
+        var hourlyTokens = Array(repeating: 0, count: 24)
+        var hourlyTurns = Array(repeating: 0, count: 24)
+        var hourlyFresh = Array(repeating: 0, count: 24)
+        var hourlyOutput = Array(repeating: 0, count: 24)
+
+        for r in records {
+            let d = Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000)
+            let hour = calendar.component(.hour, from: d)
+            if hour >= 0 && hour < 24 {
+                hourlyTokens[hour] += r.tokens
+                hourlyTurns[hour] += 1
+                hourlyFresh[hour] += r.freshInput
+                hourlyOutput[hour] += r.output
+            }
+        }
+
+        let buckets = (0..<24).map { h in
+            HourlyBucket(
+                hour: h,
+                tokens: hourlyTokens[h],
+                turns: hourlyTurns[h],
+                fresh: hourlyFresh[h],
+                output: hourlyOutput[h]
+            )
+        }
+
+        let maxTokens = hourlyTokens.max() ?? 0
+        let totalTokens = hourlyTokens.reduce(0, +)
+        let peakIdx = hourlyTokens.indices.max(by: { hourlyTokens[$0] < hourlyTokens[$1] })
+        let peakHour: Int? = (totalTokens > 0 && (hourlyTokens[peakIdx ?? 0] > 0)) ? peakIdx : nil
+        let peakTokens = peakHour.map { hourlyTokens[$0] } ?? 0
+        let activeHours = hourlyTokens.filter { $0 > 0 }.count
+
+        // Rolling 4-hour window for golden period
+        var bestWindowStart = -1
+        var bestWindowTokens = 0
+        let windowSize = 4
+        if totalTokens > 0 {
+            for start in 0...(24 - windowSize) {
+                let winSum = (start..<(start + windowSize)).reduce(0) { $0 + hourlyTokens[$1] }
+                if winSum > bestWindowTokens {
+                    bestWindowTokens = winSum
+                    bestWindowStart = start
+                }
+            }
+        }
+
+        let goldenWindow: String?
+        if bestWindowStart >= 0 && bestWindowTokens > 0 && totalTokens > 0 {
+            let pct = Int(Double(bestWindowTokens) / Double(totalTokens) * 100)
+            let endHour = bestWindowStart + windowSize
+            goldenWindow = String(format: "%02d:00–%02d:00 (%d%% 产出)", bestWindowStart, endHour, pct)
+        } else {
+            goldenWindow = nil
+        }
+
+        return (buckets, maxTokens, peakHour, peakTokens, activeHours, goldenWindow)
+    }
+
     /// Cross-agent model grouping: key is the lowercased model name so
     /// case variants (glm-5.3-flash vs GLM-5.3-Flash) merge; the displayed
     /// name is the most frequent original casing. Unknown models stay
     /// per-agent buckets.
-    private func mergedModelGroups(_ records: [UnifiedUsageRecord]) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent])] {
+    private func mergedModelGroups(_ records: [UnifiedUsageRecord]) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?)] {
         struct Group {
             var tokens = 0
             var sessions = Set<String>()
             var agents = Set<StatsAgent>()
             var casings: [String: Int] = [:]
+            var validOutput = 0
+            var validDurationMs = 0
         }
         var groups: [String: Group] = [:]
         for r in records {
@@ -1111,13 +1704,19 @@ struct StatsDashboardView: View {
             g.sessions.insert("\(r.agent):\(r.sessionId)")
             g.agents.insert(r.agent)
             g.casings[display, default: 0] += 1
+            if let d = r.durationMs, d >= 100, r.output > 0 {
+                g.validOutput += r.output
+                g.validDurationMs += d
+            }
             groups[key] = g
         }
         return groups
             .map { key, g in
                 let name = g.casings.max { $0.value < $1.value }?.key ?? key
+                let tps = g.validDurationMs > 0 ? Double(g.validOutput) / (Double(g.validDurationMs) / 1000.0) : nil
                 return (name: name, tokens: g.tokens, sessions: g.sessions.count,
-                        agents: g.agents.sorted { $0.rawValue < $1.rawValue })
+                        agents: g.agents.sorted { $0.rawValue < $1.rawValue },
+                        tps: tps)
             }
             .sorted { $0.tokens > $1.tokens }
     }

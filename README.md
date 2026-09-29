@@ -69,7 +69,7 @@
   - **通用**：开机自启开关（`SMAppService`）、外观主题（自动 / 浅色 / 深色）、参与统计的 Agent 勾选（双向联动）
   - **快捷键**：可视化呈现总览、收藏夹、OTP、待办及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
   - **AI 配置**：整合通用大模型端点（Base URL、API Key、模型名）与 TypeSafe Jev 语义路由配置，支持独立连通性测试与状态提示；支持自定义待办「一键推迟默认时刻」
-- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
+- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行 / Skill 排行四张表（点击列头排序，支持实时生成速度 TPS 速率展示）、半年 GitHub 格热力图（带月份标注）、明细一键导出 CSV，窗口大小自动记忆；内置「24 小时心流节律」交互卡片（24 小时柱状分布、单小时峰值 Peak Hour、4 小时滚动黄金产出时段 Golden Window 与四大生理时段划分）；跨 Agent 扫描 Skill 调用频次并对比本地 35+ 已安装技能库，提供 30 天沉睡技能治理预警；文件级磁盘增量缓存（冷启动时延 4.2s 直降至 0.04s，秒级秒开）
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
 - **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
 - **Taptic 震动触感反馈**：深度适配 Mac Force Touch 触控板，在待办勾选完成、批量保存、验证码与路径复制、任务删除、撤销恢复、暂存架拖出即焚等高频场景中提供原生清脆的物理触感反馈（外接普通鼠标或不支持设备上自动静默忽略）
@@ -92,7 +92,7 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent）
-│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore + AppleNotesService + FleetingPrompt + FleetingSettingsStore + FleetingThoughtLLMClient + TypeSafeJevClient
+│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore + AppleNotesService + FleetingPrompt + FleetingSettingsStore + FleetingThoughtLLMClient + TypeSafeJevClient + SkillStatsService
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
 │   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, FleetingCaptureView, JevSettingsView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
 │   └── AppKit/                 # AppKit 集成
@@ -178,7 +178,7 @@ DSH 统计              ← 打开 DSH 紧凑统计面板
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.9.0.dmg`
+2. 下载最新版本的 `Pinner-v1.10.0.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 

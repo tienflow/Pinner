@@ -36,10 +36,12 @@ final class DshStatsService {
         let sessionId: String
         let model: String?
         let title: String?
+        let durationMs: Int?
 
         var asPublic: PublicRecord {
             PublicRecord(tsMs: tsMs, tokens: tokens, freshInput: freshInput, cached: cached,
-                         output: output, sessionId: sessionId, model: model, title: title)
+                         output: output, sessionId: sessionId, model: model, title: title,
+                         durationMs: durationMs)
         }
     }
 
@@ -66,7 +68,9 @@ final class DshStatsService {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("dsh_scan_cache.json")
+        let legacy = dir.appendingPathComponent("dsh_scan_cache.json")
+        try? FileManager.default.removeItem(at: legacy)
+        return dir.appendingPathComponent("dsh_scan_cache_v2.json")
     }()
 
     private static func getDiskCache() -> [String: DiskFileCacheEntry] {
@@ -109,6 +113,7 @@ final class DshStatsService {
         let sessionId: String
         let model: String?
         let title: String?
+        let durationMs: Int?
     }
 
     func collectRecords(sinceMs: Int64) -> [PublicRecord] {
@@ -182,6 +187,13 @@ final class DshStatsService {
                             model = m
                         }
 
+                        var durationMs: Int? = nil
+                        if let stream = payload["stream"] as? [[String: Any]],
+                           let firstTime = stream.first?["time"] as? NSNumber {
+                            let diff = tsMs - firstTime.int64Value
+                            if diff >= 100 { durationMs = Int(diff) }
+                        }
+
                         fileRecords.append(Record(
                             tsMs: tsMs,
                             tokens: (usage["totalTokens"] as? NSNumber)?.intValue ?? 0,
@@ -190,7 +202,8 @@ final class DshStatsService {
                             output: (usage["outputTokens"] as? NSNumber)?.intValue ?? 0,
                             sessionId: sessionId,
                             model: model,
-                            title: projectTitle
+                            title: projectTitle,
+                            durationMs: durationMs
                         ))
                     }
 
