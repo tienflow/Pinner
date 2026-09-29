@@ -89,6 +89,7 @@ open /Applications/Pinner.app
 6. git push + git tag -a vX.X.X → 验证: 远程分支和 tag 已同步
 7. gh release create vX.X.X + gh release upload vX.X.X Pinner-vX.X.X.dmg → 验证: Release 页面有 DMG 下载
 8. 更新项目记忆 → 验证: Obsidian vault 已同步
+9. 执行 neat-freak 知识收尾 → 验证: 审计代码、运行态、文档、规则、记忆与工作区残留
 ```
 
 ### 5.2 常见遗漏（必须检查）
@@ -97,6 +98,7 @@ open /Applications/Pinner.app
 - ✅ README.md 功能列表已更新（不要保留已删除的功能描述）
 - ✅ 版本号已更新
 - ✅ 项目记忆已同步
+- ✅ 已执行 neat-freak 知识收尾与工作区审计（清点残留与事实面一致性）
 
 ## 6. 文档同步（🔴 功能变更时必须执行）
 
