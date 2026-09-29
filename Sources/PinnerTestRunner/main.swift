@@ -357,6 +357,7 @@ func testSettingsSubmenuContents() {
     let topTitles = menu.items.map { $0.title }
     check(!topTitles.contains { $0.hasSuffix("快捷键") }, "top-level menu hides hotkey items")
     check(topTitles.contains("待办"), "top-level menu contains todo item")
+    check(topTitles.contains("闪念"), "top-level menu contains fleeting item")
     check(topTitles.contains("收藏夹"), "top-level menu contains collection item")
     check(topTitles.contains("OTP 验证码"), "top-level menu contains OTP item")
 
@@ -809,6 +810,152 @@ func testNonVisualFileDoesNotGenerateThumbnail() throws {
     check(!thumbnailRequested, "markdown and text files do not generate content thumbnails")
 }
 
+@MainActor
+func testFleetingCapture() {
+    // 1. TypeSafe Jev System One response decoding
+    let jevSampleJSON = """
+    {
+      "model": "jev-1.13.0",
+      "answers": {
+        "target_folder": {
+          "type": "choice",
+          "choice": "清醒备忘",
+          "confidence": 1.0,
+          "probabilities": {"清醒备忘": 1.0, "装修笔记": 0.0}
+        },
+        "note_清醒备忘": {
+          "type": "choice",
+          "choice": "【断联日志】",
+          "confidence": 1.0,
+          "probabilities": {"【断联日志】": 1.0, "新建独立笔记": 0.0}
+        },
+        "mode": {
+          "type": "choice",
+          "choice": "prepend",
+          "confidence": 0.95,
+          "probabilities": {"prepend": 0.95, "append": 0.05}
+        }
+      }
+    }
+    """
+    let tree = [
+        AppleNotesService.FolderItem(name: "清醒备忘", notes: ["【断联日志】", "【认知重塑】"]),
+        AppleNotesService.FolderItem(name: "装修笔记", notes: ["【全屋尺寸】"])
+    ]
+    let jevParsed = TypeSafeJevClient.decodeJevResponse(
+        Data(jevSampleJSON.utf8),
+        originalInput: "今天断联第 37 天，心情很平静",
+        tree: tree
+    )
+    check(jevParsed?.folder == "清醒备忘", "Jev decodes target folder")
+    check(jevParsed?.targetNoteTitle == "【断联日志】", "Jev decodes target note title")
+    check(jevParsed?.mode == .prepend, "Jev decodes prepend mode for diary")
+    check(jevParsed?.formattedContent == "- 今天断联第 37 天，心情很平静", "Jev preserves authentic text verbatim")
+
+    // 2. HTML stripping and markdown to HTML conversion
+    let sampleHTML = "<h1>标题</h1><div>正文内容</div><ul><li>第 1 天<br></li></ul>"
+    let stripped = AppleNotesService.stripHTML(sampleHTML)
+    check(stripped.contains("标题") && stripped.contains("正文内容") && stripped.contains("第 1 天"), "stripHTML extracts plain text")
+
+    let mdText = "- 第一条\n- 第二条"
+    let convertedHTML = AppleNotesService.markdownToHTML(mdText)
+    check(convertedHTML.contains("<ul>") && convertedHTML.contains("<li>第一条<br></li>") && convertedHTML.contains("</ul>"), "markdownToHTML converts bullet list")
+
+    // 3. Prepend into existing <ul>
+    let oldListHTML = "<h1>【断联日志】</h1><div><br></div><ul><li>第 36 天：内容<br></li></ul>"
+    let prepended = AppleNotesService.insertPrepend(into: oldListHTML, content: "- 第 37 天：新记录")
+    check(prepended.contains("<ul><li>第 37 天：新记录<br></li><li>第 36 天：内容<br></li></ul>"), "insertPrepend inserts at top of <ul> list")
+
+    // 4. Prompt building & authenticity guarantee
+    let ctx = FleetingPrompt.Context(
+        input: "今天去咖啡馆看了会儿书，心情很平静",
+        folders: ["Notes", "清醒备忘"],
+        recentNotes: ["【断联日志】", "读书笔记"],
+        pinnedNotes: ["【断联日志】"],
+        folderTree: [
+            AppleNotesService.FolderItem(name: "清醒备忘", notes: ["【断联日志】", "【认知重塑】"]),
+            AppleNotesService.FolderItem(name: "妙笔偶得", notes: ["日常随笔", "佳句"])
+        ],
+        lastFolder: "清醒备忘",
+        lastNote: "【断联日志】"
+    )
+    let (systemPrompt, userPrompt) = FleetingPrompt.build(context: ctx)
+    check(systemPrompt.contains("必须 100% 原样保留用户的原始文字表述"), "prompt guarantees 100% text authenticity")
+    check(systemPrompt.contains("prepend"), "prompt specifies prepend mode")
+    check(userPrompt.contains("今天去咖啡馆看了会儿书，心情很平静"), "user prompt includes raw input")
+    check(userPrompt.contains("【断联日志】"), "user prompt includes target note")
+    check(userPrompt.contains("[备忘录分类与已有笔记]"), "user prompt contains folder tree structure")
+
+    // 5. LLM client parsing & stripping reasoning tags
+    let rawEnvelopeWithThink = """
+    {
+      "choices": [{
+        "message": {
+          "content": "<think>用户记录断联日志，应置顶前插并递增天数</think>```json\\n{\\"folder\\":\\"清醒备忘\\",\\"targetNoteTitle\\":\\"【断联日志】\\",\\"mode\\":\\"prepend\\",\\"formattedContent\\":\\"- 第 37 天：今天心情很平静\\",\\"confidence\\":0.98}\\n```"
+        }
+      }]
+    }
+    """
+    let parsed = FleetingThoughtLLMClient.parseResponse(Data(rawEnvelopeWithThink.utf8))
+    check(parsed?.folder == "清醒备忘", "LLM parse extracts folder")
+    check(parsed?.targetNoteTitle == "【断联日志】", "LLM parse extracts note title")
+    check(parsed?.mode == .prepend, "LLM parse extracts prepend mode")
+    check(parsed?.formattedContent == "- 第 37 天：今天心情很平静", "LLM parse strips think tags and extracts content")
+
+    // 6. Local fallback logic
+    let fallback = FleetingThoughtLLMClient.localFallback(context: ctx)
+    check(fallback.folder == "清醒备忘" && fallback.targetNoteTitle == "【断联日志】", "fallback routes breakup diary to 清醒备忘 / 【断联日志】")
+    check(fallback.mode == .prepend, "fallback uses prepend mode")
+    check(fallback.formattedContent == "- 今天去咖啡馆看了会儿书，心情很平静", "fallback preserves user verbatim input without day modification")
+
+    // 6.1 Semantic routing fallback when lastNote is clean/nil
+    let cleanCtx = FleetingPrompt.Context(
+        input: "卧室的全屋定制柜体尺寸需要再复核一遍",
+        folderTree: [
+            AppleNotesService.FolderItem(name: "装修笔记", notes: ["【全屋尺寸】", "【电路布局】"]),
+            AppleNotesService.FolderItem(name: "妙笔偶得", notes: ["日常随笔"])
+        ]
+    )
+    let cleanFallback = FleetingThoughtLLMClient.localFallback(context: cleanCtx)
+    check(cleanFallback.folder == "装修笔记", "fallback routes renovation keyword to 装修笔记")
+    check(cleanFallback.targetNoteTitle == "【全屋尺寸】", "fallback selects first note in matched folder")
+
+    // 7. FleetingSettingsStore pinning and LRU
+    let store = FleetingSettingsStore(defaults: UserDefaults(suiteName: "test-fleeting-\(UUID().uuidString)")!)
+    check(store.pinnedNotes.isEmpty, "store defaults to empty pinned notes")
+    store.pinNote("灵感随想")
+    check(store.pinnedNotes.contains("灵感随想"), "pinNote adds note")
+    store.unpinNote("灵感随想")
+    check(!store.pinnedNotes.contains("灵感随想"), "unpinNote removes note")
+
+    store.recordTarget(folder: "妙笔偶得", note: "新灵感")
+    check(store.lastFolder == "妙笔偶得" && store.lastNote == "新灵感", "recordTarget updates last target")
+    check(store.recentTargets.first?.note == "新灵感", "recentTargets places latest at front")
+
+    store.removeTarget(id: "妙笔偶得/新灵感")
+    check(!store.recentTargets.contains(where: { $0.note == "新灵感" }), "removeTarget deletes target from history")
+    check(store.lastNote == nil, "removeTarget clears lastNote if matched")
+
+    store.recordTarget(folder: "清醒备忘", note: "【断联日志】")
+    store.clearAllTargets()
+    check(store.recentTargets.isEmpty, "clearAllTargets empties recent list")
+
+    // 8. Reasoning tag stripping helper test
+    let rawThought = "<think>思考中...\n这是长篇思考</think>润色后的纯净文本"
+    check(FleetingThoughtLLMClient.stripReasoningTags(rawThought) == "润色后的纯净文本", "stripReasoningTags eliminates think block")
+
+    // 9. AppleNotesService empty list safety (no Range 1...0 crash)
+    let emptyListDesc = NSAppleEventDescriptor.list()
+    check(emptyListDesc.numberOfItems == 0, "empty NSAppleEventDescriptor has 0 items")
+    let itemsParsed: [String] = {
+        if emptyListDesc.numberOfItems > 0 {
+            return (1...emptyListDesc.numberOfItems).compactMap { emptyListDesc.atIndex($0)?.stringValue }
+        }
+        return []
+    }()
+    check(itemsParsed.isEmpty, "empty list descriptor yields empty array without crash")
+}
+
 // MARK: - Entry Point
 let allPassed = await Task { @MainActor () -> Bool in
     testTabCRUD()
@@ -843,6 +990,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testPinyinMatcher()
     testWorkBuddyScanCache()
     testGeminiScanCache()
+    testFleetingCapture()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value

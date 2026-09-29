@@ -6,6 +6,6 @@ public final class TodoSettingsWindowController: NSObject {
     public static let shared = TodoSettingsWindowController()
 
     public func show() {
-        SettingsWindowController.shared.show(tab: .todoAI)
+        SettingsWindowController.shared.show(tab: .aiConfig)
     }
 }

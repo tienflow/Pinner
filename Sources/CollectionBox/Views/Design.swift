@@ -182,19 +182,19 @@ struct LiquidGlassBackground: ViewModifier {
         content
             .background {
                 ZStack {
-                    // 1. 底层：垫在玻璃背后的系统材质衬底（90%~94% 高实心度，彻底阻断背景桌面杂光与文字干扰）
+                    // 1. 底层：垫在玻璃背后的系统材质衬底（浅色模式采用明快柔和的近白暖灰 #F6F6F8，深色模式采用深邃系统底色）
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(
                             colorScheme == .dark
                                 ? Color(NSColor.windowBackgroundColor).opacity(0.90)
-                                : Color(NSColor.windowBackgroundColor).opacity(0.94)
+                                : Color(red: 0.965, green: 0.965, blue: 0.972).opacity(0.95)
                         )
-                    // 2. 表层：原生 macOS 26 NSGlassEffectView 质感玻璃（置于最顶层，直接面向用户计算折射、边缘暗角与镜面高光）
+                    // 2. 表层：原生 macOS 26 NSGlassEffectView 质感玻璃（浅色模式免去暗色 scrim 避免发灰发暗，深色模式开启）
                     GlassEffectBackground(
                         style: style,
                         cornerRadius: cornerRadius,
                         tintColor: tintColor,
-                        enableScrim: true
+                        enableScrim: colorScheme == .dark
                     )
                 }
             }
@@ -202,7 +202,8 @@ struct LiquidGlassBackground: ViewModifier {
     }
 }
 
-/// Native macOS 26 Liquid Glass card backing using `NSGlassEffectView` with clear style.
+/// Native card and well backing with subtle secondary tint and crisp hair-line border.
+/// Sits harmoniously atop the window's Liquid Glass backdrop without specular frost glare.
 struct LiquidGlassCard: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
     var cornerRadius: CGFloat = Design.radiusM
@@ -212,27 +213,15 @@ struct LiquidGlassCard: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                ZStack {
-                    // 1. 卡片底层衬垫：88%~94% 扎实底色，使卡片内容具有最佳对比度
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(
-                            colorScheme == .dark
-                                ? Color(NSColor.controlBackgroundColor).opacity(0.88)
-                                : Color(NSColor.controlBackgroundColor).opacity(0.94)
-                        )
-                    // 2. 卡片表层：清澈质感玻璃，提供流体景深与微高光
-                    GlassEffectBackground(
-                        style: style,
-                        cornerRadius: cornerRadius,
-                        tintColor: tintColor,
-                        enableScrim: false
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(
+                        Color.secondary.opacity(colorScheme == .dark ? 0.12 : 0.045)
                     )
-                }
             }
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(
-                        Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.45 : 0.30),
+                        Color(NSColor.separatorColor).opacity(colorScheme == .dark ? 0.35 : 0.18),
                         lineWidth: 0.5
                     )
             )

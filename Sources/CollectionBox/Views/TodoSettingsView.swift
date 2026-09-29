@@ -18,7 +18,7 @@ struct TodoSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("待办原文将发送至所配置端点。用于把一句话解析成「标题 + 到期 + 优先级 + 列表」。")
+            Text("待办原文与闪念内容将发送至所配置端点。用于待办语句解析，以及闪念投递的一键 AI 润色与兜底推导。")
                 .font(.system(size: Design.caption))
                 .foregroundStyle(.secondary)
 

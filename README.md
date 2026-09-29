@@ -54,12 +54,21 @@
 - **今日已完成与日报小结**：底部常驻「今日已完成 · N」折叠列表（支持反选恢复），提供「复制今日总结」一键将当日完成条目格式化导出为 Markdown（带完成时间），写日报周报极速闭环
 - **快捷键直达**：可自定义全局快捷键（默认未设置，可于偏好设置随时录制）
 
+**闪念投递 (Fleeting Capture)**
+- **极速投递 Apple Notes**：菜单栏右键 →「闪念」或快捷键唤出专属轻量浮动玻璃卡片，支持随手将当下灵感、生活随笔或日常日志一键保存至 macOS 备忘录
+- **Jev 语义路由 + 大模型深度仲裁**：优先接入 TypeSafe Jev System One 极速判定备忘录分类与已有笔记（~200ms），歧义或低置信度时自动升级通用大模型深度终审并注入概率先验，兼顾极速直出与语义深思
+- **下拉自由选择与新建笔记**：推导后提供分类与笔记下拉菜单，支持一键切换分类、目标笔记或新建笔记，支持 [置顶前插 | 尾部追加 | 新建笔记] 三模式自由切换
+- **一键 AI 润色**：输入框集成轻量「AI 润色」按钮，一键修正错别字与语病，提升语句凝练感，严格保真用户意图与情感
+- **文本真实性铁律**：投递内容 100% 绝对保持用户输入的原始字词，绝不擅自添加前缀破折号或进行多余格式篡改
+- **两段式智能确认**：回车触发语义推导与预览确认卡，再次回车写入备忘录；支持 `⌘⏎` 秒级极速直达入库；断网或未配置 AI 时平滑降级为本地规则
+- **历史目标记忆**：动态记忆最近使用过的备忘录目标笔记（LRU 胶囊），支持一键选中、单项删除或全量清空
+
 **通用与偏好设置**
 - **扁平极简菜单**：右键菜单全面扁平化，去除繁冗的层级子菜单，高频入口一目了然
 - **统一偏好设置面板 (`⌘,`)**：
   - **通用**：开机自启开关（`SMAppService`）、外观主题（自动 / 浅色 / 深色）、参与统计的 Agent 勾选（双向联动）
   - **快捷键**：可视化呈现总览、收藏夹、OTP、待办及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
-  - **待办偏好与 AI**：支持自定义「一键推迟默认时刻」（自选时分，默认 09:00），悬浮时钟与 ⌘T 自动同步该时刻；配置 Base URL、API Key、Model Name，支持连通性一键测试与状态提示
+  - **AI 配置**：整合通用大模型端点（Base URL、API Key、模型名）与 TypeSafe Jev 语义路由配置，支持独立连通性测试与状态提示；支持自定义待办「一键推迟默认时刻」
 - **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行三张表（点击列头排序）、半年 GitHub 格热力图（带月份标注）、每日明细一键导出 CSV，窗口大小自动记忆；增量加载——勾选切换不重扫已扫描的 Agent，刷新按钮强制全量
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；入口均随勾选联动
 - **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
@@ -83,9 +92,9 @@
 Sources/
 ├── CollectionBox/              # 核心库
 │   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent）
-│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore
+│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore + AppleNotesService + FleetingPrompt + FleetingSettingsStore + FleetingThoughtLLMClient + TypeSafeJevClient
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
+│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, FleetingCaptureView, JevSettingsView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
 │   └── AppKit/                 # AppKit 集成
 │       ├── MenuBarController.swift           # 菜单栏交互与极简扁平菜单
 │       ├── EdgeDockWindowController.swift    # 收藏面板管理
@@ -100,11 +109,12 @@ Sources/
 │       ├── GeminiStatsHotkeyManager.swift    # Antigravity 统计快捷键
 │       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
 │       ├── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
-│       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH / 待办统计快捷键
+│       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH / 待办 / 闪念快捷键
 │       ├── AgentStatsWindowController.swift     # ZCode / DSH 紧凑统计窗口
 │       ├── HotkeyRegistrationNotifier.swift     # 快捷键注册失败系统通知
 │       ├── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
 │       ├── TodoCaptureWindowController.swift    # 待办快速录入面板
+│       ├── FleetingCaptureWindowController.swift # 闪念投递备忘录面板
 │       └── TodoSettingsWindowController.swift   # 兼容路由至偏好设置
 └── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
 ```
@@ -158,7 +168,7 @@ WorkBuddy 统计        ← 打开统计面板
 ZCode 统计            ← 打开 ZCode 紧凑统计面板
 DSH 统计              ← 打开 DSH 紧凑统计面板
 ──────────
-偏好设置… (⌘,)         ← 打开统一偏好设置面板（通用 / 快捷键 / 待办 AI）
+偏好设置… (⌘,)         ← 打开统一偏好设置面板（通用 / 快捷键 / AI 配置）
 ──────────
 退出 Pinner (⌘Q)      ← 退出应用
 ```
@@ -168,7 +178,7 @@ DSH 统计              ← 打开 DSH 紧凑统计面板
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.8.0.dmg`
+2. 下载最新版本的 `Pinner-v1.9.0.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 

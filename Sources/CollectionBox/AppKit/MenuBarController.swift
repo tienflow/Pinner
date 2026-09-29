@@ -28,6 +28,8 @@ public final class MenuBarController: NSObject {
     private var workbuddyStatsHotkeyManager: WorkBuddyStatsHotkeyManager?
     private var todoController: TodoCaptureWindowController?
     private let todoHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.todoHotkey", eventID: 9)
+    private var fleetingController: FleetingCaptureWindowController?
+    private let fleetingHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.fleetingHotkey", eventID: 10)
     private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
     private let dshStatsController = AgentStatsWindowController(agent: .dsh)
     private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
@@ -83,10 +85,12 @@ public final class MenuBarController: NSObject {
         zcodeStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.zcode) }
         dshStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.dsh) }
         todoHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showTodo() }
+        fleetingHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showFleeting() }
         dashboardHotkeyManager.register()
         zcodeStatsHotkeyManager.register()
         dshStatsHotkeyManager.register()
         todoHotkeyManager.register()
+        fleetingHotkeyManager.register()
 
         applyTheme()
     }
@@ -120,6 +124,10 @@ public final class MenuBarController: NSObject {
         // 待办 quick capture
         let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
         todoItem.target = self; m.addItem(todoItem)
+
+        // 闪念投递 quick capture
+        let fleetingItem = NSMenuItem(title: "闪念", action: #selector(showFleeting), keyEquivalent: "")
+        fleetingItem.target = self; m.addItem(fleetingItem)
 
         // Collection
         let collectionItem = NSMenuItem(title: "收藏夹", action: #selector(openCollection), keyEquivalent: "")
@@ -187,6 +195,21 @@ public final class MenuBarController: NSObject {
 
     public func clearTodoHotkey() {
         todoHotkeyManager.clear()
+    }
+
+    public func fleetingHotkeyString() -> String {
+        fleetingHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordFleetingHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置闪念投递快捷键") { [weak self] combo in
+            self?.fleetingHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearFleetingHotkey() {
+        fleetingHotkeyManager.clear()
     }
 
     public func collectionHotkeyString() -> String {
@@ -369,6 +392,22 @@ public final class MenuBarController: NSObject {
             todoCaptureController().showAtMenuBar(buttonFrame: btnFrame)
         } else {
             todoCaptureController().showAtMouse()
+        }
+    }
+
+    private func fleetingCaptureController() -> FleetingCaptureWindowController {
+        if let fleetingController { return fleetingController }
+        let controller = FleetingCaptureWindowController.shared
+        fleetingController = controller
+        return controller
+    }
+
+    @objc public func showFleeting() {
+        if let btn = statusItem?.button {
+            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+            fleetingCaptureController().showAtMenuBar(buttonFrame: btnFrame)
+        } else {
+            fleetingCaptureController().showAtMouse()
         }
     }
 

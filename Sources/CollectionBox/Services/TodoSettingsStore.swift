@@ -2,28 +2,34 @@ import Foundation
 
 /// Three-field LLM configuration for todo parsing (OpenAI-compatible API).
 /// Stored in UserDefaults as JSON data/string without Keychain authorization prompts.
-struct TodoLLMConfig: Codable, Equatable {
-    var baseURL: String
-    var apiKey: String
-    var model: String
+public struct TodoLLMConfig: Codable, Equatable {
+    public var baseURL: String
+    public var apiKey: String
+    public var model: String
 
-    static let empty = TodoLLMConfig(baseURL: "", apiKey: "", model: "")
+    public static let empty = TodoLLMConfig(baseURL: "", apiKey: "", model: "")
+
+    public init(baseURL: String, apiKey: String, model: String) {
+        self.baseURL = baseURL
+        self.apiKey = apiKey
+        self.model = model
+    }
 }
 
 @MainActor
-final class TodoSettingsStore {
-    static let shared = TodoSettingsStore()
+public final class TodoSettingsStore {
+    public static let shared = TodoSettingsStore()
 
     private let defaults: UserDefaults
     private let key: String
     private var cachedConfig: TodoLLMConfig?
 
-    init(defaults: UserDefaults = .standard, key: String = "CollectionBox.todoLLMConfig") {
+    public init(defaults: UserDefaults = .standard, key: String = "CollectionBox.todoLLMConfig") {
         self.defaults = defaults
         self.key = key
     }
 
-    var config: TodoLLMConfig {
+    public var config: TodoLLMConfig {
         get {
             if let cached = cachedConfig { return cached }
             let loaded = load() ?? .empty
@@ -36,7 +42,7 @@ final class TodoSettingsStore {
         }
     }
 
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         let c = config
         return !c.baseURL.isEmpty && !c.apiKey.isEmpty && !c.model.isEmpty
     }

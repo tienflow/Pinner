@@ -5,7 +5,7 @@ import ServiceManagement
 public enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "通用"
     case hotkeys = "快捷键"
-    case todoAI = "待办 AI"
+    case aiConfig = "AI 配置"
 
     public var id: String { rawValue }
 
@@ -13,7 +13,7 @@ public enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .hotkeys: return "keyboard"
-        case .todoAI: return "sparkles"
+        case .aiConfig: return "sparkles"
         }
     }
 }
@@ -56,8 +56,8 @@ public struct SettingsView: View {
                     generalTab
                 case .hotkeys:
                     hotkeysTab
-                case .todoAI:
-                    todoAITab
+                case .aiConfig:
+                    aiConfigTab
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -215,6 +215,14 @@ public struct SettingsView: View {
                         )
                         Divider()
                         hotkeyRow(
+                            title: "闪念投递",
+                            icon: "note.text.badge.plus",
+                            getCombo: { MenuBarController.shared?.fleetingHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordFleetingHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearFleetingHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
                             title: "收藏夹抽屉",
                             icon: "tray.full",
                             getCombo: { MenuBarController.shared?.collectionHotkeyString() ?? "未设置" },
@@ -316,19 +324,24 @@ public struct SettingsView: View {
         .padding(.vertical, 2)
     }
 
-    // MARK: - Tab 3: Todo AI
-
+    // MARK: - Tab 3: AI Config
+ 
     @AppStorage("CollectionBox.todoSnoozeHour") private var todoSnoozeHour: Int = 9
     @AppStorage("CollectionBox.todoSnoozeMinute") private var todoSnoozeMinute: Int = 0
 
-    private var todoAITab: some View {
+    private var aiConfigTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                sectionCard(title: "Jev 语义路由 (闪念投递)", icon: "arrow.triangle.branch") {
+                    JevSettingsView()
+                }
+
+                sectionCard(title: "通用模型服务 (OpenAI 兼容端点)", icon: "sparkles") {
+                    TodoSettingsView()
+                }
+
                 sectionCard(title: "待办偏好", icon: "clock.arrow.circlepath") {
                     todoBehaviorSection
-                }
-                sectionCard(title: "模型服务配置", icon: "sparkles") {
-                    TodoSettingsView()
                 }
             }
             .padding(20)
