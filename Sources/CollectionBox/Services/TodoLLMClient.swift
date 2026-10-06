@@ -35,21 +35,20 @@ enum TodoLLMError: LocalizedError {
 
 /// OpenAI-compatible `/chat/completions` client with a 30s timeout.
 /// The response body parse is a pure function (`parseResponse`) so it can be
-/// unit-tested without a network.
 struct TodoLLMClient {
+    public static let sharedSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 30
+        return URLSession(configuration: config)
+    }()
+
     var session: URLSession
     var timeout: TimeInterval
 
     init(session: URLSession? = nil, timeout: TimeInterval = 30) {
         self.timeout = timeout
-        if let session {
-            self.session = session
-        } else {
-            let config = URLSessionConfiguration.default
-            config.timeoutIntervalForRequest = timeout
-            config.timeoutIntervalForResource = timeout
-            self.session = URLSession(configuration: config)
-        }
+        self.session = session ?? Self.sharedSession
     }
 
     /// Pure parse of a `/chat/completions` response body (or direct JSON payload) into an array of tasks.

@@ -112,7 +112,6 @@ struct TodoCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: 58)
             Image(systemName: "checklist").font(.system(size: 13)).foregroundStyle(.secondary)
             Text("待办").font(.system(size: 13, weight: .semibold))
 

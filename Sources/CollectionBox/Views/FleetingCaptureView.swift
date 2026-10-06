@@ -71,6 +71,11 @@ public struct FleetingCaptureView: View {
             selectedFolder = ""
             selectedNote = ""
             isCreatingNewNote = false
+
+            // 静默预热备忘录目录树内存缓存，保证敲击回车时 0ms 瞬间直出
+            Task.detached(priority: .utility) {
+                _ = try? await AppleNotesService.shared.getFolderTree()
+            }
         }
         .onChange(of: isCardPresent) { _, expanded in
             FleetingCaptureWindowController.shared.updateHeight(isExpanded: expanded, isParsing: isParsing, hasStatus: statusMessage != nil)
@@ -87,7 +92,6 @@ public struct FleetingCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: 58) // 预留 macOS 原生红绿灯专属避让留白，杜绝割裂
             Image(systemName: "note.text.badge.plus")
                 .foregroundColor(.accentColor)
                 .font(.system(size: 14, weight: .semibold))
@@ -297,7 +301,7 @@ public struct FleetingCaptureView: View {
         HStack(spacing: 8) {
             ProgressView()
                 .scaleEffect(0.7)
-            Text("正在推导目标备忘录与天数…")
+            Text("正在智能匹配目标备忘录…")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
@@ -506,6 +510,7 @@ public struct FleetingCaptureView: View {
                     HStack(spacing: 4) {
                         if isSaving {
                             ProgressView().scaleEffect(0.6)
+                                .frame(width: 12, height: 12)
                         } else {
                             Image(systemName: "checkmark")
                         }

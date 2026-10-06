@@ -1,46 +1,43 @@
 import AppKit
 import SwiftUI
 
-private final class FleetingCaptureKeyPanel: NSPanel {
+private final class InputStatsKeyPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
-/// Floating panel controller for fleeting thoughts capture → Apple Notes.
-/// Lightweight, floating, auto-centered or mouse-adjacent, rebuilt on open.
-public final class FleetingCaptureWindowController: NSObject, NSWindowDelegate {
-    public static let shared = FleetingCaptureWindowController()
+@MainActor
+public final class InputStatsWindowController: NSObject, NSWindowDelegate {
+    public static let shared = InputStatsWindowController()
 
+    private let service: InputStatsService
     private var panel: NSPanel?
     public private(set) var isShowing = false
     private var mouseMonitor: Any?
 
-    private static var hasRecentTargets: Bool {
-        if let data = UserDefaults.standard.data(forKey: "CollectionBox.fleetingRecentTargets"),
-           let list = try? JSONDecoder().decode([RecentTarget].self, from: data) {
-            return !list.isEmpty
-        }
-        return false
+    public init(service: InputStatsService) {
+        self.service = service
+        super.init()
+    }
+
+    public convenience override init() {
+        self.init(service: InputStatsService.shared)
     }
 
     public func toggle() {
         if isShowing { hide() } else { showAtMouse() }
     }
 
-    public static func initialHeight() -> CGFloat {
-        hasRecentTargets ? 254 : 216
-    }
-
     public func showAtMouse() {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 440, h: CGFloat = Self.initialHeight()
+        let w: CGFloat = 460, h: CGFloat = 640
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
 
         // Center on screen or near mouse
         let x = screen.frame.midX - w / 2
-        let y = screen.frame.midY - h / 2 + 50
+        let y = screen.frame.midY - h / 2 + 30
         let frame = NSRect(x: x, y: y, width: w, height: h)
 
         showPanel(in: frame)
@@ -49,7 +46,7 @@ public final class FleetingCaptureWindowController: NSObject, NSWindowDelegate {
     public func showAtMenuBar(buttonFrame: NSRect) {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 440, h: CGFloat = Self.initialHeight()
+        let w: CGFloat = 460, h: CGFloat = 640
         let x = buttonFrame.maxX - w
         let y = buttonFrame.origin.y - h - 4
         let frame = NSRect(x: x, y: y, width: w, height: h)
@@ -57,45 +54,14 @@ public final class FleetingCaptureWindowController: NSObject, NSWindowDelegate {
         showPanel(in: frame)
     }
 
-    public func updateHeight(isExpanded: Bool, isParsing: Bool, hasStatus: Bool = false, animated: Bool = true) {
-        guard let p = panel else { return }
-        let hasRecents = Self.hasRecentTargets
-        var targetH: CGFloat
-        if isExpanded {
-            targetH = hasRecents ? 510 : 472
-        } else if isParsing {
-            targetH = hasRecents ? 300 : 262
-        } else {
-            targetH = hasRecents ? 254 : 216
-        }
-
-        if hasStatus {
-            targetH += 34
-        }
-
-        if abs(p.frame.height - targetH) > 2 {
-            var frame = p.frame
-            let diff = targetH - frame.height
-            frame.origin.y -= diff
-            frame.size.height = targetH
-
-            if let screen = p.screen ?? NSScreen.main {
-                if frame.origin.y < screen.visibleFrame.minY + 10 {
-                    frame.origin.y = screen.visibleFrame.minY + 10
-                }
-            }
-
-            p.setFrame(frame, display: true, animate: animated)
-        }
-    }
-
     private func showPanel(in frame: NSRect) {
-        let p = FleetingCaptureKeyPanel(
+        let p = InputStatsKeyPanel(
             contentRect: frame,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
+        p.minSize = NSSize(width: 440, height: 500)
         p.level = .floating
         p.isOpaque = false
         p.backgroundColor = .clear
@@ -111,11 +77,11 @@ public final class FleetingCaptureWindowController: NSObject, NSWindowDelegate {
         p.delegate = self
         p.isReleasedWhenClosed = false
 
-        let captureView = FleetingCaptureView { [weak self] in
+        let contentView = InputStatsView(service: service) { [weak self] in
             self?.hide()
         }
 
-        let hv = NSHostingView(rootView: captureView)
+        let hv = NSHostingView(rootView: contentView)
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)

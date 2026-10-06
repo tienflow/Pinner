@@ -24,7 +24,11 @@ public struct TypeSafeJevClient: Sendable {
         public var topNotes: [JevCandidate]
 
         public var isHighConfidence: Bool {
-            folderConfidence >= 0.65 && noteConfidence >= 0.40
+            let topFolderProb = topFolders.first?.probability ?? folderConfidence
+            let topNoteProb = topNotes.first?.probability ?? noteConfidence
+            let folderDominates = topFolderProb >= 0.50 || folderConfidence >= 0.35
+            let noteDominates = topNoteProb >= 0.35 || noteConfidence >= 0.20
+            return folderDominates && noteDominates
         }
 
         public init(

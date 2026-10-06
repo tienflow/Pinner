@@ -123,6 +123,7 @@ struct StatsDashboardView: View {
     @State private var hourlyHoverText: String?
     @State private var isHourlyExpanded: Bool = true
     @State private var snapshot: DashboardSnapshot?
+    @State private var snapshotTask: Task<Void, Never>?
     @State private var selectedAgentFilter: StatsAgent? = nil
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
@@ -924,21 +925,23 @@ struct StatsDashboardView: View {
             if rows.isEmpty {
                 placeholder("所选范围内没有数据").padding(.vertical, 16)
             } else {
-                ForEach(rows) { row in
-                    HStack(spacing: 0) {
-                        Text(row.date).font(.system(size: Design.caption)).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(intervalString(row.total)).font(.system(size: Design.caption, weight: .semibold)).frame(width: 105, alignment: .trailing)
-                        Text(intervalString(row.fresh)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 95, alignment: .trailing)
-                        Text(intervalString(row.output)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 95, alignment: .trailing)
-                        Text(intervalString(row.cached)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 110, alignment: .trailing)
-                        Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 55, alignment: .trailing)
-                        Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
-                            .font(.system(size: Design.caption))
-                            .foregroundStyle(row.tps != nil ? .primary : .secondary)
-                            .frame(width: 75, alignment: .trailing)
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        HStack(spacing: 0) {
+                            Text(row.date).font(.system(size: Design.caption)).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(intervalString(row.total)).font(.system(size: Design.caption, weight: .semibold)).frame(width: 105, alignment: .trailing)
+                            Text(intervalString(row.fresh)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 95, alignment: .trailing)
+                            Text(intervalString(row.output)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 95, alignment: .trailing)
+                            Text(intervalString(row.cached)).font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 110, alignment: .trailing)
+                            Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary).frame(width: 55, alignment: .trailing)
+                            Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
+                                .font(.system(size: Design.caption))
+                                .foregroundStyle(row.tps != nil ? .primary : .secondary)
+                                .frame(width: 75, alignment: .trailing)
+                        }
+                        .padding(.vertical, 4)
+                        Divider().opacity(0.5)
                     }
-                    .padding(.vertical, 4)
-                    Divider().opacity(0.5)
                 }
             }
         }
@@ -1007,10 +1010,7 @@ struct StatsDashboardView: View {
     }
 
     private var sessionRankTable: some View {
-        let rows = (snapshot?.sessionRows ?? [])
-            .sorted(by: sessionSort(key: sessionSortKey, ascending: sessionSortAsc))
-            .prefix(30)
-            .map { $0 }
+        let rows = snapshot?.sessionRows ?? []
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -1027,23 +1027,25 @@ struct StatsDashboardView: View {
             if rows.isEmpty {
                 placeholder("所选范围内没有数据").padding(.vertical, 16)
             } else {
-                ForEach(rows) { row in
-                    HStack(spacing: 0) {
-                        Text(row.title).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(row.agent.label).font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 90, alignment: .leading)
-                        Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
-                            .frame(width: 105, alignment: .trailing)
-                        Text("\(row.turns)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 55, alignment: .trailing)
-                        Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
-                            .font(.system(size: Design.caption))
-                            .foregroundStyle(row.tps != nil ? .primary : .secondary)
-                            .frame(width: 75, alignment: .trailing)
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        HStack(spacing: 0) {
+                            Text(row.title).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.agent.label).font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                                .frame(width: 90, alignment: .leading)
+                            Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
+                                .frame(width: 105, alignment: .trailing)
+                            Text("\(row.turns)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                                .frame(width: 55, alignment: .trailing)
+                            Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
+                                .font(.system(size: Design.caption))
+                                .foregroundStyle(row.tps != nil ? .primary : .secondary)
+                                .frame(width: 75, alignment: .trailing)
+                        }
+                        .padding(.vertical, 4)
+                        Divider().opacity(0.5)
                     }
-                    .padding(.vertical, 4)
-                    Divider().opacity(0.5)
                 }
             }
         }
@@ -1087,23 +1089,35 @@ struct StatsDashboardView: View {
         }
     }
 
-    func sessionSort(key: String, ascending: Bool) -> (SessionRow, SessionRow) -> Bool {
+    static func sessionSort(key: String, ascending: Bool) -> (SessionRow, SessionRow) -> Bool {
         { a, b in
             switch key {
-            case "title": return ascending ? a.title < b.title : a.title > b.title
-            case "turns": return ascending ? a.turns < b.turns : a.turns > b.turns
+            case "title":
+                if a.title != b.title { return ascending ? a.title < b.title : a.title > b.title }
+                return a.id < b.id
+            case "turns":
+                if a.turns != b.turns { return ascending ? a.turns < b.turns : a.turns > b.turns }
+                return a.tokens > b.tokens
             case "tps":
                 let tpsA = a.tps ?? -1
                 let tpsB = b.tps ?? -1
-                return ascending ? tpsA < tpsB : tpsA > tpsB
-            default: return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
+                if tpsA != tpsB { return ascending ? tpsA < tpsB : tpsA > tpsB }
+                return a.tokens > b.tokens
+            default:
+                if a.tokens != b.tokens { return ascending ? a.tokens < b.tokens : a.tokens > b.tokens }
+                return a.turns > b.turns
             }
         }
+    }
+
+    func sessionSort(key: String, ascending: Bool) -> (SessionRow, SessionRow) -> Bool {
+        Self.sessionSort(key: key, ascending: ascending)
     }
 
     private func toggleSessionSort(_ key: String) {
         if sessionSortKey == key { sessionSortAsc.toggle() }
         else { sessionSortKey = key; sessionSortAsc = false }
+        updateSnapshot()
     }
 
     /// Cross-agent model ranking: merged by display name, share bar, tokens,
@@ -1131,35 +1145,37 @@ struct StatsDashboardView: View {
             if rows.isEmpty {
                 placeholder("所选范围内没有数据").padding(.vertical, 16)
             } else {
-                ForEach(rows) { row in
-                    HStack(spacing: 0) {
-                        Text(row.name).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 95, alignment: .leading)
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
-                                RoundedRectangle(cornerRadius: Design.radiusS)
-                                    .fill(Color.accentColor.opacity(0.75))
-                                    .frame(width: maxTokens > 0 ? geo.size.width * CGFloat(row.tokens) / CGFloat(maxTokens) : 0)
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        HStack(spacing: 0) {
+                            Text(row.name).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                                .frame(width: 95, alignment: .leading)
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
+                                    RoundedRectangle(cornerRadius: Design.radiusS)
+                                        .fill(Color.accentColor.opacity(0.75))
+                                        .frame(width: maxTokens > 0 ? geo.size.width * CGFloat(row.tokens) / CGFloat(maxTokens) : 0)
+                                }
                             }
+                            .frame(width: 120, height: 12)
+                            Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
+                                .frame(width: 105, alignment: .trailing)
+                            Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                                .frame(width: 55, alignment: .trailing)
+                            Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
+                                .font(.system(size: Design.caption))
+                                .foregroundStyle(row.tps != nil ? .primary : .secondary)
+                                .frame(width: 75, alignment: .trailing)
+                            Text("\(grand > 0 ? Int(Double(row.tokens) / Double(grand) * 100) : 0)%")
+                                .font(.system(size: Design.caption)).foregroundStyle(.secondary)
+                                .frame(width: 55, alignment: .trailing)
                         }
-                        .frame(width: 120, height: 12)
-                        Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
-                            .frame(width: 105, alignment: .trailing)
-                        Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 55, alignment: .trailing)
-                        Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
-                            .font(.system(size: Design.caption))
-                            .foregroundStyle(row.tps != nil ? .primary : .secondary)
-                            .frame(width: 75, alignment: .trailing)
-                        Text("\(grand > 0 ? Int(Double(row.tokens) / Double(grand) * 100) : 0)%")
-                            .font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                            .frame(width: 55, alignment: .trailing)
+                        .padding(.vertical, 4)
+                        Divider().opacity(0.5)
                     }
-                    .padding(.vertical, 4)
-                    Divider().opacity(0.5)
                 }
             }
         }
@@ -1286,59 +1302,61 @@ struct StatsDashboardView: View {
             if rows.isEmpty {
                 placeholder("所选范围内没有 Skill 调用记录").padding(.vertical, 16)
             } else {
-                ForEach(rows) { row in
-                    HStack(spacing: 0) {
-                        Text("\(row.rank)")
-                            .font(.system(size: Design.micro, weight: .bold, design: .rounded))
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 32, alignment: .leading)
-                        HStack(spacing: 5) {
-                            Image(systemName: "puzzlepiece.extension.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(Color.accentColor.opacity(0.85))
-                            Text(row.name)
-                                .font(.system(size: Design.caption, weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        HStack(spacing: 4) {
-                            ForEach(row.agents, id: \.self) { ag in
-                                Image(systemName: ag.symbolName)
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        HStack(spacing: 0) {
+                            Text("\(row.rank)")
+                                .font(.system(size: Design.micro, weight: .bold, design: .rounded))
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 32, alignment: .leading)
+                            HStack(spacing: 5) {
+                                Image(systemName: "puzzlepiece.extension.fill")
                                     .font(.system(size: 9))
-                                    .foregroundStyle(agentColor[ag] ?? .secondary)
-                                    .help(ag.label)
+                                    .foregroundStyle(Color.accentColor.opacity(0.85))
+                                Text(row.name)
+                                    .font(.system(size: Design.caption, weight: .medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
                             }
-                        }
-                        .frame(width: 110, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
-                                RoundedRectangle(cornerRadius: Design.radiusS)
-                                    .fill(Color.accentColor.opacity(0.75))
-                                    .frame(width: maxCalls > 0 ? geo.size.width * CGFloat(row.count) / CGFloat(maxCalls) : 0)
+                            HStack(spacing: 4) {
+                                ForEach(row.agents, id: \.self) { ag in
+                                    Image(systemName: ag.symbolName)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(agentColor[ag] ?? .secondary)
+                                        .help(ag.label)
+                                }
                             }
+                            .frame(width: 110, alignment: .leading)
+
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
+                                    RoundedRectangle(cornerRadius: Design.radiusS)
+                                        .fill(Color.accentColor.opacity(0.75))
+                                        .frame(width: maxCalls > 0 ? geo.size.width * CGFloat(row.count) / CGFloat(maxCalls) : 0)
+                                }
+                            }
+                            .frame(width: 100, height: 12)
+
+                            Text(row.lastUsedMs.map { dfTime.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? "—")
+                                .font(.system(size: Design.micro))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 95, alignment: .trailing)
+
+                            Text(intervalString(row.count))
+                                .font(.system(size: Design.caption, weight: .semibold))
+                                .frame(width: 80, alignment: .trailing)
+
+                            Text("\(totalCalls > 0 ? Int(Double(row.count) / Double(totalCalls) * 100) : 0)%")
+                                .font(.system(size: Design.caption))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 55, alignment: .trailing)
                         }
-                        .frame(width: 100, height: 12)
-
-                        Text(row.lastUsedMs.map { dfTime.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? "—")
-                            .font(.system(size: Design.micro))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 95, alignment: .trailing)
-
-                        Text(intervalString(row.count))
-                            .font(.system(size: Design.caption, weight: .semibold))
-                            .frame(width: 80, alignment: .trailing)
-
-                        Text("\(totalCalls > 0 ? Int(Double(row.count) / Double(totalCalls) * 100) : 0)%")
-                            .font(.system(size: Design.caption))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 55, alignment: .trailing)
+                        .padding(.vertical, 4)
+                        Divider().opacity(0.5)
                     }
-                    .padding(.vertical, 4)
-                    Divider().opacity(0.5)
                 }
             }
         }
@@ -1357,37 +1375,90 @@ struct StatsDashboardView: View {
         // scanned this session keep their records — selection toggles don't
         // rescan the expensive sources (DSH zstd decompression).
         let missing = visibleAgents.filter { !scannedAgents.contains($0) }
-        for agent in missing {
+        let keep = Set(visibleAgents)
+        allRecords.removeAll { !keep.contains($0.agent) }
+
+        if !missing.isEmpty {
             Task.detached(priority: .userInitiated) {
-                let agentRecords = service.collect(agent: agent, sinceMs: 0)
+                var collected: [(StatsAgent, [UnifiedUsageRecord])] = []
+                for agent in missing {
+                    let agentRecords = service.collect(agent: agent, sinceMs: 0)
+                    collected.append((agent, agentRecords))
+                }
+                let (skills, installed) = SkillStatsService.shared.collectAll(force: force)
                 await MainActor.run {
-                    allRecords.removeAll { $0.agent == agent }
-                    allRecords.append(contentsOf: agentRecords)
-                    scannedAgents.insert(agent)
-                    loadedAgents.insert(agent)
+                    for (agent, recs) in collected {
+                        allRecords.removeAll { $0.agent == agent }
+                        allRecords.append(contentsOf: recs)
+                        scannedAgents.insert(agent)
+                        loadedAgents.insert(agent)
+                    }
+                    self.allSkillRecords = skills
+                    self.installedSkills = installed
+                    lastUpdated = Date()
+                    updateSnapshot()
+                }
+            }
+        } else {
+            Task.detached(priority: .userInitiated) {
+                let (skills, installed) = SkillStatsService.shared.collectAll(force: force)
+                await MainActor.run {
+                    self.allSkillRecords = skills
+                    self.installedSkills = installed
                     lastUpdated = Date()
                     updateSnapshot()
                 }
             }
         }
-        // Deselected agents drop out of the in-memory store immediately so
-        // totals don't include them.
-        let keep = Set(visibleAgents)
-        allRecords.removeAll { !keep.contains($0.agent) }
-        Task.detached(priority: .userInitiated) {
-            let (skills, installed) = SkillStatsService.shared.collectAll(force: force)
-            await MainActor.run {
-                self.allSkillRecords = skills
-                self.installedSkills = installed
-                updateSnapshot()
-            }
-        }
-        if missing.isEmpty { lastUpdated = Date() }
         updateSnapshot()
     }
 
     private func updateSnapshot() {
-        let enabledRecords = allRecords.filter { enabledAgents.contains($0.agent) }
+        snapshotTask?.cancel()
+        let records = allRecords
+        let skillRecords = allSkillRecords
+        let installed = installedSkills
+        let enabled = enabledAgents
+        let visible = visibleAgents
+        let selectedFilter = selectedAgentFilter
+        let sinceMs = effectiveSinceMs
+        let untilMs = effectiveUntilMs
+        let sessionKey = sessionSortKey
+        let sessionAsc = sessionSortAsc
+
+        snapshotTask = Task.detached(priority: .userInitiated) {
+            let snap = Self.buildSnapshot(
+                records: records,
+                skillRecords: skillRecords,
+                installedSkills: installed,
+                enabledAgents: enabled,
+                visibleAgents: visible,
+                selectedAgentFilter: selectedFilter,
+                effectiveSinceMs: sinceMs,
+                effectiveUntilMs: untilMs,
+                sessionSortKey: sessionKey,
+                sessionSortAsc: sessionAsc
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.snapshot = snap
+            }
+        }
+    }
+
+    static func buildSnapshot(
+        records: [UnifiedUsageRecord],
+        skillRecords: [SkillRecord],
+        installedSkills: Set<String>,
+        enabledAgents: Set<StatsAgent>,
+        visibleAgents: [StatsAgent],
+        selectedAgentFilter: StatsAgent?,
+        effectiveSinceMs: Int64,
+        effectiveUntilMs: Int64,
+        sessionSortKey: String,
+        sessionSortAsc: Bool
+    ) -> DashboardSnapshot {
+        let enabledRecords = records.filter { enabledAgents.contains($0.agent) }
         let now = Date()
         let cal = Calendar.current
 
@@ -1445,7 +1516,7 @@ struct StatsDashboardView: View {
         let trendMax = trendValues.max() ?? 0
 
         // 2. In-range stats
-        let rawInRange = inRange
+        let rawInRange = records.filter { enabledAgents.contains($0.agent) && $0.tsMs >= effectiveSinceMs && $0.tsMs <= effectiveUntilMs }
         var agentTokens: [StatsAgent: Int] = [:]
         var agentModelCounts: [StatsAgent: Int] = [:]
         for agent in visibleAgents {
@@ -1492,7 +1563,7 @@ struct StatsDashboardView: View {
         }
 
         let groupedSessions = Dictionary(grouping: current) { rec in "\(rec.agent.rawValue)|\(rec.sessionId)" }
-        let sessionRows: [SessionRow] = groupedSessions.map { _, recs in
+        let rawSessionRows: [SessionRow] = groupedSessions.map { _, recs in
             let first = recs[0]
             let title = first.title ?? "未命名会话（\(String(first.sessionId.prefix(8)))）"
             let valid = recs.filter { ($0.durationMs ?? 0) >= 100 && $0.output > 0 }
@@ -1508,6 +1579,10 @@ struct StatsDashboardView: View {
                 tps: tps
             )
         }
+        let sessionRows: [SessionRow] = rawSessionRows
+            .sorted(by: sessionSort(key: sessionSortKey, ascending: sessionSortAsc))
+            .prefix(30)
+            .map { $0 }
 
         let modelRankRows: [ModelRankRow] = mergedModelGroups(current).map { g in
             ModelRankRow(
@@ -1521,7 +1596,7 @@ struct StatsDashboardView: View {
         }
 
         // 3. Skill ranking and dormant detection in range
-        let skillFiltered = allSkillRecords.filter { rec in
+        let skillFiltered = skillRecords.filter { rec in
             enabledAgents.contains(rec.agent) &&
             rec.tsMs >= effectiveSinceMs &&
             rec.tsMs <= effectiveUntilMs &&
@@ -1569,7 +1644,7 @@ struct StatsDashboardView: View {
         // 4. Hourly Flow Rhythm
         let hourly = Self.computeHourlyMetrics(records: current, calendar: cal)
 
-        snapshot = DashboardSnapshot(
+        return DashboardSnapshot(
             d7Tokens: d7Tokens,
             d30Tokens: d30Tokens,
             dailyAvgTokens: dailyAvgTokens,
@@ -1686,7 +1761,7 @@ struct StatsDashboardView: View {
     /// case variants (glm-5.3-flash vs GLM-5.3-Flash) merge; the displayed
     /// name is the most frequent original casing. Unknown models stay
     /// per-agent buckets.
-    private func mergedModelGroups(_ records: [UnifiedUsageRecord]) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?)] {
+    static func mergedModelGroups(_ records: [UnifiedUsageRecord]) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?)] {
         struct Group {
             var tokens = 0
             var sessions = Set<String>()

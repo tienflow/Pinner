@@ -2,7 +2,7 @@ import Foundation
 
 /// Three-field LLM configuration for todo parsing (OpenAI-compatible API).
 /// Stored in UserDefaults as JSON data/string without Keychain authorization prompts.
-public struct TodoLLMConfig: Codable, Equatable {
+public struct TodoLLMConfig: Codable, Equatable, Sendable {
     public var baseURL: String
     public var apiKey: String
     public var model: String

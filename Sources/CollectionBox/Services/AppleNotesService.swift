@@ -54,7 +54,7 @@ public enum AppleNotesError: LocalizedError {
 public final class AppleNotesService: @unchecked Sendable {
     public static let shared = AppleNotesService()
 
-    private let executionLock = NSLock()
+    private let executionLock = NSRecursiveLock()
 
     public init() {}
 
@@ -62,7 +62,10 @@ public final class AppleNotesService: @unchecked Sendable {
 
     /// Execute AppleScript in-process via NSAppleScript to bind with Pinner's permanent TCC bundle authorization.
     public func runScript(_ script: String) async throws -> String {
-        try await Task.detached {
+        try await Task.detached { [self] in
+            executionLock.lock()
+            defer { executionLock.unlock() }
+
             var errorDict: NSDictionary?
             guard let appleScript = NSAppleScript(source: script) else {
                 throw AppleNotesError.scriptFailed("无法编译 AppleScript")
@@ -104,23 +107,39 @@ public final class AppleNotesService: @unchecked Sendable {
         }
     }
 
-    /// Fetches all folders and their note titles in one roundtrip.
-    public func getFolderTree() async throws -> [FolderItem] {
+    private var cachedFolderTree: [FolderItem]?
+    private var folderTreeCachedAt: Date?
+    private let folderTreeTTL: TimeInterval = 300 // 5 minutes cache
+
+    /// Invalidate in-memory folder tree cache.
+    public func invalidateFolderTreeCache() {
+        executionLock.lock()
+        cachedFolderTree = nil
+        folderTreeCachedAt = nil
+        executionLock.unlock()
+    }
+
+    /// Fetches all folders and their note titles in one roundtrip with in-memory TTL caching.
+    public func getFolderTree(force: Bool = false) async throws -> [FolderItem] {
+        executionLock.lock()
+        if !force, let cached = cachedFolderTree, let cachedAt = folderTreeCachedAt,
+           Date().timeIntervalSince(cachedAt) < folderTreeTTL {
+            executionLock.unlock()
+            return cached
+        }
+        executionLock.unlock()
+
         let script = """
         tell application "Notes"
             set res to ""
+            set prevTID to AppleScript's text item delimiters
             repeat with f in every folder
                 set fName to name of f
                 if fName is not "Recently Deleted" and fName is not "最近删除" then
                     set nList to name of every note of f
-                    set noteStr to ""
-                    repeat with n in nList
-                        if noteStr is "" then
-                            set noteStr to n
-                        else
-                            set noteStr to noteStr & "\t" & n
-                        end if
-                    end repeat
+                    set AppleScript's text item delimiters to tab
+                    set noteStr to (nList as text)
+                    set AppleScript's text item delimiters to prevTID
                     if res is "" then
                         set res to fName & "\n" & noteStr
                     else
@@ -147,6 +166,12 @@ public final class AppleNotesService: @unchecked Sendable {
                 .filter { !$0.isEmpty }
             result.append(FolderItem(name: folderName, notes: notes))
         }
+
+        executionLock.lock()
+        cachedFolderTree = result
+        folderTreeCachedAt = Date()
+        executionLock.unlock()
+
         return result
     }
 
@@ -203,25 +228,46 @@ public final class AppleNotesService: @unchecked Sendable {
         return raw.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
-    /// Fetch raw HTML body of a note by title.
-    public func getNoteBody(title: String) async throws -> String {
-        let escaped = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
-        tell application "Notes"
-            set matchingNotes to (every note whose name is "\(escaped)")
-            if (count of matchingNotes) > 0 then
-                return body of item 1 of matchingNotes
-            else
-                return ""
-            end if
-        end tell
-        """
+    /// Fetch raw HTML body of a note by title, optionally scoped to a target folder.
+    public func getNoteBody(title: String, folder: String? = nil) async throws -> String {
+        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let script: String
+        if let folder, !folder.isEmpty {
+            let escapedFolder = folder.replacingOccurrences(of: "\"", with: "\\\"")
+            script = """
+            tell application "Notes"
+                try
+                    set matchingNotes to (every note of folder "\(escapedFolder)" whose name is "\(escapedTitle)")
+                    if (count of matchingNotes) > 0 then
+                        return body of item 1 of matchingNotes
+                    end if
+                end try
+                set matchingNotes to (every note whose name is "\(escapedTitle)")
+                if (count of matchingNotes) > 0 then
+                    return body of item 1 of matchingNotes
+                else
+                    return ""
+                end if
+            end tell
+            """
+        } else {
+            script = """
+            tell application "Notes"
+                set matchingNotes to (every note whose name is "\(escapedTitle)")
+                if (count of matchingNotes) > 0 then
+                    return body of item 1 of matchingNotes
+                else
+                    return ""
+                end if
+            end tell
+            """
+        }
         return try await runScript(script)
     }
 
     /// Read first few lines of text from note for day-count or format inference.
-    public func getNoteHeadSnippet(title: String, maxLines: Int = 3) async throws -> String? {
-        let body = try await getNoteBody(title: title)
+    public func getNoteHeadSnippet(title: String, folder: String? = nil, maxLines: Int = 3) async throws -> String? {
+        let body = try await getNoteBody(title: title, folder: folder)
         guard !body.isEmpty else { return nil }
 
         // Strip HTML tags for clean text analysis
@@ -258,7 +304,6 @@ public final class AppleNotesService: @unchecked Sendable {
         let fullHTML = "<h1>\(Self.escapeHTML(title))</h1><div><br></div>" + bodyHTML
 
         let escapedFolder = targetFolder.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
         let escapedHTML = fullHTML.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
 
         let script = """
@@ -267,14 +312,15 @@ public final class AppleNotesService: @unchecked Sendable {
                 make new folder with properties {name:"\(escapedFolder)"}
             end if
             set targetFolder to folder "\(escapedFolder)"
-            make new note at targetFolder with properties {name:"\(escapedTitle)", body:"\(escapedHTML)"}
+            make new note at targetFolder with properties {body:"\(escapedHTML)"}
         end tell
         """
         _ = try await runScript(script)
+        invalidateFolderTreeCache()
     }
 
     private func prependToNote(title: String, folder: String, content: String) async throws {
-        var oldBody = try await getNoteBody(title: title)
+        var oldBody = try await getNoteBody(title: title, folder: folder)
         if oldBody.isEmpty {
             // Note does not exist, fallback to create
             try await createNote(title: title, folder: folder, bodyMarkdown: content)
@@ -282,32 +328,55 @@ public final class AppleNotesService: @unchecked Sendable {
         }
 
         let newBody = Self.insertPrepend(into: oldBody, content: content)
-        try await updateNoteBody(title: title, newBody: newBody)
+        try await updateNoteBody(title: title, folder: folder, newBody: newBody)
     }
 
     private func appendToNote(title: String, folder: String, content: String) async throws {
-        var oldBody = try await getNoteBody(title: title)
+        var oldBody = try await getNoteBody(title: title, folder: folder)
         if oldBody.isEmpty {
             try await createNote(title: title, folder: folder, bodyMarkdown: content)
             return
         }
 
         let newBody = Self.insertAppend(into: oldBody, content: content)
-        try await updateNoteBody(title: title, newBody: newBody)
+        try await updateNoteBody(title: title, folder: folder, newBody: newBody)
     }
 
-    private func updateNoteBody(title: String, newBody: String) async throws {
+    private func updateNoteBody(title: String, folder: String? = nil, newBody: String) async throws {
         let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
         let escapedBody = newBody.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
 
-        let script = """
-        tell application "Notes"
-            set matchingNotes to (every note whose name is "\(escapedTitle)")
-            if (count of matchingNotes) > 0 then
-                set body of item 1 of matchingNotes to "\(escapedBody)"
-            end if
-        end tell
-        """
+        let script: String
+        if let folder, !folder.isEmpty {
+            let escapedFolder = folder.replacingOccurrences(of: "\"", with: "\\\"")
+            script = """
+            tell application "Notes"
+                set didUpdate to false
+                try
+                    set matchingNotes to (every note of folder "\(escapedFolder)" whose name is "\(escapedTitle)")
+                    if (count of matchingNotes) > 0 then
+                        set body of item 1 of matchingNotes to "\(escapedBody)"
+                        set didUpdate to true
+                    end if
+                end try
+                if not didUpdate then
+                    set matchingNotes to (every note whose name is "\(escapedTitle)")
+                    if (count of matchingNotes) > 0 then
+                        set body of item 1 of matchingNotes to "\(escapedBody)"
+                    end if
+                end if
+            end tell
+            """
+        } else {
+            script = """
+            tell application "Notes"
+                set matchingNotes to (every note whose name is "\(escapedTitle)")
+                if (count of matchingNotes) > 0 then
+                    set body of item 1 of matchingNotes to "\(escapedBody)"
+                end if
+            end tell
+            """
+        }
         _ = try await runScript(script)
     }
 

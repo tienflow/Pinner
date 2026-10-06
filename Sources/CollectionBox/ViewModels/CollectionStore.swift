@@ -22,7 +22,11 @@ public final class CollectionStore {
     private let persistenceKey = "CollectionBox.tabs"
     private let shelfPersistenceKey = "CollectionBox.shelf"
     private let defaults: UserDefaults
-    private var undoStack: [[CollectionTab]] = []
+    private struct UndoSnapshot: Equatable {
+        let tabs: [CollectionTab]
+        let shelf: [BookmarkEntry]
+    }
+    private var undoStack: [UndoSnapshot] = []
     private let maxUndoSteps = 20
 
     public init(defaults: UserDefaults = .standard) {
@@ -159,6 +163,17 @@ public final class CollectionStore {
               let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }),
               !trimmed.isEmpty else { return }
         tabs[tabIndex].entries[i].displayName = trimmed
+        tabs[tabIndex].entries[i].customAlias = trimmed
+        save()
+    }
+
+    public func resetEntryAlias(_ entryID: UUID, in tabIndex: Int) {
+        guard tabs.indices.contains(tabIndex),
+              let i = tabs[tabIndex].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        tabs[tabIndex].entries[i].customAlias = nil
+        if let path = BookmarkService.resolvedPath(tabs[tabIndex].entries[i].bookmarkData) {
+            tabs[tabIndex].entries[i].displayName = URL(fileURLWithPath: path).lastPathComponent
+        }
         save()
     }
 
@@ -189,15 +204,17 @@ public final class CollectionStore {
     // MARK: - Undo
 
     private func pushUndo() {
-        undoStack.append(tabs)
+        undoStack.append(UndoSnapshot(tabs: tabs, shelf: shelfEntries))
         if undoStack.count > maxUndoSteps { undoStack.removeFirst() }
     }
 
     @discardableResult
     public func undo() -> Bool {
         guard let previous = undoStack.popLast() else { return false }
-        tabs = previous
+        tabs = previous.tabs
+        shelfEntries = previous.shelf
         save()
+        saveShelf()
         return true
     }
 
@@ -270,8 +287,11 @@ public final class CollectionStore {
                 if let newData = update.newData, tabs[ti].entries[i].bookmarkData != newData {
                     tabs[ti].entries[i].bookmarkData = newData; changed = true
                 }
-                if let name = update.currentName, name != tabs[ti].entries[i].displayName {
-                    tabs[ti].entries[i].displayName = name; changed = true
+                if let name = update.currentName {
+                    if tabs[ti].entries[i].customAlias == nil, name != tabs[ti].entries[i].displayName {
+                        tabs[ti].entries[i].displayName = name
+                        changed = true
+                    }
                 }
             }
         }
@@ -305,12 +325,14 @@ public final class CollectionStore {
     public func removeShelfEntries(_ entryIDs: [UUID]) {
         let idSet = Set(entryIDs)
         guard shelfEntries.contains(where: { idSet.contains($0.id) }) else { return }
+        pushUndo()
         shelfEntries.removeAll { idSet.contains($0.id) }
         saveShelf()
     }
 
     public func clearShelf() {
         guard !shelfEntries.isEmpty else { return }
+        pushUndo()
         shelfEntries.removeAll()
         saveShelf()
     }
@@ -344,5 +366,6 @@ public final class CollectionStore {
         defaults.removeObject(forKey: shelfPersistenceKey)
         tabs = []
         shelfEntries = []
+        undoStack.removeAll()
     }
 }

@@ -9,11 +9,15 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var currentTab: SettingsTab = .general
 
+    public var isVisible: Bool { window != nil }
+
     public func show(tab: SettingsTab = .general) {
         self.currentTab = tab
         if window == nil {
-            let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 580),
+            // AgentKeyWindow keeps menu shortcuts (⌘C/⌘V/⌘W/⌘Q) alive while the
+            // app stays `.accessory`, i.e. without a Dock icon.
+            let w = AgentKeyWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 600),
                 styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -26,13 +30,14 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             w.titleVisibility = .hidden
             w.isMovableByWindowBackground = true
             w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 520, height: 580))
+            w.setContentSize(NSSize(width: 560, height: 600))
             w.delegate = self
             w.center()
             window = w
         }
 
         window?.contentView = NSHostingView(rootView: SettingsView(initialTab: tab))
+        AppActivationManager.updateActivationPolicy()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -40,5 +45,6 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public func windowWillClose(_ notification: Notification) {
         window?.contentView = nil
         window = nil
+        AppActivationManager.updateActivationPolicy()
     }
 }

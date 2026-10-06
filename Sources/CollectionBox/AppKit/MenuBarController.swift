@@ -30,6 +30,7 @@ public final class MenuBarController: NSObject {
     private let todoHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.todoHotkey", eventID: 9)
     private var fleetingController: FleetingCaptureWindowController?
     private let fleetingHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.fleetingHotkey", eventID: 10)
+    private let inputStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.inputStatsHotkey", eventID: 11)
     private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
     private let dshStatsController = AgentStatsWindowController(agent: .dsh)
     private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
@@ -56,41 +57,82 @@ public final class MenuBarController: NSObject {
         b.target = self
         edgeController = EdgeDockWindowController(store: store)
         hotkeyManager = HotkeyManager()
-        hotkeyManager?.onHotkeyTriggered = { [weak self] in self?.edgeController?.expand() }
+        hotkeyManager?.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.collection) else { return }
+            self?.edgeController?.expand()
+        }
         hotkeyManager?.register()
 
         otpController = OTPWindowController(store: otpStore)
         otpHotkeyManager = OTPHotkeyManager()
-        otpHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.otpController?.toggle(autoCopy: true) }
+        otpHotkeyManager?.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.otp) else { return }
+            self?.otpController?.toggle(autoCopy: true)
+        }
         otpHotkeyManager?.register()
 
         codexStatsController = CodexStatsWindowController()
         codexStatsHotkeyManager = CodexStatsHotkeyManager()
-        codexStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showCodexStats() }
+        codexStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.agentStats) else { return }
+            self?.showCodexStats()
+        }
         codexStatsHotkeyManager?.register()
 
         geminiStatsController = GeminiStatsWindowController()
         geminiStatsHotkeyManager = GeminiStatsHotkeyManager()
-        geminiStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showGeminiStats() }
+        geminiStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.agentStats) else { return }
+            self?.showGeminiStats()
+        }
         geminiStatsHotkeyManager?.register()
 
         workbuddyStatsController = WorkBuddyStatsWindowController()
         workbuddyStatsHotkeyManager = WorkBuddyStatsHotkeyManager()
-        workbuddyStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in self?.showWorkBuddyStats() }
+        workbuddyStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.agentStats) else { return }
+            self?.showWorkBuddyStats()
+        }
         workbuddyStatsHotkeyManager?.register()
 
         todoController = todoCaptureController()
 
-        dashboardHotkeyManager.onHotkeyTriggered = { [weak self] in self?.openDashboard() }
-        zcodeStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.zcode) }
-        dshStatsHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showAgentPanel(.dsh) }
-        todoHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showTodo() }
-        fleetingHotkeyManager.onHotkeyTriggered = { [weak self] in self?.showFleeting() }
+        dashboardHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.agentStats) else { return }
+            self?.openDashboard()
+        }
+        zcodeStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.agentStats) else { return }
+            self?.showAgentPanel(.zcode)
+        }
+        dshStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.agentStats) else { return }
+            self?.showAgentPanel(.dsh)
+        }
+        todoHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.todo) else { return }
+            self?.showTodo()
+        }
+        fleetingHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.fleeting) else { return }
+            self?.showFleeting()
+        }
+        inputStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.inputStats) else { return }
+            self?.showInputStats()
+        }
         dashboardHotkeyManager.register()
         zcodeStatsHotkeyManager.register()
         dshStatsHotkeyManager.register()
         todoHotkeyManager.register()
         fleetingHotkeyManager.register()
+        inputStatsHotkeyManager.register()
+
+        Task { @MainActor in
+            if ModuleManager.shared.isEnabled(.inputStats) {
+                InputStatsService.shared.startMonitoring()
+            }
+        }
 
         applyTheme()
     }
@@ -114,40 +156,75 @@ public final class MenuBarController: NSObject {
         statusItem?.menu = nil
     }
 
-    /// Rebuilt on every right click so dashboard selection changes need no restart.
-    public func makeMenu(enabledAgents: Set<StatsAgent> = StatsAgentSelection.shared.enabledAgents) -> NSMenu {
+    /// Rebuilt on every right click so module/agent selection changes need no restart.
+    public func makeMenu(
+        enabledAgents: Set<StatsAgent> = StatsAgentSelection.shared.enabledAgents,
+        modules: ModuleManager = .shared
+    ) -> NSMenu {
         let m = NSMenu()
-        let header = NSMenuItem(title: "总览", action: #selector(openDashboard), keyEquivalent: "")
-        header.target = self; m.addItem(header)
-        m.addItem(.separator())
 
-        // 待办 quick capture
-        let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
-        todoItem.target = self; m.addItem(todoItem)
-
-        // 闪念投递 quick capture
-        let fleetingItem = NSMenuItem(title: "闪念", action: #selector(showFleeting), keyEquivalent: "")
-        fleetingItem.target = self; m.addItem(fleetingItem)
-
-        // Collection
-        let collectionItem = NSMenuItem(title: "收藏夹", action: #selector(openCollection), keyEquivalent: "")
-        collectionItem.target = self; m.addItem(collectionItem)
-
-        // OTP
-        let otpItem = NSMenuItem(title: "OTP 验证码", action: #selector(showOTP), keyEquivalent: "")
-        otpItem.target = self; m.addItem(otpItem)
-
-        m.addItem(.separator())
-
-        // Agent stats entries follow the dashboard selection.
-        for agent in StatsAgent.allCases where enabledAgents.contains(agent) {
-            let item = NSMenuItem(title: "\(agent.label) 统计", action: #selector(showAgentStats(_:)), keyEquivalent: "")
-            item.target = self; item.representedObject = agent; m.addItem(item)
+        // Cluster 1: 工作台与捕获
+        var hasCapture = false
+        if modules.isEnabled(.collection) {
+            let collectionItem = NSMenuItem(title: "收藏夹", action: #selector(openCollection), keyEquivalent: "")
+            collectionItem.target = self; m.addItem(collectionItem)
+            hasCapture = true
         }
 
-        m.addItem(.separator())
+        if modules.isEnabled(.todo) {
+            let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
+            todoItem.target = self; m.addItem(todoItem)
+            hasCapture = true
+        }
 
-        // Unified Preferences / Settings
+        if modules.isEnabled(.fleeting) {
+            let fleetingItem = NSMenuItem(title: "闪念", action: #selector(showFleeting), keyEquivalent: "")
+            fleetingItem.target = self; m.addItem(fleetingItem)
+            hasCapture = true
+        }
+
+        if hasCapture {
+            m.addItem(.separator())
+        }
+
+        // Cluster 2: 数字监控与工具
+        var hasMonitoring = false
+        if modules.isEnabled(.agentStats) {
+            let header = NSMenuItem(title: "统计总览", action: #selector(openDashboard), keyEquivalent: "")
+            header.target = self; m.addItem(header)
+            hasMonitoring = true
+
+            // Submenu: 各 Agent 明细 ▶
+            let activeAgents = StatsAgent.allCases.filter { enabledAgents.contains($0) }
+            if !activeAgents.isEmpty {
+                let detailsItem = NSMenuItem(title: "各 Agent 明细", action: nil, keyEquivalent: "")
+                let sub = NSMenu()
+                for agent in activeAgents {
+                    let item = NSMenuItem(title: "\(agent.label) 统计", action: #selector(showAgentStats(_:)), keyEquivalent: "")
+                    item.target = self; item.representedObject = agent; sub.addItem(item)
+                }
+                detailsItem.submenu = sub
+                m.addItem(detailsItem)
+            }
+        }
+
+        if modules.isEnabled(.inputStats) {
+            let inputStatsItem = NSMenuItem(title: "键鼠统计", action: #selector(showInputStats), keyEquivalent: "")
+            inputStatsItem.target = self; m.addItem(inputStatsItem)
+            hasMonitoring = true
+        }
+
+        if modules.isEnabled(.otp) {
+            let otpItem = NSMenuItem(title: "OTP 验证码", action: #selector(showOTP), keyEquivalent: "")
+            otpItem.target = self; m.addItem(otpItem)
+            hasMonitoring = true
+        }
+
+        if hasMonitoring {
+            m.addItem(.separator())
+        }
+
+        // Section 3: 系统与偏好
         let settingsItem = NSMenuItem(title: "偏好设置…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         settingsItem.keyEquivalentModifierMask = [.command]
@@ -210,6 +287,21 @@ public final class MenuBarController: NSObject {
 
     public func clearFleetingHotkey() {
         fleetingHotkeyManager.clear()
+    }
+
+    public func inputStatsHotkeyString() -> String {
+        inputStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordInputStatsHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置键鼠统计快捷键") { [weak self] combo in
+            self?.inputStatsHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearInputStatsHotkey() {
+        inputStatsHotkeyManager.clear()
     }
 
     public func collectionHotkeyString() -> String {
@@ -289,6 +381,10 @@ public final class MenuBarController: NSObject {
 
     public func dshHotkeyString() -> String {
         dshStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func zcodeHotkeyString() -> String {
+        zcodeStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
     }
 
     public func recordAgentStatsHotkey(for agent: StatsAgent, completion: (() -> Void)? = nil) {
@@ -408,6 +504,17 @@ public final class MenuBarController: NSObject {
             fleetingCaptureController().showAtMenuBar(buttonFrame: btnFrame)
         } else {
             fleetingCaptureController().showAtMouse()
+        }
+    }
+
+    @objc public func showInputStats() {
+        Task { @MainActor in
+            if let btn = self.statusItem?.button {
+                let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+                InputStatsWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
+            } else {
+                InputStatsWindowController.shared.showAtMouse()
+            }
         }
     }
 

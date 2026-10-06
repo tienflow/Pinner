@@ -75,14 +75,20 @@ final class EdgeDockWindowController: NSObject {
 
     /// Expand at menu bar button position (right side of the button)
     func expandAtMenuBar(buttonFrame: NSRect) {
-        guard !isExpanded else { return }
+        if isExpanded {
+            collapse()
+            return
+        }
         Task { await store.refreshAllAsync() }
 
         let h = expandedHeight, w = expandedWidth
-        // Panel appears to the right of the menu bar icon
-        let x = buttonFrame.maxX + 4
-        // Vertically aligned with the button, extend downward
-        let y = buttonFrame.origin.y - h + buttonFrame.height
+        let screen = NSScreen.screens.first(where: { NSMouseInRect(buttonFrame.origin, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
+        let screenBounds = screen.visibleFrame
+        let rawX = buttonFrame.maxX + 4
+        let x = max(screenBounds.minX + 4, min(rawX, screenBounds.maxX - w - 4))
+        // Vertically aligned with the button, extend downward, bounded within screen
+        let rawY = buttonFrame.origin.y - h + buttonFrame.height
+        let y = max(screenBounds.minY + 4, min(rawY, screenBounds.maxY - h - 4))
         let f = NSRect(x: x, y: y, width: w, height: h)
 
         showPanel(in: f)
@@ -92,6 +98,9 @@ final class EdgeDockWindowController: NSObject {
         let p = KeyPanel(contentRect: frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: true)
         p.level = .floating; p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true
         p.titlebarAppearsTransparent = true; p.titleVisibility = .hidden; p.hidesOnDeactivate = false
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; p.isMovableByWindowBackground = false; p.delegate = self
         p.quickLookSource = quickLookSource
 

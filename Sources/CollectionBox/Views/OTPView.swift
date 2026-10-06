@@ -36,7 +36,6 @@ struct OTPView: View {
 
     private var header: some View {
         HStack {
-            Spacer().frame(width: 58)
             Image(systemName: "key.2").font(.system(size: 13)).foregroundStyle(.secondary)
             Text("OTP 验证码").font(.system(size: 13, weight: .semibold))
             Spacer()
@@ -64,8 +63,8 @@ struct OTPView: View {
 
     private func accountRow(_ account: OTPAccount) -> some View {
         let code = store.code(for: account, at: now) ?? "------"
-        let elapsed = OTPService.timeRemaining(at: now)
-        let countdown = 30 - elapsed
+        let remaining = OTPService.timeRemaining(at: now)
+        let countdown = remaining
         let progress = Double(countdown) / 30.0
         let isCopied = copiedID == account.id
         let isUrgent = countdown <= 10

@@ -23,8 +23,10 @@ public struct BookmarkEntry: Identifiable, Codable, Equatable, Sendable {
     /// (file moved/deleted, volume unmounted). The entry is kept and shown as
     /// "未找到" instead of being silently removed.
     public var isMissing: Bool
+    /// Optional user-defined custom name that overrides disk filename and survives refresh
+    public var customAlias: String?
 
-    public init(id: UUID, displayName: String, bookmarkData: Data, dateAdded: Date = Date(), lastOpened: Date? = nil, isPinned: Bool = false, isMissing: Bool = false) {
+    public init(id: UUID, displayName: String, bookmarkData: Data, dateAdded: Date = Date(), lastOpened: Date? = nil, isPinned: Bool = false, isMissing: Bool = false, customAlias: String? = nil) {
         self.id = id
         self.displayName = displayName
         self.bookmarkData = bookmarkData
@@ -32,9 +34,10 @@ public struct BookmarkEntry: Identifiable, Codable, Equatable, Sendable {
         self.lastOpened = lastOpened
         self.isPinned = isPinned
         self.isMissing = isMissing
+        self.customAlias = customAlias
     }
 
-    private enum CodingKeys: String, CodingKey { case id, displayName, bookmarkData, dateAdded, lastOpened, isPinned, isMissing }
+    private enum CodingKeys: String, CodingKey { case id, displayName, bookmarkData, dateAdded, lastOpened, isPinned, isMissing, customAlias }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -45,6 +48,7 @@ public struct BookmarkEntry: Identifiable, Codable, Equatable, Sendable {
         lastOpened = try c.decodeIfPresent(Date.self, forKey: .lastOpened)
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         isMissing = try c.decodeIfPresent(Bool.self, forKey: .isMissing) ?? false
+        customAlias = try c.decodeIfPresent(String.self, forKey: .customAlias)
     }
 }
 

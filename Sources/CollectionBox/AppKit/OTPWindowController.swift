@@ -63,6 +63,9 @@ final class OTPWindowController: NSObject {
         p.hasShadow = true
         p.titlebarAppearsTransparent = true
         p.titleVisibility = .hidden
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
         p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.isMovableByWindowBackground = true
@@ -114,8 +117,10 @@ final class OTPWindowController: NSObject {
         let y = mainFrame.midY + mainFrame.height / 2 - h / 2
         let frame = NSRect(x: x, y: y, width: w, height: h)
 
-        // Use NSWindow (not NSPanel) so Edit menu shortcuts (Cmd+V etc.) work
-        let w2 = NSWindow(contentRect: frame,
+        // Use AgentKeyWindow (an NSWindow, not NSPanel) so Edit menu shortcuts
+        // (Cmd+V etc.) work even though the app has no menu bar as an
+        // `.accessory` agent.
+        let w2 = AgentKeyWindow(contentRect: frame,
                           styleMask: [.titled, .closable, .resizable],
                           backing: .buffered, defer: true)
         w2.title = "添加 OTP 账户"
@@ -150,8 +155,7 @@ final class OTPWindowController: NSObject {
 extension OTPWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let sender = notification.object as? NSPanel, sender === panel {
-            panel?.delegate = nil
-            isShowing = false
+            hide()
         }
         if let sender = notification.object as? NSWindow, sender === addPanel {
             addPanel = nil

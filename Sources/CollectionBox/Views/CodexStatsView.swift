@@ -27,7 +27,6 @@ struct CodexStatsView: View {
 
     private var rangePicker: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: 58)
             Picker("时间范围", selection: $selectedRange) {
                 ForEach(StatsTimeRange.allCases) { range in
                     Text(range.title).tag(range)
@@ -288,8 +287,19 @@ struct CodexStatsView: View {
     private func refresh() {
         errorMessage = nil
         hoverIndex = nil
-        stats = service.fetchStats(for: selectedRange)
-        trend = service.fetchTrend(for: selectedRange)
-        lastUpdated = Date()
+        stats = nil
+        let range = selectedRange
+        // The SQLite read can block for seconds while Codex holds a write lock
+        // (openDB retries with a 5s busy timeout), so keep it off the main thread.
+        Task.detached(priority: .userInitiated) { [service] in
+            let newStats = service.fetchStats(for: range)
+            let newTrend = service.fetchTrend(for: range)
+            await MainActor.run {
+                guard range == selectedRange else { return }
+                stats = newStats
+                trend = newTrend
+                lastUpdated = Date()
+            }
+        }
     }
 }

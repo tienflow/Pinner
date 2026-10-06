@@ -30,7 +30,6 @@ struct AgentStatsView: View {
 
     private var rangePicker: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: 58)
             Picker("时间范围", selection: $selectedRange) {
                 ForEach(StatsTimeRange.allCases) { range in
                     Text(range.title).tag(range)

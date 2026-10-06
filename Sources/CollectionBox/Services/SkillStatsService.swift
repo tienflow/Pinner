@@ -117,6 +117,7 @@ final class SkillStatsService: @unchecked Sendable {
             home.appendingPathComponent(".gemini/config/skills"),
             home.appendingPathComponent(".gemini/antigravity/builtin/skills"),
             home.appendingPathComponent(".skills-manager/skills"),
+            home.appendingPathComponent(".workbuddy/skills"),
             home.appendingPathComponent(".dsh/skills"),
             home.appendingPathComponent(".zcode/skills"),
             home.appendingPathComponent(".codex/skills")

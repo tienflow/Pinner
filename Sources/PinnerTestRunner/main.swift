@@ -224,6 +224,17 @@ func testUndo() throws {
     store.pinEntry(store.tabs[0].entries[0].id, in: 0)
     check(!store.undo(), "pin is not undoable")
     check(store.tabs[0].entries[0].isPinned, "pin survives undo attempt")
+
+    // Test shelf undo
+    let shelfURL = makeTempFile()
+    defer { try? FileManager.default.removeItem(at: shelfURL) }
+    store.addShelfEntries(from: [shelfURL])
+    check(store.shelfEntries.count == 1, "shelf entry added")
+    let shelfEntryID = store.shelfEntries[0].id
+    store.removeShelfEntries([shelfEntryID])
+    check(store.shelfEntries.isEmpty, "shelf entry removed")
+    check(store.undo(), "undo shelf removal succeeds")
+    check(store.shelfEntries.count == 1 && store.shelfEntries[0].id == shelfEntryID, "shelf entry restored by undo")
 }
 
 @MainActor
@@ -238,6 +249,7 @@ func testPersistenceRoundtrip() throws {
         store.addEntry(try entry(for: url), to: 0)
         store.pinEntry(store.tabs[0].entries[0].id, in: 0)
         store.tabs[0].entries[0].isMissing = true
+        store.renameEntry(store.tabs[0].entries[0].id, in: 0, to: "自定义别名")
         store.save()
     }
     let reloaded = CollectionStore(defaults: suite)
@@ -245,6 +257,8 @@ func testPersistenceRoundtrip() throws {
     check(reloaded.tabs[0].entries.count == 1, "entries survive save/load")
     check(reloaded.tabs[0].entries[0].isPinned, "isPinned survives save/load")
     check(reloaded.tabs[0].entries[0].isMissing, "isMissing survives save/load")
+    check(reloaded.tabs[0].entries[0].customAlias == "自定义别名", "customAlias survives save/load")
+    check(reloaded.tabs[0].entries[0].displayName == "自定义别名", "displayName survives save/load")
 }
 
 @MainActor
@@ -261,7 +275,10 @@ func testLegacyJSONCompatibility() throws {
     var json = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
     var tab = json[0]
     var entries = tab["entries"] as! [[String: Any]]
-    for i in entries.indices { entries[i]["isMissing"] = nil }
+    for i in entries.indices {
+        entries[i]["isMissing"] = nil
+        entries[i]["customAlias"] = nil
+    }
     tab["entries"] = entries
     json[0] = tab
     let legacyData = try JSONSerialization.data(withJSONObject: json)
@@ -270,6 +287,7 @@ func testLegacyJSONCompatibility() throws {
     let reloaded = CollectionStore(defaults: suite)
     check(reloaded.tabs.count == 1 && reloaded.tabs[0].entries.count == 1, "legacy payload loads")
     check(!reloaded.tabs[0].entries[0].isMissing, "legacy payload defaults isMissing to false")
+    check(reloaded.tabs[0].entries[0].customAlias == nil, "legacy payload defaults customAlias to nil")
 }
 
 @MainActor
@@ -326,21 +344,27 @@ func testAgentSelectionPersistence() {
 @MainActor
 func testMenuBarMenuFollowsSelection() {
     let all: Set<StatsAgent> = [.codex, .gemini, .workbuddy, .zcode, .dsh]
-    let titles = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: all).items.map { $0.title }
+    let menu = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: all)
+    let titles = menu.items.map { $0.title }
+    check(titles.contains("各 Agent 明细"), "menu shows 各 Agent 明细 submenu when enabled")
+    let detailsItem = menu.items.first { $0.title == "各 Agent 明细" }
+    check(detailsItem?.submenu != nil, "各 Agent 明细 has submenu")
+    let subTitles = detailsItem?.submenu?.items.map { $0.title } ?? []
     for agent in StatsAgent.allCases {
-        check(titles.contains("\(agent.label) 统计"), "menu shows \(agent.label) stats when enabled")
+        check(subTitles.contains("\(agent.label) 统计"), "submenu shows \(agent.label) stats when enabled")
     }
 
-    let titlesWithOnlyCodex = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: [.codex]).items.map { $0.title }
-    check(titlesWithOnlyCodex.contains("Codex 统计"), "menu shows Codex stats when only Codex enabled")
-    check(!titlesWithOnlyCodex.contains("Antigravity 统计"), "menu hides Antigravity stats when disabled")
-    check(!titlesWithOnlyCodex.contains("Antigravity 统计快捷键"), "menu hides Antigravity hotkey when disabled")
-    check(!titlesWithOnlyCodex.contains("WorkBuddy 统计"), "menu hides WorkBuddy stats when disabled")
-    check(!titlesWithOnlyCodex.contains("ZCode 统计"), "menu hides ZCode stats when disabled")
-    check(!titlesWithOnlyCodex.contains("DSH 统计"), "menu hides DSH stats when disabled")
-    check(titlesWithOnlyCodex.contains("总览"), "menu keeps the dashboard entry")
-    check(titlesWithOnlyCodex.contains("偏好设置…"), "menu keeps preferences entry")
-    check(titlesWithOnlyCodex.contains { $0.hasPrefix("退出") }, "menu keeps quit entry")
+    let menuOnlyCodex = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: [.codex])
+    let detailsOnlyCodex = menuOnlyCodex.items.first { $0.title == "各 Agent 明细" }
+    let subTitlesOnlyCodex = detailsOnlyCodex?.submenu?.items.map { $0.title } ?? []
+    check(subTitlesOnlyCodex.contains("Codex 统计"), "submenu shows Codex stats when only Codex enabled")
+    check(!subTitlesOnlyCodex.contains("Antigravity 统计"), "submenu hides Antigravity stats when disabled")
+    check(!subTitlesOnlyCodex.contains("WorkBuddy 统计"), "submenu hides WorkBuddy stats when disabled")
+    check(!subTitlesOnlyCodex.contains("ZCode 统计"), "submenu hides ZCode stats when disabled")
+    check(!subTitlesOnlyCodex.contains("DSH 统计"), "submenu hides DSH stats when disabled")
+    check(menuOnlyCodex.items.map(\.title).contains("统计总览"), "menu keeps the dashboard entry")
+    check(menuOnlyCodex.items.map(\.title).contains("偏好设置…"), "menu keeps preferences entry")
+    check(menuOnlyCodex.items.map(\.title).contains { $0.hasPrefix("退出") }, "menu keeps quit entry")
 }
 
 @MainActor
@@ -349,7 +373,7 @@ func testSettingsSubmenuContents() {
     let menu = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases))
     let settings = menu.items.first { $0.title == "偏好设置…" }
     check(settings != nil, "preferences menu item exists")
-    check(settings?.submenu == nil, "menu has no cascading submenus, keeping it flat")
+    check(settings?.submenu == nil, "preferences item itself has no cascading submenu")
     check(settings?.keyEquivalent == ",", "preferences shortcut is Cmd+,")
     check(settings?.action != nil, "preferences item is wired to an action")
 
@@ -358,20 +382,25 @@ func testSettingsSubmenuContents() {
     check(!topTitles.contains { $0.hasSuffix("快捷键") }, "top-level menu hides hotkey items")
     check(topTitles.contains("待办"), "top-level menu contains todo item")
     check(topTitles.contains("闪念"), "top-level menu contains fleeting item")
+    check(topTitles.contains("键鼠统计"), "top-level menu contains inputStats item")
     check(topTitles.contains("收藏夹"), "top-level menu contains collection item")
     check(topTitles.contains("OTP 验证码"), "top-level menu contains OTP item")
+    check(topTitles.contains("各 Agent 明细"), "top-level menu contains agent details item")
 
-    // The "总览" item must actually be wired to an action, not a stub.
-    let header = menu.items.first { $0.title == "总览" }
+    let inputStatsItem = menu.items.first { $0.title == "键鼠统计" }
+    check(inputStatsItem?.action != nil && inputStatsItem?.target != nil, "inputStats menu item is wired to an action")
+
+    // The "统计总览" item must actually be wired to an action, not a stub.
+    let header = menu.items.first { $0.title == "统计总览" }
     check(header?.action != nil && header?.target != nil, "dashboard menu item is wired to an action")
 
     // Fire the action for real: the dashboard window must appear. The runner
     // has no app lifecycle, so NSApplication must be created first.
     _ = NSApplication.shared
     if let header, let action = header.action, NSApp.sendAction(action, to: header.target, from: header) {
-        let found = NSApp.windows.contains { $0.title == "总览" }
+        let found = NSApp.windows.contains { $0.title == "统计总览" }
         check(found, "dashboard action opens the overview window")
-        if found { NSApp.windows.first { $0.title == "总览" }?.close() }
+        if found { NSApp.windows.first { $0.title == "统计总览" }?.close() }
     }
 
     // Fire preferences action: settings window should appear
@@ -927,6 +956,30 @@ func testFleetingCapture() {
     check(jevParsed?.mode == .prepend, "Jev decodes prepend mode for diary")
     check(jevParsed?.formattedContent == "今天断联第 37 天，心情很平静", "Jev preserves authentic text verbatim")
 
+    let jevRouteResult = TypeSafeJevClient.decodeJevResult(
+        Data(jevSampleJSON.utf8),
+        originalInput: "今天断联第 37 天，心情很平静",
+        tree: tree
+    )
+    check(jevRouteResult?.isHighConfidence == true, "Jev calibrated isHighConfidence is true on dominant top probability")
+
+    // Test sanitizer anti-hallucination snapping
+    let hallucinated = ParsedFleetingThought(
+        folder: "不存在的分类",
+        targetNoteTitle: "不存在的笔记",
+        mode: .append,
+        formattedContent: "随笔内容",
+        confidence: 0.8,
+        fallback: false
+    )
+    let sanitized = FleetingThoughtLLMClient.sanitize(parsed: hallucinated, tree: tree, originalInput: "随笔内容")
+    check(sanitized.folder == "清醒备忘", "sanitize snaps unknown folder to valid tree folder")
+    check(sanitized.targetNoteTitle == "【断联日志】", "sanitize snaps unknown note to valid folder note")
+    check(sanitized.formattedContent == "随笔内容", "sanitize guarantees authentic input content")
+
+    // Invalidate folder tree cache roundtrip
+    AppleNotesService.shared.invalidateFolderTreeCache()
+
     // 2. HTML stripping and markdown to HTML conversion
     let sampleHTML = "<h1>标题</h1><div>正文内容</div><ul><li>第 1 天<br></li></ul>"
     let stripped = AppleNotesService.stripHTML(sampleHTML)
@@ -1068,6 +1121,10 @@ let allPassed = await Task { @MainActor () -> Bool in
     testGeminiScanCache()
     testFleetingCapture()
     testSkillStatsService()
+    try? await testCustomAliasPreservation()
+    testOTPServiceTimeRemaining()
+    testInputStats()
+    testModuleManager()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value
@@ -1093,5 +1150,207 @@ func testSkillStatsService() {
     check(FileManager.default.fileExists(atPath: SkillStatsService.cacheFileURL.path), "skill_scan_cache.json exists on disk")
     let hasWebgen = records.contains { $0.skillName.lowercased() == "gemini-webgen" }
     check(hasWebgen, "SkillStatsService detects gemini-webgen call records")
+
+    // Check that .workbuddy/skills directory is supported in scanInstalledSkills
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let testWorkbuddySkills = home.appendingPathComponent(".workbuddy/skills")
+    let fakeSkill = testWorkbuddySkills.appendingPathComponent("test-custom-skill-\(UUID().uuidString)")
+    if (try? FileManager.default.createDirectory(at: fakeSkill, withIntermediateDirectories: true)) != nil {
+        defer { try? FileManager.default.removeItem(at: fakeSkill) }
+        let scanned = service.scanInstalledSkills()
+        check(scanned.contains(fakeSkill.lastPathComponent), "scanInstalledSkills picks up skill in .workbuddy/skills")
+    }
 }
+
+@MainActor
+func testCustomAliasPreservation() async throws {
+    let store = makeStore()
+    store.createTab(named: "T")
+    let url = makeTempFile()
+    defer { try? FileManager.default.removeItem(at: url) }
+    store.addEntry(try entry(for: url), to: 0)
+    let entryID = store.tabs[0].entries[0].id
+
+    // Rename with custom alias
+    store.renameEntry(entryID, in: 0, to: "我的自定义别名")
+    check(store.tabs[0].entries[0].displayName == "我的自定义别名", "custom alias set")
+    check(store.tabs[0].entries[0].customAlias == "我的自定义别名", "customAlias field populated")
+
+    // Refresh tab async - validates bookmark and runs apply()
+    await store.refreshTabAsync(0)
+    check(store.tabs[0].entries[0].displayName == "我的自定义别名", "custom alias preserved after refreshTabAsync")
+
+    // Test resetEntryAlias reverts to disk filename
+    store.resetEntryAlias(entryID, in: 0)
+    check(store.tabs[0].entries[0].customAlias == nil, "customAlias cleared by resetEntryAlias")
+    check(store.tabs[0].entries[0].displayName == url.lastPathComponent, "displayName restored to disk filename")
+}
+
+@MainActor
+func testOTPServiceTimeRemaining() {
+    let date0 = Date(timeIntervalSince1970: 0)
+    check(OTPService.timeRemaining(at: date0) == 30, "timeRemaining at t=0 is 30")
+
+    let date10 = Date(timeIntervalSince1970: 10)
+    check(OTPService.timeRemaining(at: date10) == 20, "timeRemaining at t=10 is 20")
+
+    let date29 = Date(timeIntervalSince1970: 29)
+    check(OTPService.timeRemaining(at: date29) == 1, "timeRemaining at t=29 is 1")
+
+    let date30 = Date(timeIntervalSince1970: 30)
+    check(OTPService.timeRemaining(at: date30) == 30, "timeRemaining at t=30 is 30")
+
+    let dateNeg = Date(timeIntervalSince1970: -5)
+    let remNeg = OTPService.timeRemaining(at: dateNeg)
+    check(remNeg >= 1 && remNeg <= 30, "timeRemaining at negative timestamp stays within 1...30")
+}
+
+@MainActor
+func testInputStats() {
+    let stats = DailyInputStats(
+        dateString: "2026-10-06",
+        keyCount: 1500,
+        leftClickCount: 300,
+        rightClickCount: 50,
+        middleClickCount: 20,
+        otherClickCount: 10,
+        mouseDistanceMeters: 1250.5,
+        scrollDistancePixels: 45000.0,
+        peakKPS: 12.5,
+        peakCPS: 4.2
+    )
+
+    check(stats.totalClicks == 380, "totalClicks computes sum of all mouse clicks")
+    check(stats.hourlyBuckets.count == 24, "hourlyBuckets initializes 24 hours")
+    check(DailyInputStats.formatNumber(1500) == "1,500", "formatNumber formats with thousand separators")
+    check(DailyInputStats.formatDistance(85.4) == "85.4 m", "formatDistance meters formatting")
+    check(DailyInputStats.formatDistance(1250.5) == "1.25 km", "formatDistance km formatting")
+    check(DailyInputStats.formatScrollPixels(45000.0) == "45.0 kPx", "formatScrollPixels kPx formatting")
+    check(DailyInputStats.formatScrollPixels(1_500_000.0) == "1.50 MPx", "formatScrollPixels MPx formatting")
+
+    // Serialization
+    let encoded = try? JSONEncoder().encode(stats)
+    check(encoded != nil, "DailyInputStats encodes to JSON")
+    if let data = encoded, let decoded = try? JSONDecoder().decode(DailyInputStats.self, from: data) {
+        check(decoded.keyCount == 1500, "DailyInputStats roundtrip keyCount matches")
+        check(decoded.leftClickCount == 300, "DailyInputStats roundtrip leftClickCount matches")
+        check(decoded.totalClicks == 380, "DailyInputStats roundtrip totalClicks matches")
+        check(decoded.peakKPS == 12.5, "DailyInputStats roundtrip peakKPS matches")
+    }
+
+    // DailyInputSummary & InputMetricType tests
+    let summary = DailyInputSummary(from: stats)
+    check(summary.keyCount == 1500, "DailyInputSummary keyCount from stats matches")
+    check(summary.clickCount == 380, "DailyInputSummary clickCount from stats matches totalClicks")
+    check(summary.mouseDistanceMeters == 1250.5, "DailyInputSummary mouseDistanceMeters matches")
+    check(summary.scrollDistancePixels == 45000.0, "DailyInputSummary scrollDistancePixels matches")
+    check(summary.shortDateLabel == "10/06", "DailyInputSummary shortDateLabel parses MM/dd")
+
+    check(InputMetricType.keyboard.value(from: summary) == 1500, "InputMetricType.keyboard extracts keyCount")
+    check(InputMetricType.clicks.value(from: summary) == 380, "InputMetricType.clicks extracts clickCount")
+    check(InputMetricType.distance.value(from: summary) == 1250.5, "InputMetricType.distance extracts distance")
+    check(InputMetricType.scroll.value(from: summary) == 45000.0, "InputMetricType.scroll extracts scroll")
+    check(InputMetricType.keyboard.formatTotal(12500) == "12.5 k", "InputMetricType.formatTotal formats >= 10k")
+
+    // History Series & InputStatsService integration
+    let service = InputStatsService.shared
+    let series7 = service.historySeries(days: 7)
+    check(series7.count == 7, "historySeries(days: 7) returns exactly 7 items")
+    let series30 = service.historySeries(days: 30)
+    check(series30.count == 30, "historySeries(days: 30) returns exactly 30 items")
+
+    let todayString = DailyInputStats.todayDateString()
+    check(series7.last?.dateString == todayString, "historySeries ends with today's dateString")
+    check(series30.last?.dateString == todayString, "historySeries 30 ends with today's dateString")
+
+    // Check chronological order
+    if series7.count >= 2 {
+        let first = series7[0].dateString
+        let second = series7[1].dateString
+        check(first < second, "historySeries is chronologically ordered ascending")
+    }
+
+    // Test recording past day
+    let pastDaySummary = DailyInputSummary(
+        dateString: "2026-10-01",
+        keyCount: 888,
+        clickCount: 99,
+        mouseDistanceMeters: 50.0,
+        scrollDistancePixels: 2000.0,
+        appStats: [
+            "com.apple.Safari": AppInputStats(bundleId: "com.apple.Safari", appName: "Safari", keyCount: 100, clickCount: 20, scrollDistancePixels: 500.0)
+        ]
+    )
+    service.recordHistoryDay(pastDaySummary)
+    check(service.history["2026-10-01"]?.keyCount == 888, "recordHistoryDay persists past day summary to history dictionary")
+
+    // Test aggregated app stats
+    let allAppStats = service.aggregatedAppStats(range: .all)
+    check(!allAppStats.isEmpty, "aggregatedAppStats includes historical app records")
+
+    // Clean up test data so it does not pollute user history
+    service.removeHistoryDay("2026-10-01")
+    check(service.history["2026-10-01"] == nil, "removeHistoryDay successfully removes mock date from history")
+
+    // Hotkey accessors
+    let bar = MenuBarController(store: CollectionStore(inMemory: true))
+    check(bar.inputStatsHotkeyString() == "未设置", "inputStatsHotkeyString accessor returns default string")
+}
+
+@MainActor
+func testModuleManager() {
+    let suite = UserDefaults(suiteName: "test-module-manager-\(UUID().uuidString)")!
+    let manager = ModuleManager(defaults: suite)
+
+    // Defaults: all modules enabled
+    check(manager.enabledModules == Set(PinnerModule.allCases), "all modules enabled by default")
+    check(manager.isEnabled(.collection), "collection is enabled")
+    check(manager.isEnabled(.todo), "todo is enabled")
+    check(manager.isEnabled(.fleeting), "fleeting is enabled")
+    check(manager.isEnabled(.agentStats), "agentStats is enabled")
+    check(manager.isEnabled(.inputStats), "inputStats is enabled")
+    check(manager.isEnabled(.otp), "otp is enabled")
+
+    // Core module (.collection) cannot be disabled
+    manager.setEnabled(.collection, to: false)
+    check(manager.isEnabled(.collection), "core module collection remains enabled even if set to false")
+
+    // Toggle off todo and otp
+    manager.setEnabled(.todo, to: false)
+    manager.setEnabled(.otp, to: false)
+    check(!manager.isEnabled(.todo), "todo is disabled after setEnabled false")
+    check(!manager.isEnabled(.otp), "otp is disabled after setEnabled false")
+
+    // Reload from defaults
+    let reloaded = ModuleManager(defaults: suite)
+    check(!reloaded.isEnabled(.todo), "disabled todo persists across reloads")
+    check(!reloaded.isEnabled(.otp), "disabled otp persists across reloads")
+    check(reloaded.isEnabled(.collection), "core collection remains active across reloads")
+
+    // Re-enable
+    manager.setEnabled(.todo, to: true)
+    check(manager.isEnabled(.todo), "todo is re-enabled successfully")
+
+    // Menu generation respects module settings
+    let customSuite = UserDefaults(suiteName: "test-menu-modules-\(UUID().uuidString)")!
+    let customManager = ModuleManager(defaults: customSuite)
+    customManager.setEnabled(.todo, to: false)
+    customManager.setEnabled(.otp, to: false)
+    customManager.setEnabled(.agentStats, to: false)
+
+    let bar = MenuBarController(store: CollectionStore(inMemory: true))
+    let menu = bar.makeMenu(modules: customManager)
+    let titles = menu.items.map(\.title)
+
+    check(!titles.contains("待办"), "menu hides disabled todo module")
+    check(!titles.contains("OTP 验证码"), "menu hides disabled otp module")
+    check(!titles.contains("统计总览"), "menu hides disabled agentStats dashboard")
+    check(!titles.contains("各 Agent 明细"), "menu hides disabled agentStats submenu")
+    check(titles.contains("收藏夹"), "menu retains core collection module")
+    check(titles.contains("键鼠统计"), "menu retains enabled inputStats module")
+    check(titles.contains("偏好设置…"), "menu retains preferences")
+    check(titles.contains { $0.hasPrefix("退出") }, "menu retains quit")
+}
+
+
 

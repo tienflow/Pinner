@@ -186,7 +186,7 @@ final class RemindersService {
         let calendars = store.calendars(for: .reminder)
         guard !calendars.isEmpty else { return [] }
 
-        let predicate = store.predicateForReminders(in: calendars)
+        let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: calendars)
         return await withCheckedContinuation { continuation in
             store.fetchReminders(matching: predicate) { reminders in
                 let items = (reminders ?? []).compactMap { reminder -> ReminderItem? in

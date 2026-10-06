@@ -59,7 +59,9 @@ public enum OTPService {
 
     /// Seconds remaining in the current 30-second TOTP window.
     public static func timeRemaining(at date: Date = Date()) -> Int {
-        Int(date.timeIntervalSince1970) % 30
+        let t = Int(date.timeIntervalSince1970)
+        let rem = 30 - ((t % 30 + 30) % 30)
+        return rem == 0 ? 30 : rem
     }
 
     /// Validate that a string is valid base32.

@@ -3,9 +3,25 @@ import Foundation
 public enum BookmarkService {
     /// Check if a file URL is in the Trash.
     static func isTrashed(_ url: URL) -> Bool {
+        var relationship: FileManager.URLRelationship = .other
+        // Query domainMask 0 ([]) to let Foundation automatically select the volume-appropriate trash directory
+        if (try? FileManager.default.getRelationship(&relationship, of: .trashDirectory, in: [], toItemAt: url)) != nil {
+            if relationship == .contains || relationship == .same {
+                return true
+            }
+        }
+        if (try? FileManager.default.getRelationship(&relationship, of: .trashDirectory, in: .allDomainsMask, toItemAt: url)) != nil {
+            if relationship == .contains || relationship == .same {
+                return true
+            }
+        }
+        let path = url.path
+        if path.contains("/.Trash/") || path.hasSuffix("/.Trash") || path.contains("/.Trashes/") || path.hasSuffix("/.Trashes") {
+            return true
+        }
         let trash = FileManager.default.urls(for: .trashDirectory, in: .userDomainMask).first
         let trashPath = trash?.path ?? ""
-        return !trashPath.isEmpty && url.path.hasPrefix(trashPath)
+        return !trashPath.isEmpty && path.hasPrefix(trashPath)
     }
 
     /// Check if a file exists and is not in the Trash.

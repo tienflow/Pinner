@@ -4,7 +4,7 @@ import Foundation
 /// Kept free of I/O so it can be cleanly unit-tested.
 public enum FleetingPrompt {
 
-    public struct Context {
+    public struct Context: Sendable {
         public var input: String
         public var folders: [String]
         public var recentNotes: [String]

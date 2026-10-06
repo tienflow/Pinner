@@ -64,7 +64,7 @@ struct GlassEffectBackground: NSViewRepresentable {
             glass.style = style.systemStyle
             glass.cornerRadius = cornerRadius
             glass.tintColor = tintColor
-            if enableScrim {
+            if enableScrim, glass.responds(to: NSSelectorFromString("set_scrimState:")) {
                 glass.setValue(1, forKey: "_scrimState")
             }
             return glass
@@ -87,7 +87,7 @@ struct GlassEffectBackground: NSViewRepresentable {
             glass.style = style.systemStyle
             glass.cornerRadius = cornerRadius
             glass.tintColor = tintColor
-            if enableScrim {
+            if enableScrim, glass.responds(to: NSSelectorFromString("set_scrimState:")) {
                 glass.setValue(1, forKey: "_scrimState")
             }
         } else if let view = nsView as? NSVisualEffectView {

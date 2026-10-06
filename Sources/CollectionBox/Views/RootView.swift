@@ -51,6 +51,7 @@ struct RootView: View {
     @State private var selectedEntryIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
     @State private var flashID: UUID?
+    @State private var actionMessage: String?
     @State private var nameAscending = true
     @State private var sortOrder: SortOrder = {
         SortOrder(rawValue: UserDefaults.standard.string(forKey: "CollectionBox.sortOrder") ?? "date_added") ?? .dateAdded
@@ -936,16 +937,24 @@ struct RootView: View {
             return (url, entry.id)
         }
         guard let first = pairs.first else { return NSItemProvider() }
-        let allIDs = store.shelfEntries.map(\.id)
-        let firstItem = ShelfFileNSURL(fileURL: first.0, entryIDs: allIDs) { [weak store] ids, url in
+        let firstItem = ShelfFileNSURL(fileURL: first.0, entryIDs: [first.1]) { [weak store] ids, url in
             handleShelfItemConsumed(entryIDs: ids, fileURL: url)
         }
         let provider = NSItemProvider(object: firstItem)
-        for pair in pairs.dropFirst() {
-            let item = ShelfFileNSURL(fileURL: pair.0, entryIDs: allIDs) { [weak store] ids, url in
-                handleShelfItemConsumed(entryIDs: ids, fileURL: url)
+        if pairs.count > 1 {
+            let paths = pairs.map { $0.0.path }
+            let pboardType = "NSFilenamesPboardType"
+            if let plistData = try? PropertyListSerialization.data(fromPropertyList: paths, format: .xml, options: 0) {
+                provider.registerDataRepresentation(forTypeIdentifier: pboardType, visibility: .all) { completion in
+                    completion(plistData, nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak store] in
+                        for pair in pairs {
+                            self.handleShelfItemConsumed(entryIDs: [pair.1], fileURL: pair.0)
+                        }
+                    }
+                    return nil
+                }
             }
-            provider.registerObject(item, visibility: .all)
         }
         return provider
     }
@@ -970,16 +979,24 @@ struct RootView: View {
             }
 
             if let first = pairs.first {
-                let idsToConsume = pairs.map(\.1)
-                let firstItem = ShelfFileNSURL(fileURL: first.0, entryIDs: idsToConsume) { [weak store] ids, url in
+                let firstItem = ShelfFileNSURL(fileURL: first.0, entryIDs: [first.1]) { [weak store] ids, url in
                     handleShelfItemConsumed(entryIDs: ids, fileURL: url)
                 }
                 provider = NSItemProvider(object: firstItem)
-                for pair in pairs.dropFirst() {
-                    let item = ShelfFileNSURL(fileURL: pair.0, entryIDs: idsToConsume) { [weak store] ids, url in
-                        handleShelfItemConsumed(entryIDs: ids, fileURL: url)
+                if pairs.count > 1 {
+                    let paths = pairs.map { $0.0.path }
+                    let pboardType = "NSFilenamesPboardType"
+                    if let plistData = try? PropertyListSerialization.data(fromPropertyList: paths, format: .xml, options: 0) {
+                        provider.registerDataRepresentation(forTypeIdentifier: pboardType, visibility: .all) { completion in
+                            completion(plistData, nil)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak store] in
+                                for pair in pairs {
+                                    self.handleShelfItemConsumed(entryIDs: [pair.1], fileURL: pair.0)
+                                }
+                            }
+                            return nil
+                        }
                     }
-                    provider.registerObject(item, visibility: .all)
                 }
             }
         } else if let url = BookmarkService.resolveURL(entry.bookmarkData) {
@@ -1061,7 +1078,16 @@ struct RootView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 8) {
-            countText.font(.system(size: Design.caption)).foregroundStyle(.secondary)
+            if let message = actionMessage {
+                Text(message)
+                    .font(.system(size: Design.caption))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(message)
+            } else {
+                countText.font(.system(size: Design.caption)).foregroundStyle(.secondary)
+            }
             Spacer()
             if showingShelf {
                 if !store.shelfEntries.isEmpty {
@@ -1115,12 +1141,35 @@ struct RootView: View {
 
     private func openEntry(_ entry: BookmarkEntry) {
         Haptics.light()
+        // `withResolvedBookmark` returns nil when the bookmark no longer
+        // resolves or the target was moved / renamed / trashed. Only a real
+        // open counts as success — otherwise the user gets a beep plus a
+        // reason instead of a flash that implies the file opened.
+        let opened = BookmarkService.withResolvedBookmark(entry.bookmarkData) { url -> Bool in
+            NSWorkspace.shared.open(url)
+            return true
+        }
+        guard opened == true else {
+            NSSound.beep()
+            showActionMessage("「\(entry.displayName)」已失效，无法打开")
+            if let ti = tabIndex(of: entry.id) {
+                Task { await store.refreshTabAsync(ti) }
+            }
+            return
+        }
         if let ti = tabIndex(of: entry.id) {
-            BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
             store.recordOpen(entry.id, in: ti); flash(entry.id)
         } else {
-            BookmarkService.withResolvedBookmark(entry.bookmarkData) { NSWorkspace.shared.open($0) }
             flash(entry.id)
+        }
+    }
+
+    /// Transient one-line message in the bottom bar, used for failures that
+    /// used to be silent (missing files, refusing to open, …).
+    private func showActionMessage(_ text: String) {
+        actionMessage = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if actionMessage == text { actionMessage = nil }
         }
     }
 
@@ -1188,11 +1237,15 @@ struct RootView: View {
     }
 
     private func handleShelfItemConsumed(entryIDs: [UUID], fileURL: URL) {
-        Haptics.levelChange()
-        store.removeShelfEntries(entryIDs)
-        pruneSelection()
+        let existingIDs = Set(store.shelfEntries.map(\.id))
+        let idsToRemove = entryIDs.filter { existingIDs.contains($0) }
+        if !idsToRemove.isEmpty {
+            Haptics.levelChange()
+            store.removeShelfEntries(idsToRemove)
+            pruneSelection()
+        }
 
-        if shelfTrashOriginalOnDragOut {
+        if shelfTrashOriginalOnDragOut, FileManager.default.fileExists(atPath: fileURL.path) {
             do {
                 try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
                 NSLog("[Pinner] 暂存物理剪切完成：已将源文件移至废纸篓: \(fileURL.path)")
@@ -1331,7 +1384,11 @@ struct FileIconWrap: NSViewRepresentable {
     let entry: BookmarkEntry
     /// Grid cells show a content preview; list rows keep the plain file icon.
     var prefersThumbnail = true
-    static let iconCache = NSCache<NSString, NSImage>()
+    static let iconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
     private static let thumbnailableExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "pdf"]
     /// Bookmark resolution touches the filesystem (milliseconds each), so
     /// results are cached per entry and invalidated when the bookmark data
@@ -1340,6 +1397,8 @@ struct FileIconWrap: NSViewRepresentable {
     /// Paths with a thumbnail request already in flight. Without this, every
     /// re-render of a visible cell would queue another generation request.
     nonisolated(unsafe) private static var pendingThumbnails: Set<String> = []
+    /// Negative cache for files whose thumbnail generation failed, avoiding infinite retry loops.
+    nonisolated(unsafe) private static var failedThumbnails: Set<String> = []
     private static let pendingLock = NSLock()
 
     // Icons and thumbnails share NSCache but must never share a key: the icon
@@ -1357,6 +1416,11 @@ struct FileIconWrap: NSViewRepresentable {
     func makeNSView(context: Context) -> NSImageView {
         let v = NSImageView(); v.imageScaling = .scaleProportionallyUpOrDown
         v.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        if prefersThumbnail, let path = Self.cachedResolvedPath(for: entry),
+           let cached = Self.iconCache.object(forKey: Self.thumbnailKey(path)) {
+            v.image = cached
+            return v
+        }
         v.image = Self.baseIcon(for: entry)
         if prefersThumbnail {
             Self.loadThumbnailIfAvailable(for: entry) { thumbnail in
@@ -1367,6 +1431,11 @@ struct FileIconWrap: NSViewRepresentable {
     }
     func updateNSView(_ v: NSImageView, context: Context) {
         v.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        if prefersThumbnail, let path = Self.cachedResolvedPath(for: entry),
+           let cached = Self.iconCache.object(forKey: Self.thumbnailKey(path)) {
+            v.image = cached
+            return
+        }
         v.image = Self.baseIcon(for: entry)
         guard prefersThumbnail else { return }
         Self.loadThumbnailIfAvailable(for: entry) { thumbnail in
@@ -1375,11 +1444,12 @@ struct FileIconWrap: NSViewRepresentable {
     }
 
     static func baseIcon(for entry: BookmarkEntry) -> NSImage {
-        let ext = (entry.displayName as NSString).pathExtension
+        let path = cachedResolvedPath(for: entry)
+        let ext = path.map { ($0 as NSString).pathExtension } ?? (entry.displayName as NSString).pathExtension
         let fallback = ext.isEmpty
             ? NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericFolderIcon)))
             : NSWorkspace.shared.icon(forFileType: ext)
-        guard let path = cachedResolvedPath(for: entry) else { return fallback }
+        guard let path = path else { return fallback }
         let key = iconKey(path)
         if let cached = iconCache.object(forKey: key) { return cached }
         let image = NSWorkspace.shared.icon(forFile: path)
@@ -1390,9 +1460,11 @@ struct FileIconWrap: NSViewRepresentable {
     /// Decodes an image/PDF/media/document thumbnail via system QLThumbnailGenerator
     /// off the main thread with fallback, and caches it under its own key.
     static func loadThumbnailIfAvailable(for entry: BookmarkEntry, completion: @escaping (NSImage) -> Void) {
-        let ext = (entry.displayName as NSString).pathExtension.lowercased()
-        guard thumbnailableExtensions.contains(ext),
-              let path = cachedResolvedPath(for: entry) else { return }
+        guard let path = cachedResolvedPath(for: entry) else { return }
+        let pathExt = (path as NSString).pathExtension.lowercased()
+        let nameExt = (entry.displayName as NSString).pathExtension.lowercased()
+        let ext = !pathExt.isEmpty ? pathExt : nameExt
+        guard thumbnailableExtensions.contains(ext) else { return }
         let cachedKey = thumbnailKey(path)
         if let cached = iconCache.object(forKey: cachedKey) {
             completion(cached)
@@ -1400,6 +1472,7 @@ struct FileIconWrap: NSViewRepresentable {
         }
 
         pendingLock.lock()
+        guard !failedThumbnails.contains(path) else { pendingLock.unlock(); return }
         guard !pendingThumbnails.contains(path) else { pendingLock.unlock(); return }
         pendingThumbnails.insert(path)
         pendingLock.unlock()
@@ -1420,7 +1493,7 @@ struct FileIconWrap: NSViewRepresentable {
             }
             DispatchQueue.global(qos: .userInitiated).async {
                 guard let thumb = Self.thumbnail(at: path, ext: ext, maxPixel: 256) else {
-                    Self.clearPendingThumbnail(path)
+                    Self.markThumbnailFailed(path)
                     return
                 }
                 Self.publishThumbnail(thumb, for: path, key: cachedKey, completion: completion)
@@ -1431,6 +1504,13 @@ struct FileIconWrap: NSViewRepresentable {
     private static func clearPendingThumbnail(_ path: String) {
         pendingLock.lock()
         pendingThumbnails.remove(path)
+        pendingLock.unlock()
+    }
+
+    private static func markThumbnailFailed(_ path: String) {
+        pendingLock.lock()
+        pendingThumbnails.remove(path)
+        failedThumbnails.insert(path)
         pendingLock.unlock()
     }
 

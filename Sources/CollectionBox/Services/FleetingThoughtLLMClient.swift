@@ -47,14 +47,7 @@ public struct FleetingThoughtLLMClient {
 
     public init(session: URLSession? = nil, timeout: TimeInterval = 25) {
         self.timeout = timeout
-        if let session {
-            self.session = session
-        } else {
-            let config = URLSessionConfiguration.default
-            config.timeoutIntervalForRequest = timeout
-            config.timeoutIntervalForResource = timeout
-            self.session = URLSession(configuration: config)
-        }
+        self.session = session ?? TodoLLMClient.sharedSession
     }
 
     public static func extractCandidateText(from data: Data) -> String? {
@@ -136,155 +129,108 @@ public struct FleetingThoughtLLMClient {
         )
     }
 
-    /// Primary entry point: parse context using confidence-gated Jev System One + LLM deep arbitration.
+    private enum RaceResult: Sendable {
+        case confidentJev(ParsedFleetingThought)
+        case standardLLM(ParsedFleetingThought)
+        case bestGuessJev(ParsedFleetingThought)
+        case failure
+    }
+
+    /// Primary entry point: parse context using dual-track speculative race between Jev System One & standard LLM.
     public func parse(context: FleetingPrompt.Context, config: TodoLLMConfig) async throws -> ParsedFleetingThought {
-        // 1. Evaluate with TypeSafe Jev System One (calibrated, deterministic, sub-second)
-        var jevResult: TypeSafeJevClient.JevRouteResult? = nil
-        if let jevConfig = TypeSafeJevClient.resolveConfig() {
-            let jevClient = TypeSafeJevClient(session: session)
-            jevResult = try? await jevClient.evaluate(context: context, config: jevConfig)
-        }
-
-        // 2. High confidence threshold: if Jev is confident (>= 0.82 folder, >= 0.75 note), direct hit!
-        if let jev = jevResult, jev.isHighConfidence {
-            return jev.parsed
-        }
-
-        // 3. Low confidence or ambiguity: escalate to LLM deep arbitration if standard LLM is configured
         let hasLLM = !config.baseURL.isEmpty && !config.apiKey.isEmpty && !config.model.isEmpty
-        if hasLLM {
-            if let jev = jevResult {
-                // LLM arbitration with Jev's candidate distribution as prior context
-                if let arbitrated = try? await arbitrateWithLLM(context: context, jevResult: jev, config: config) {
-                    return arbitrated
+        let jevConfig = TypeSafeJevClient.resolveConfig()
+        let hasJev = jevConfig != nil
+
+        if !hasLLM && !hasJev {
+            return Self.localFallback(context: context)
+        }
+
+        if hasJev && !hasLLM {
+            let jevClient = TypeSafeJevClient(session: session)
+            if let res = try? await jevClient.evaluate(context: context, config: jevConfig!) {
+                return Self.sanitize(parsed: res.parsed, tree: context.folderTree, originalInput: context.input)
+            }
+            return Self.localFallback(context: context)
+        }
+
+        if hasLLM && !hasJev {
+            if let parsed = try? await callOpenAIParse(context: context, config: config) {
+                return Self.sanitize(parsed: parsed, tree: context.folderTree, originalInput: context.input)
+            }
+            return Self.localFallback(context: context)
+        }
+
+        // Both Jev and LLM configured: Dual-track parallel speculative race!
+        let winner: ParsedFleetingThought? = await withTaskGroup(of: RaceResult.self) { group in
+            // Track 1: Jev System One (sub-second choice probability)
+            group.addTask {
+                let jevClient = TypeSafeJevClient(session: session)
+                if let res = try? await jevClient.evaluate(context: context, config: jevConfig!) {
+                    let sanitized = Self.sanitize(parsed: res.parsed, tree: context.folderTree, originalInput: context.input)
+                    if res.isHighConfidence {
+                        return .confidentJev(sanitized)
+                    } else {
+                        return .bestGuessJev(sanitized)
+                    }
                 }
-                // If arbitration failed, fall back to Jev's best guess
-                return jev.parsed
-            } else {
-                // No Jev available, pure standard LLM parse
-                if let parsed = try? await callOpenAIParse(context: context, config: config) {
-                    return parsed
+                return .failure
+            }
+
+            // Track 2: Standard LLM (OpenAI-compatible)
+            group.addTask {
+                if let parsed = try? await self.callOpenAIParse(context: context, config: config) {
+                    let sanitized = Self.sanitize(parsed: parsed, tree: context.folderTree, originalInput: context.input)
+                    return .standardLLM(sanitized)
+                }
+                return .failure
+            }
+
+            var bestGuess: ParsedFleetingThought? = nil
+            for await result in group {
+                switch result {
+                case .confidentJev(let thought), .standardLLM(let thought):
+                    group.cancelAll()
+                    return thought
+                case .bestGuessJev(let thought):
+                    bestGuess = thought
+                case .failure:
+                    break
                 }
             }
-        } else if let jev = jevResult {
-            // No LLM configured, but Jev returned something: use Jev's evaluation
-            return jev.parsed
+            return bestGuess
         }
 
-        // 4. Fall back to local heuristic
+        if let winner {
+            return winner
+        }
+
         return Self.localFallback(context: context)
     }
 
-    /// Arbitrates ambiguous or low-confidence thoughts using standard LLM with Jev's candidate distribution as prior context.
-    private func arbitrateWithLLM(
-        context: FleetingPrompt.Context,
-        jevResult: TypeSafeJevClient.JevRouteResult,
-        config: TodoLLMConfig
-    ) async throws -> ParsedFleetingThought? {
-        guard var comps = URLComponents(string: config.baseURL) else { return nil }
-        if comps.path.isEmpty || comps.path == "/" {
-            comps.path = "/v1/chat/completions"
-        } else if !comps.path.hasSuffix("/chat/completions") {
-            comps.path = (comps.path as NSString).appendingPathComponent("chat/completions")
-        }
-        guard let url = comps.url else { return nil }
-
-        let systemPrompt = """
-        你是个人备忘录（Apple Notes）的高级意图识别与决策专家。
-        初筛引擎（Jev）对用户的随笔进行了第一轮意图识别，置信度较低或存在歧义。
-        请结合用户原文、备忘录架构与初筛推荐，做出最终裁决，输出严格符合以下结构的合法 JSON（不要包含任何代码块标记或额外说明）：
-        {
-          "folder": "精确匹配已有分类名",
-          "targetNoteTitle": "目标笔记标题",
-          "mode": "append|prepend|create",
-          "formattedContent": "排版好的正文内容",
-          "confidence": 0.95
-        }
-
-        【裁决铁律】：
-        1. folder 必须是已有分类列表中真实存在的一个，严禁捏造；
-        2. targetNoteTitle：若不是新建独立笔记，必须严格从该分类已有的笔记中挑选最贴切的一篇；若现有笔记均不合适，mode 必须设为 create 并拟定新笔记标题；
-        3. 模式规则：
-           - prepend（倒序置顶插入）：打卡、日志、天数记录、即时心情追踪；
-           - append（尾部追加）：普通随笔、灵感短语、读书摘抄、知识积累；
-           - create（新建独立笔记）：全新长文、独立主题随笔。
-        """
-
-        var jevPriorSummary = "- 初筛推荐分类：\(jevResult.parsed.folder)（置信度: \(Int(jevResult.folderConfidence * 100))%）"
-        if !jevResult.topFolders.isEmpty {
-            let topF = jevResult.topFolders.prefix(3).map { "\($0.name) (\(Int($0.probability * 100))%)" }.joined(separator: "、")
-            jevPriorSummary += "\n  候选分类概率分布：\(topF)"
-        }
-        jevPriorSummary += "\n- 初筛推荐笔记：\(jevResult.parsed.targetNoteTitle)（置信度: \(Int(jevResult.noteConfidence * 100))%）"
-        if !jevResult.topNotes.isEmpty {
-            let topN = jevResult.topNotes.prefix(3).map { "\($0.name) (\(Int($0.probability * 100))%)" }.joined(separator: "、")
-            jevPriorSummary += "\n  候选笔记概率分布：\(topN)"
-        }
-        jevPriorSummary += "\n- 初筛建议模式：\(jevResult.parsed.mode.rawValue)"
-
-        let treeDesc = context.folderTree
-            .filter { $0.name != "Recently Deleted" && $0.name != "最近删除" }
-            .map { f in
-                let notesList = f.notes.isEmpty ? "(无笔记)" : f.notes.prefix(12).joined(separator: "、")
-                return "📁 [\(f.name)]: \(notesList)"
-            }
-            .joined(separator: "\n")
-
-        let userPrompt = """
-        【用户输入的随笔原文】：
-        \(context.input)
-
-        【初筛引擎（Jev）分析先验】：
-        \(jevPriorSummary)
-
-        【用户备忘录的分类与现有笔记】：
-        \(treeDesc)
-        """
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let payload: [String: Any] = [
-            "model": config.model,
-            "temperature": 0.1,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": userPrompt]
-            ]
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            return nil
-        }
-
-        guard let parsed = Self.parseResponse(data, defaultInput: context.input) else {
-            return nil
-        }
-
-        // Anti-hallucination sanitization: ensure folder exists in tree
-        let validFolders = context.folderTree.map(\.name)
+    /// Anti-hallucination sanitizer: snaps AI-predicted folder and note title strictly to user's real Apple Notes tree.
+    public static func sanitize(
+        parsed: ParsedFleetingThought,
+        tree: [AppleNotesService.FolderItem],
+        originalInput: String
+    ) -> ParsedFleetingThought {
+        guard !tree.isEmpty else { return parsed }
+        let validFolders = tree.map(\.name)
         let finalFolder: String
         if validFolders.contains(parsed.folder) {
             finalFolder = parsed.folder
         } else if let fuzzy = validFolders.first(where: { $0.contains(parsed.folder) || parsed.folder.contains($0) }) {
             finalFolder = fuzzy
         } else {
-            finalFolder = jevResult.parsed.folder
+            finalFolder = validFolders.first ?? (parsed.folder.isEmpty ? "Notes" : parsed.folder)
         }
 
-        // Anti-hallucination sanitization: ensure note exists if not create
         var finalNote = parsed.targetNoteTitle
         if parsed.mode != .create {
-            let availableNotes = context.folderTree.first(where: { $0.name == finalFolder })?.notes ?? []
-            if !availableNotes.contains(finalNote) {
+            let availableNotes = tree.first(where: { $0.name == finalFolder })?.notes ?? []
+            if !availableNotes.isEmpty && !availableNotes.contains(finalNote) {
                 if let fuzzyNote = availableNotes.first(where: { $0.contains(finalNote) || finalNote.contains($0) }) {
                     finalNote = fuzzyNote
-                } else if availableNotes.contains(jevResult.parsed.targetNoteTitle) {
-                    finalNote = jevResult.parsed.targetNoteTitle
                 } else {
                     finalNote = availableNotes.first ?? finalNote
                 }
@@ -295,9 +241,9 @@ public struct FleetingThoughtLLMClient {
             folder: finalFolder,
             targetNoteTitle: finalNote,
             mode: parsed.mode,
-            formattedContent: context.input,
-            confidence: max(parsed.confidence, 0.92),
-            fallback: false
+            formattedContent: originalInput,
+            confidence: max(parsed.confidence, 0.90),
+            fallback: parsed.fallback
         )
     }
 

@@ -68,6 +68,9 @@ final class AgentStatsWindowController: NSObject {
         p.hasShadow = true
         p.titlebarAppearsTransparent = true
         p.titleVisibility = .hidden
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
         p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.isMovableByWindowBackground = true
@@ -106,8 +109,7 @@ final class AgentStatsWindowController: NSObject {
 
 extension AgentStatsWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        panel?.delegate = nil
-        isShowing = false
+        hide()
     }
 
     func windowDidResignKey(_ notification: Notification) {

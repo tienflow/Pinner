@@ -4,6 +4,7 @@ import ServiceManagement
 
 public enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "通用"
+    case modules = "功能模块"
     case hotkeys = "快捷键"
     case aiConfig = "AI 配置"
 
@@ -12,6 +13,7 @@ public enum SettingsTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .modules: return "square.grid.2x2"
         case .hotkeys: return "keyboard"
         case .aiConfig: return "sparkles"
         }
@@ -20,7 +22,9 @@ public enum SettingsTab: String, CaseIterable, Identifiable {
 
 public struct SettingsView: View {
     @State private var selectedTab: SettingsTab
+    @ObservedObject private var moduleManager = ModuleManager.shared
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
+    @ObservedObject private var inputStatsService = InputStatsService.shared
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var currentTheme: Int = UserDefaults.standard.integer(forKey: "CollectionBox.theme")
     @State private var hotkeyRefreshID = UUID()
@@ -35,17 +39,19 @@ public struct SettingsView: View {
     public var body: some View {
         VStack(spacing: 0) {
             // Unified Titlebar & Tab Header
-            HStack(spacing: 4) {
-                Spacer().frame(width: 68)
+            HStack(spacing: 0) {
+                Spacer().frame(width: 60)
                 Spacer()
-                ForEach(SettingsTab.allCases) { tab in
-                    tabButton(for: tab)
+                HStack(spacing: 4) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        tabButton(for: tab)
+                    }
                 }
                 Spacer()
-                Spacer().frame(width: 68)
+                Spacer().frame(width: 60)
             }
-            .frame(height: 50)
-            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .padding(.horizontal, 10)
 
             Divider().opacity(0.35)
 
@@ -54,6 +60,8 @@ public struct SettingsView: View {
                 switch selectedTab {
                 case .general:
                     generalTab
+                case .modules:
+                    modulesTab
                 case .hotkeys:
                     hotkeysTab
                 case .aiConfig:
@@ -74,13 +82,15 @@ public struct SettingsView: View {
         return Button {
             selectedTab = tab
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                 Text(tab.rawValue)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 11)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -155,38 +165,199 @@ public struct SettingsView: View {
                     }
                 }
 
-                // Section: Agent Modules
-                sectionCard(title: "参与统计的 Agent", icon: "chart.bar.xaxis") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("勾选在总览看板和状态栏中展示的 Agent（至少保留一项）：")
-                            .font(.system(size: 12))
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - Tab 2: Feature Modules
+
+    private var modulesTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Section 1: 工作台与捕获
+                sectionCard(title: ModuleCluster.captureAndWorkspace.rawValue, icon: ModuleCluster.captureAndWorkspace.icon) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text(ModuleCluster.captureAndWorkspace.subtitle)
+                            .font(.system(size: 11))
                             .foregroundColor(.secondary)
 
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                            ForEach(StatsAgent.allCases, id: \.self) { agent in
-                                let isEnabled = agentSelection.enabledAgents.contains(agent)
-                                Toggle(isOn: Binding(
-                                    get: { isEnabled },
-                                    set: { turnOn in
-                                        if !turnOn && agentSelection.enabledAgents.count <= 1 { return }
-                                        agentSelection.setEnabled(agent, to: turnOn)
-                                    }
-                                )) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: agent.symbolName)
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.secondary)
-                                        Text(agent.label)
-                                            .font(.system(size: 13))
+                        // Collection (Core)
+                        moduleRow(
+                            module: .collection,
+                            isCore: true,
+                            isOn: .constant(true)
+                        )
+
+                        Divider()
+
+                        // Todo
+                        moduleRow(
+                            module: .todo,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.todo) },
+                                set: { moduleManager.setEnabled(.todo, to: $0) }
+                            )
+                        )
+
+                        Divider()
+
+                        // Fleeting
+                        moduleRow(
+                            module: .fleeting,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.fleeting) },
+                                set: { moduleManager.setEnabled(.fleeting, to: $0) }
+                            )
+                        )
+                    }
+                }
+
+                // Section 2: 数字监控与工具
+                sectionCard(title: ModuleCluster.monitoringAndTools.rawValue, icon: ModuleCluster.monitoringAndTools.icon) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text(ModuleCluster.monitoringAndTools.subtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        // Agent Stats
+                        moduleRow(
+                            module: .agentStats,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.agentStats) },
+                                set: { moduleManager.setEnabled(.agentStats, to: $0) }
+                            )
+                        )
+
+                        if moduleManager.isEnabled(.agentStats) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("参与统计的 Agent（至少保留一项）：")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+
+                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                                    ForEach(StatsAgent.allCases, id: \.self) { agent in
+                                        let isEnabled = agentSelection.enabledAgents.contains(agent)
+                                        Toggle(isOn: Binding(
+                                            get: { isEnabled },
+                                            set: { turnOn in
+                                                if !turnOn && agentSelection.enabledAgents.count <= 1 { return }
+                                                agentSelection.setEnabled(agent, to: turnOn)
+                                            }
+                                        )) {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: agent.symbolName)
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(.secondary)
+                                                Text(agent.label)
+                                                    .font(.system(size: 12))
+                                            }
+                                        }
+                                        .toggleStyle(.checkbox)
                                     }
                                 }
-                                .toggleStyle(.checkbox)
                             }
+                            .padding(.leading, 30)
+                            .padding(.vertical, 4)
                         }
+
+                        Divider()
+
+                        // Input Stats
+                        moduleRow(
+                            module: .inputStats,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.inputStats) },
+                                set: { moduleManager.setEnabled(.inputStats, to: $0) }
+                            )
+                        )
+
+                        if moduleManager.isEnabled(.inputStats) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(inputStatsService.hasAccessibilityPermission ? Color.green : Color.orange)
+                                    .frame(width: 7, height: 7)
+                                Text(inputStatsService.hasAccessibilityPermission ? "全局辅助功能权限已授予" : "未授予辅助功能权限，无法捕获全局击键")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                if !inputStatsService.hasAccessibilityPermission {
+                                    Button("去授权") {
+                                        inputStatsService.requestAccessibility()
+                                        inputStatsService.openAccessibilityPreferences()
+                                    }
+                                    .font(.system(size: 11))
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                            .padding(.leading, 30)
+                        }
+
+                        Divider()
+
+                        // OTP
+                        moduleRow(
+                            module: .otp,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.otp) },
+                                set: { moduleManager.setEnabled(.otp, to: $0) }
+                            )
+                        )
                     }
                 }
             }
             .padding(20)
+        }
+    }
+
+    private func moduleRow(module: PinnerModule, isCore: Bool, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: module.icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.accentColor)
+                .frame(width: 20, height: 20)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(module.title)
+                        .font(.system(size: 13, weight: .medium))
+                    if isCore {
+                        Text("核心基础")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(
+                                Capsule()
+                                    .fill(Color.accentColor.opacity(0.15))
+                            )
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                Text(module.subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            if isCore {
+                Toggle("", isOn: .constant(true))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .disabled(true)
+            } else {
+                Toggle("", isOn: isOn)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
         }
     }
 
@@ -199,7 +370,7 @@ public struct SettingsView: View {
                 sectionCard(title: "核心功能快捷键", icon: "command") {
                     VStack(spacing: 8) {
                         hotkeyRow(
-                            title: "总览看板",
+                            title: "统计总览看板",
                             icon: "square.grid.2x2",
                             getCombo: { MenuBarController.shared?.dashboardHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordDashboardHotkey { hotkeyRefreshID = UUID() } },
@@ -237,6 +408,14 @@ public struct SettingsView: View {
                             onRecord: { MenuBarController.shared?.recordOTPHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearOTPHotkey(); hotkeyRefreshID = UUID() }
                         )
+                        Divider()
+                        hotkeyRow(
+                            title: "键鼠统计面板",
+                            icon: "keyboard.fill",
+                            getCombo: { MenuBarController.shared?.inputStatsHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordInputStatsHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearInputStatsHotkey(); hotkeyRefreshID = UUID() }
+                        )
                     }
                 }
 
@@ -252,7 +431,7 @@ public struct SettingsView: View {
                         )
                         Divider()
                         hotkeyRow(
-                            title: "Gemini 统计",
+                            title: "Antigravity 统计",
                             icon: "sparkles",
                             getCombo: { MenuBarController.shared?.geminiHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordGeminiStatsHotkey { hotkeyRefreshID = UUID() } },
@@ -265,6 +444,14 @@ public struct SettingsView: View {
                             getCombo: { MenuBarController.shared?.workbuddyHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordWorkBuddyStatsHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearWorkBuddyStatsHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
+                            title: "ZCode 统计",
+                            icon: "chevron.left.forwardslash.chevron.right",
+                            getCombo: { MenuBarController.shared?.zcodeHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordAgentStatsHotkey(for: .zcode) { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearAgentStatsHotkey(for: .zcode); hotkeyRefreshID = UUID() }
                         )
                         Divider()
                         hotkeyRow(
