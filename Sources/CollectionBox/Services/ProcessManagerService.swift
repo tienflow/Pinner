@@ -13,12 +13,12 @@ public final class ProcessManagerService: ObservableObject {
 
     @Published public var sortField: ProcessSortField = .cpu
     @Published public var sortAscending: Bool = false
-    @Published public var filterOption: ProcessFilterOption = .devFirst
+    @Published public var filterOption: ProcessFilterOption = .highLoad
     @Published public var searchText: String = ""
 
     private var refreshTimer: Timer?
     private var lastCpuTicks: host_cpu_load_info_data_t? = nil
-    private var lastProcessSamples: [pid_t: (cpuTimeNano: UInt64, timestamp: TimeInterval)] = [:]
+    private var lastProcessSamples: [pid_t: (cpuTimeNano: UInt64, wakeups: UInt64, timestamp: TimeInterval)] = [:]
 
     public init() {}
 
@@ -53,7 +53,7 @@ public final class ProcessManagerService: ObservableObject {
         let previousSamples = self.lastProcessSamples
         let nowUptime = ProcessInfo.processInfo.systemUptime
 
-        let result = await Task.detached(priority: .userInitiated) { () -> (SystemPressureInfo, host_cpu_load_info_data_t?, [ManagedProcessEntry], [pid_t: (cpuTimeNano: UInt64, timestamp: TimeInterval)]) in
+        let result = await Task.detached(priority: .userInitiated) { () -> (SystemPressureInfo, host_cpu_load_info_data_t?, [ManagedProcessEntry], [pid_t: (cpuTimeNano: UInt64, wakeups: UInt64, timestamp: TimeInterval)]) in
             return Self.collectMetricsSync(
                 previousTicks: previousTicks,
                 previousSamples: previousSamples,
@@ -143,9 +143,9 @@ public final class ProcessManagerService: ObservableObject {
 
     private nonisolated static func collectMetricsSync(
         previousTicks: host_cpu_load_info_data_t?,
-        previousSamples: [pid_t: (cpuTimeNano: UInt64, timestamp: TimeInterval)],
+        previousSamples: [pid_t: (cpuTimeNano: UInt64, wakeups: UInt64, timestamp: TimeInterval)],
         nowUptime: TimeInterval
-    ) -> (SystemPressureInfo, host_cpu_load_info_data_t?, [ManagedProcessEntry], [pid_t: (cpuTimeNano: UInt64, timestamp: TimeInterval)]) {
+    ) -> (SystemPressureInfo, host_cpu_load_info_data_t?, [ManagedProcessEntry], [pid_t: (cpuTimeNano: UInt64, wakeups: UInt64, timestamp: TimeInterval)]) {
         // 1. Host CPU Ticks
         let currentTicks = sampleCPUTicks()
         var userPercent: Double = 0.0
@@ -191,7 +191,7 @@ public final class ProcessManagerService: ObservableObject {
         var pids = [pid_t](repeating: 0, count: pidCount)
         proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, pidsBytes)
 
-        var newSamples: [pid_t: (cpuTimeNano: UInt64, timestamp: TimeInterval)] = [:]
+        var newSamples: [pid_t: (cpuTimeNano: UInt64, wakeups: UInt64, timestamp: TimeInterval)] = [:]
         var entries: [ManagedProcessEntry] = []
         entries.reserveCapacity(pidCount)
 
@@ -203,15 +203,39 @@ public final class ProcessManagerService: ObservableObject {
             guard size == MemoryLayout<proc_taskinfo>.size else { continue }
 
             let totalCpuNano = taskInfo.pti_total_user + taskInfo.pti_total_system
-            newSamples[pid] = (totalCpuNano, nowUptime)
+
+            // Wakeups & Darwin rusage for Energy Impact
+            var totalWakeups: UInt64 = UInt64(taskInfo.pti_csw)
+            var rusage = rusage_info_v6()
+            let rusageStatus = withUnsafeMutablePointer(to: &rusage) { ptr in
+                ptr.withMemoryRebound(to: (rusage_info_t?).self, capacity: 1) { rusagePtr in
+                    proc_pid_rusage(pid, RUSAGE_INFO_CURRENT, rusagePtr)
+                }
+            }
+            if rusageStatus == 0 {
+                totalWakeups = rusage.ri_pkg_idle_wkups + rusage.ri_interrupt_wkups
+            }
+
+            newSamples[pid] = (totalCpuNano, totalWakeups, nowUptime)
 
             var cpuUsage: Double = 0.0
+            var energyImpact: Double = 0.0
             if let prev = previousSamples[pid] {
                 let dt = nowUptime - prev.timestamp
-                if dt > 0.1 && totalCpuNano >= prev.cpuTimeNano {
-                    let dCpu = Double(totalCpuNano - prev.cpuTimeNano)
-                    cpuUsage = (dCpu / 1_000_000_000.0) / dt * 100.0
+                if dt > 0.1 {
+                    if totalCpuNano >= prev.cpuTimeNano {
+                        let dCpu = Double(totalCpuNano - prev.cpuTimeNano)
+                        cpuUsage = (dCpu / 1_000_000_000.0) / dt * 100.0
+                    }
+                    var wakeupsPerSec: Double = 0.0
+                    if totalWakeups >= prev.wakeups {
+                        wakeupsPerSec = Double(totalWakeups - prev.wakeups) / dt
+                    }
+                    // Activity Monitor energy impact heuristic: CPU% + (Wakeups/s * 0.05)
+                    energyImpact = max(0.0, cpuUsage + (wakeupsPerSec * 0.05))
                 }
+            } else {
+                energyImpact = max(0.0, cpuUsage)
             }
 
             let residentMem = taskInfo.pti_resident_size
@@ -244,14 +268,19 @@ public final class ProcessManagerService: ObservableObject {
 
             let isDocker = name.lowercased().contains("docker") || name.lowercased().contains("orbstack")
 
+            var pathBuffer = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+            let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+            let fullPath = pathLen > 0 ? String(cString: pathBuffer) : ""
+
             let entry = ManagedProcessEntry(
                 pid: pid,
                 name: name,
                 arguments: args,
                 displayName: nil,
-                fullPath: "",
+                fullPath: fullPath,
                 cpuPercent: max(0.0, cpuUsage),
                 residentMemoryBytes: residentMem,
+                energyImpact: energyImpact,
                 isSuspended: isSuspended,
                 isDocker: isDocker,
                 dockerContainerName: nil,

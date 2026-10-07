@@ -239,7 +239,7 @@ public final class MenuBarController: NSObject {
         }
 
         if modules.isEnabled(.processManager) {
-            let processManagerItem = NSMenuItem(title: "进程管家", action: #selector(showProcessManager), keyEquivalent: "")
+            let processManagerItem = NSMenuItem(title: "进程管理", action: #selector(showProcessManager), keyEquivalent: "")
             processManagerItem.target = self; m.addItem(processManagerItem)
             hasMonitoring = true
         }
@@ -348,7 +348,7 @@ public final class MenuBarController: NSObject {
     }
 
     public func recordProcessManagerHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置进程管家快捷键") { [weak self] combo in
+        HotkeyRecorder.present(title: "设置进程管理快捷键") { [weak self] combo in
             self?.processManagerHotkeyManager.save(combo: combo)
             completion?()
         }

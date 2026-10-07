@@ -20,18 +20,17 @@ public struct ProcessManagerView: View {
 
         // 1. Filter option
         switch service.filterOption {
-        case .devFirst:
-            list = list.filter { proc in
-                proc.category == .runtime ||
-                proc.category == .devTool ||
-                proc.category == .docker ||
-                proc.cpuPercent > 1.0 ||
-                proc.residentMemoryBytes > 300_000_000 ||
-                proc.isSuspended
-            }
         case .highLoad:
             list = list.filter { proc in
-                proc.cpuPercent > 10.0 || proc.residentMemoryBytes > 1_000_000_000 || proc.isSuspended
+                proc.cpuPercent > 5.0 || proc.residentMemoryBytes > 500_000_000 || proc.isSuspended
+            }
+        case .activeApps:
+            list = list.filter { proc in
+                proc.category == .userApp || proc.category == .devTool || proc.category == .runtime || proc.category == .docker
+            }
+        case .suspended:
+            list = list.filter { proc in
+                proc.isSuspended
             }
         case .all:
             break
@@ -58,6 +57,8 @@ public struct ProcessManagerView: View {
                 return service.sortAscending ? a.cpuPercent < b.cpuPercent : a.cpuPercent > b.cpuPercent
             case .memory:
                 return service.sortAscending ? a.residentMemoryBytes < b.residentMemoryBytes : a.residentMemoryBytes > b.residentMemoryBytes
+            case .energy:
+                return service.sortAscending ? a.energyImpact < b.energyImpact : a.energyImpact > b.energyImpact
             case .name:
                 let comp = a.displayName.localizedStandardCompare(b.displayName)
                 return service.sortAscending ? comp == .orderedAscending : comp == .orderedDescending
@@ -123,7 +124,7 @@ public struct ProcessManagerView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.accentColor)
 
-            Text("进程管家")
+            Text("进程管理")
                 .font(.system(size: 14, weight: .bold))
 
             // Status Indicator Dot
@@ -164,35 +165,42 @@ public struct ProcessManagerView: View {
             // Card 1: CPU Load
             let cpuTotal = service.systemPressure.cpuTotalPercent
             let cpuColor: Color = cpuTotal > 80 ? .red : (cpuTotal > 50 ? .orange : .blue)
+            let cpuBadge = cpuTotal > 80 ? "高载" : (cpuTotal > 50 ? "繁忙" : "通畅")
             pressureCard(
                 title: "CPU 综合负载",
                 value: String(format: "%.1f%%", cpuTotal),
                 sub: "用户 \(Int(service.systemPressure.cpuUserPercent))% · 系统 \(Int(service.systemPressure.cpuSystemPercent))% (\(service.systemPressure.logicalCores)核)",
                 icon: "cpu",
-                color: cpuColor
+                color: cpuColor,
+                badgeText: cpuBadge
             )
 
-            // Card 2: Memory Pressure
+            // Card 2: Memory Pressure & Usage
             let memPressure = service.systemPressure.memoryPressure
             let memColor: Color = memPressure == .critical ? .red : (memPressure == .warning ? .orange : .green)
+            let usedGB = Double(service.systemPressure.physicalMemoryUsedBytes) / 1_073_741_824.0
+            let totalGB = Double(service.systemPressure.physicalMemoryTotalBytes) / 1_073_741_824.0
             pressureCard(
-                title: "统一内存与压力",
-                value: memPressure.rawValue,
-                sub: "已用 \(service.systemPressure.memoryDisplayString)",
+                title: "统一内存",
+                value: String(format: "%.1f GB", usedGB),
+                sub: "总计 \(String(format: "%.0f", totalGB)) GB · 压力\(memPressure.rawValue)",
                 icon: "memorychip",
-                color: memColor
+                color: memColor,
+                badgeText: memPressure.rawValue
             )
 
             // Card 3: Swap Usage
             let swapBytes = service.systemPressure.swapUsedBytes
             let swapColor: Color = swapBytes > 1_000_000_000 ? .orange : .purple
             let swapSub = swapBytes > 1_000_000_000 ? "注意：正在发生磁盘换页" : "内存充裕 · 零磁盘换页"
+            let swapBadge = swapBytes > 1_000_000_000 ? "换页中" : "零换页"
             pressureCard(
                 title: "磁盘 Swap 交换",
                 value: service.systemPressure.swapDisplayString,
                 sub: swapSub,
                 icon: "arrow.triangle.swap",
-                color: swapColor
+                color: swapColor,
+                badgeText: swapBadge
             )
         }
     }
@@ -202,7 +210,8 @@ public struct ProcessManagerView: View {
         value: String,
         sub: String,
         icon: String,
-        color: Color
+        color: Color,
+        badgeText: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -213,6 +222,15 @@ public struct ProcessManagerView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
                 Spacer()
+                if let badge = badgeText {
+                    Text(badge)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(color.opacity(0.12))
+                        .cornerRadius(Design.radiusS)
+                }
             }
 
             Text(value)
@@ -271,17 +289,32 @@ public struct ProcessManagerView: View {
             // Filter Options
             HStack(spacing: 4) {
                 ForEach(ProcessFilterOption.allCases) { opt in
+                    let isSelected = service.filterOption == opt
                     Button {
                         Haptics.light()
                         service.filterOption = opt
                     } label: {
-                        Text(opt.rawValue)
-                            .font(.system(size: 11, weight: service.filterOption == opt ? .semibold : .regular))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(service.filterOption == opt ? Color.accentColor.opacity(0.18) : Color.clear)
-                            .foregroundColor(service.filterOption == opt ? .accentColor : .secondary)
-                            .cornerRadius(Design.radiusS)
+                        HStack(spacing: 4) {
+                            Text(opt.rawValue)
+                                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                            if opt == .suspended {
+                                let suspendedCount = service.processes.filter { $0.isSuspended }.count
+                                if suspendedCount > 0 {
+                                    Text("\(suspendedCount)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 0.5)
+                                        .background(Color.orange)
+                                        .clipShape(Capsule())
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                        .foregroundColor(isSelected ? .accentColor : .secondary)
+                        .cornerRadius(Design.radiusS)
                     }
                     .buttonStyle(.plain)
                 }
@@ -304,11 +337,17 @@ public struct ProcessManagerView: View {
             let procs = filteredProcesses
             if procs.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "checkmark.shield")
+                    Image(systemName: service.filterOption == .highLoad ? "checkmark.shield" : "magnifyingglass")
                         .font(.system(size: 28))
-                        .foregroundColor(.secondary.opacity(0.6))
+                        .foregroundColor(service.filterOption == .highLoad ? .green.opacity(0.8) : .secondary.opacity(0.6))
                         .padding(.top, 40)
-                    Text(service.processes.isEmpty ? "正在采集系统进程…" : "未找到匹配的进程")
+                    Text(service.processes.isEmpty
+                         ? "正在采集系统进程…"
+                         : (service.filterOption == .suspended
+                            ? "当前暂无被冻结的进程"
+                            : (service.filterOption == .highLoad
+                               ? "系统运行平稳 · 暂无高负载进程"
+                               : "未找到匹配的进程")))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.secondary)
                         .padding(.bottom, 40)
@@ -339,21 +378,25 @@ public struct ProcessManagerView: View {
 
             // PID
             headerSortCell(title: "PID", field: .pid, alignment: .center)
-                .frame(width: 60, alignment: .center)
+                .frame(width: 55, alignment: .center)
 
             // CPU %
             headerSortCell(title: "CPU", field: .cpu, alignment: .trailing)
-                .frame(width: 75, alignment: .trailing)
+                .frame(width: 68, alignment: .trailing)
 
             // Memory
             headerSortCell(title: "内存", field: .memory, alignment: .trailing)
-                .frame(width: 85, alignment: .trailing)
+                .frame(width: 78, alignment: .trailing)
+
+            // Energy / 功耗
+            headerSortCell(title: "功耗", field: .energy, alignment: .trailing)
+                .frame(width: 58, alignment: .trailing)
 
             // Actions
             Text("操作")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
-                .frame(width: 130, alignment: .center)
+                .frame(width: 125, alignment: .center)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -428,21 +471,27 @@ public struct ProcessManagerView: View {
             Text(String(proc.pid))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
-                .frame(width: 60, alignment: .center)
+                .frame(width: 55, alignment: .center)
 
             // 3. CPU %
             Text(proc.cpuDisplayString)
                 .font(.system(size: 12, weight: proc.cpuPercent > 50 ? .bold : .regular, design: .monospaced))
                 .foregroundColor(proc.cpuPercent > 80 ? .red : (proc.cpuPercent > 30 ? .orange : .primary))
-                .frame(width: 75, alignment: .trailing)
+                .frame(width: 68, alignment: .trailing)
 
             // 4. Memory
             Text(proc.memoryDisplayString)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
-                .frame(width: 85, alignment: .trailing)
+                .frame(width: 78, alignment: .trailing)
 
-            // 5. Action Buttons (Pause / Terminate)
+            // 5. Energy Impact
+            Text(proc.energyDisplayString)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(proc.energyImpact > 50 ? .red : (proc.energyImpact > 20 ? .orange : (proc.energyImpact > 5 ? .primary : .secondary)))
+                .frame(width: 58, alignment: .trailing)
+
+            // 6. Action Buttons (Pause / Terminate)
             HStack(spacing: 6) {
                 // Pause / Resume Toggle Button
                 Button {
@@ -484,7 +533,7 @@ public struct ProcessManagerView: View {
                 .buttonStyle(.plain)
                 .help("终止此进程 (SIGKILL)")
             }
-            .frame(width: 130, alignment: .center)
+            .frame(width: 125, alignment: .center)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -503,32 +552,67 @@ public struct ProcessManagerView: View {
         }
     }
 
+    // Cache for app icons to ensure smooth 60fps scrolling without repeated disk/NSWorkspace queries
+    private static var iconCache: [String: NSImage] = [:]
+    private static let iconLock = NSLock()
+
+    private func resolveProcessIcon(for proc: ManagedProcessEntry) -> NSImage? {
+        var candidatePath: String? = nil
+        if let app = NSRunningApplication(processIdentifier: proc.pid), let bURL = app.bundleURL {
+            candidatePath = bURL.path
+        } else if !proc.fullPath.isEmpty {
+            candidatePath = proc.fullPath
+        }
+
+        guard let path = candidatePath else {
+            return NSRunningApplication(processIdentifier: proc.pid)?.icon
+        }
+
+        // Recursively locate enclosing .app bundle (e.g. Arc.app for Arc's Browser Helper)
+        if let enclosingApp = Self.findEnclosingAppPath(path: path) {
+            Self.iconLock.lock()
+            defer { Self.iconLock.unlock() }
+            if let cached = Self.iconCache[enclosingApp] {
+                return cached
+            }
+            let icon = NSWorkspace.shared.icon(forFile: enclosingApp)
+            if icon.isValid {
+                Self.iconCache[enclosingApp] = icon
+                return icon
+            }
+        }
+
+        return NSRunningApplication(processIdentifier: proc.pid)?.icon
+    }
+
+    private static func findEnclosingAppPath(path: String) -> String? {
+        var url = URL(fileURLWithPath: path)
+        var topAppURL: URL? = nil
+        while url.pathComponents.count > 1 {
+            if url.pathExtension == "app" {
+                topAppURL = url
+            }
+            url = url.deletingLastPathComponent()
+        }
+        return topAppURL?.path
+    }
+
     @ViewBuilder
     private func processIconView(for proc: ManagedProcessEntry) -> some View {
-        if let runningApp = NSRunningApplication(processIdentifier: proc.pid),
-           let appIcon = runningApp.icon {
-            Image(nsImage: appIcon)
+        if let icon = resolveProcessIcon(for: proc) {
+            Image(nsImage: icon)
                 .resizable()
                 .scaledToFit()
                 .frame(width: 20, height: 20)
                 .cornerRadius(4.5)
                 .opacity(proc.isSuspended ? 0.45 : 1.0)
         } else {
-            // Elegant micro-tile card for command-line / background processes
-            ZStack {
-                RoundedRectangle(cornerRadius: 4.5)
-                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.85))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4.5)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.6)
-                    )
-
-                Image(systemName: proc.category.iconName)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(proc.isSuspended ? .secondary.opacity(0.4) : .secondary)
-            }
-            .frame(width: 20, height: 20)
-            .opacity(proc.isSuspended ? 0.45 : 1.0)
+            // Clean, unboxed SF Symbol (no clumsy checkbox-like border)
+            Image(systemName: proc.category.iconName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(proc.isSuspended ? .secondary.opacity(0.4) : (proc.category == .runtime ? .orange : (proc.category == .docker ? .blue : .secondary)))
+                .frame(width: 20, height: 20)
+                .opacity(proc.isSuspended ? 0.45 : 1.0)
         }
     }
 }

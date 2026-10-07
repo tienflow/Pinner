@@ -387,7 +387,7 @@ func testSettingsSubmenuContents() {
     check(topTitles.contains("OTP 工具"), "top-level menu contains OTP item")
     check(topTitles.contains("各 Agent 明细"), "top-level menu contains agent details item")
     check(topTitles.contains("端口管家"), "top-level menu contains portManager item")
-    check(topTitles.contains("进程管家"), "top-level menu contains processManager item")
+    check(topTitles.contains("进程管理"), "top-level menu contains processManager item")
 
     let inputStatsItem = menu.items.first { $0.title == "键鼠统计" }
     check(inputStatsItem?.action != nil && inputStatsItem?.target != nil, "inputStats menu item is wired to an action")
@@ -1509,12 +1509,14 @@ func testProcessManager() {
     check(proc.displayName == "node (vite dev)", "ManagedProcessEntry formats displayName with arguments")
     check(proc.cpuDisplayString == "95.2%", "ManagedProcessEntry cpuDisplayString matches")
     check(proc.memoryDisplayString == "1.00 GB", "ManagedProcessEntry memoryDisplayString matches")
+    check(proc.energyDisplayString == "0.0", "proc energyDisplayString matches")
+    check(ProcessSortField.allCases.contains(.energy), "ProcessSortField includes energy")
 
     // 4. ModuleManager & MenuBarController integration
     check(ModuleManager.shared.isEnabled(.processManager), "processManager enabled by default in ModuleManager")
     let bar = MenuBarController(store: CollectionStore(inMemory: true))
     let menu = bar.makeMenu()
-    check(menu.items.map(\.title).contains("进程管家"), "menu contains 进程管家")
+    check(menu.items.map(\.title).contains("进程管理"), "menu contains 进程管理")
     check(menu.items.map(\.title).contains("端口管家"), "menu contains 端口管家")
     check(menu.items.map(\.title).contains("Agent 总览"), "menu contains Agent 总览")
 
@@ -1522,7 +1524,15 @@ func testProcessManager() {
     let customManager = ModuleManager(defaults: UserDefaults(suiteName: "test-process-mgr-\(UUID().uuidString)")!)
     customManager.setEnabled(.processManager, to: false)
     let menuWithoutProc = bar.makeMenu(modules: customManager)
-    check(!menuWithoutProc.items.map(\.title).contains("进程管家"), "menu hides disabled processManager")
+    check(!menuWithoutProc.items.map(\.title).contains("进程管理"), "menu hides disabled processManager")
+
+    // 6. ProcessFilterOption cases
+    check(ProcessFilterOption.allCases.count == 4, "ProcessFilterOption has 4 options")
+    check(ProcessFilterOption.highLoad.rawValue == "高负载", "highLoad rawValue matches")
+    check(ProcessFilterOption.activeApps.rawValue == "活跃应用", "activeApps rawValue matches")
+    check(ProcessFilterOption.suspended.rawValue == "已冻结", "suspended rawValue matches")
+    check(ProcessFilterOption.all.rawValue == "全部", "all rawValue matches")
+    check(ProcessManagerService.shared.filterOption == .highLoad, "ProcessManagerService defaults to .highLoad")
 }
 
 

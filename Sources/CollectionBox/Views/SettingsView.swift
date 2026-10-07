@@ -453,7 +453,7 @@ public struct SettingsView: View {
                         )
                         Divider()
                         hotkeyRow(
-                            title: "进程管家面板",
+                            title: "进程管理面板",
                             icon: "speedometer",
                             getCombo: { MenuBarController.shared?.processManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordProcessManagerHotkey { hotkeyRefreshID = UUID() } },

@@ -12,11 +12,11 @@ public enum ManagedProcessCategory: String, CaseIterable, Identifiable, Codable,
 
     public var iconName: String {
         switch self {
-        case .devTool: return "hammer"
-        case .runtime: return "terminal"
-        case .docker: return "shippingbox"
-        case .userApp: return "app"
-        case .system: return "gearshape"
+        case .devTool: return "hammer.fill"
+        case .runtime: return "terminal.fill"
+        case .docker: return "shippingbox.fill"
+        case .userApp: return "macwindow"
+        case .system: return "gearshape.fill"
         }
     }
 }
@@ -95,6 +95,7 @@ public struct ManagedProcessEntry: Identifiable, Sendable, Equatable {
     public let fullPath: String
     public var cpuPercent: Double
     public var residentMemoryBytes: UInt64
+    public var energyImpact: Double
     public var isSuspended: Bool
     public var isDocker: Bool
     public var dockerContainerName: String?
@@ -108,6 +109,7 @@ public struct ManagedProcessEntry: Identifiable, Sendable, Equatable {
         fullPath: String = "",
         cpuPercent: Double = 0.0,
         residentMemoryBytes: UInt64 = 0,
+        energyImpact: Double = 0.0,
         isSuspended: Bool = false,
         isDocker: Bool = false,
         dockerContainerName: String? = nil,
@@ -120,6 +122,7 @@ public struct ManagedProcessEntry: Identifiable, Sendable, Equatable {
         self.fullPath = fullPath
         self.cpuPercent = cpuPercent
         self.residentMemoryBytes = residentMemoryBytes
+        self.energyImpact = energyImpact
         self.isSuspended = isSuspended
         self.isDocker = isDocker
         self.dockerContainerName = dockerContainerName
@@ -148,11 +151,19 @@ public struct ManagedProcessEntry: Identifiable, Sendable, Equatable {
     public var cpuDisplayString: String {
         String(format: "%.1f%%", cpuPercent)
     }
+
+    public var energyDisplayString: String {
+        if energyImpact < 0.1 {
+            return "0.0"
+        }
+        return String(format: "%.1f", energyImpact)
+    }
 }
 
 public enum ProcessSortField: String, CaseIterable, Identifiable, Sendable {
     case cpu = "CPU"
     case memory = "内存"
+    case energy = "功耗"
     case name = "名称"
     case pid = "PID"
 
@@ -160,9 +171,10 @@ public enum ProcessSortField: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum ProcessFilterOption: String, CaseIterable, Identifiable, Sendable {
-    case devFirst = "开发者优先"
+    case highLoad = "高负载"
+    case activeApps = "活跃应用"
+    case suspended = "已冻结"
     case all = "全部"
-    case highLoad = "高负载 (>10% / >1G)"
 
     public var id: String { rawValue }
 }

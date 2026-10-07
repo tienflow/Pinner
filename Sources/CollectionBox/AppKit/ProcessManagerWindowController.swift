@@ -82,7 +82,7 @@ public final class ProcessManagerWindowController: NSObject, NSWindowDelegate {
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
-        p.title = "进程管家"
+        p.title = "进程管理"
         p.titlebarAppearsTransparent = true
         p.titleVisibility = .hidden
         p.standardWindowButton(.closeButton)?.isHidden = true

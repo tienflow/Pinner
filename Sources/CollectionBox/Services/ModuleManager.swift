@@ -46,7 +46,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .agentStats: return "Agent 总览看板"
         case .inputStats: return "键鼠输入统计"
         case .portManager: return "端口管家"
-        case .processManager: return "进程管家"
+        case .processManager: return "进程管理"
         case .otp: return "OTP 工具"
         }
     }
