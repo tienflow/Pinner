@@ -1,250 +1,160 @@
 # Pinner
 
-你有没有过这种经历：每天都要打开同一批文件夹和文件，在 Finder 里一层层点进去，关掉浏览器标签又重新打开，日复一日。Pinner 把你常用的文件和文件夹钉在菜单栏里一键直达，同时内置 TOTP 验证码显示，以及 Codex / Antigravity (Gemini) / WorkBuddy 三套本地 Token 用量统计。
+> 钉在 macOS 菜单栏的高效常驻工作台。文件收藏、灵感与待办极速捕获、端口与外设监控、多 Agent AI 消耗账本，一键直达，不为你多开一个窗口。
 
-## 功能
+[![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue.svg)](https://github.com/tienflow/Pinner/releases)
+[![Swift](https://img.shields.io/badge/Swift-6.0-orange.svg)](https://swift.org)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/release-v1.12.0-brightgreen.svg)](https://github.com/tienflow/Pinner/releases/tag/v1.12.0)
 
-**收藏夹**
-- **拖拽收藏**：从 Finder 拖文件或文件夹到面板，自动收藏（同一路径自动去重）；也可点击面板底部 + 按钮选择文件添加
-- **分类管理**：多个 Tab 收藏夹，支持创建、重命名、删除、拖拽调整顺序、在收藏夹之间移动文件
-- **置顶文件**：右键置顶常用文件，置顶区始终显示在顶部
-- **快速打开**：双击或回车打开文件
-- **快速预览**：选中文件后按空格键或 ⌘Y 使用 Quick Look 预览（预览窗跟随方向键切换实时更新）
-- **多选操作**：⌘ 点击逐个加选、⇧ 点击范围选择，支持批量移动 / 移除，Delete 键删除选中项
-- **拖出文件**：把面板中的条目拖到其他应用（邮件、聊天窗口等）直接作为文件使用
-- **列表 / 宫格**：两种视图模式自由切换，宫格模式下利用 macOS `QLThumbnailGenerator` 硬件加速生成高保真缩略图
-- **排序**：按自定义（拖拽顺序）、名称、添加时间、上次打开时间、文件类型排序，后两者带分区标题
-- **拖拽排序**：按住条目拖到目标位置落下即可调整顺序，自动切换为「自定义」排序；拖到面板外仍是把文件拖出使用
-- **搜索**：实时过滤当前收藏夹，内置高效拼音引擎，支持全拼、拼音首字母简拼（如输入 `zb` 匹配 `项目周报.xlsx`）及子序列模糊匹配；输入关键词后自动跨所有收藏夹搜索并按收藏夹分组
-- **最近访问**：跨收藏夹聚合最近打开的文件，按今天 / 最近 7 天 / 本月 / 更早分组，并标注来源收藏夹
-- **右键菜单**：置顶 / 取消置顶、快速预览、拷贝路径、在终端中打开、在 Finder 中显示、重命名、移动到其他收藏夹、移除
-- **自动刷新**：每次展开面板自动验证所有 bookmark，失效文件（含废纸篓）标灰显示「未找到」并保留，文件恢复后自动清除标记
-- **撤销**：⌘Z 撤销移除文件、删除收藏夹等破坏性操作
-- **面板记忆**：记住上次调整后的面板大小
-- **置顶面板**：点击图钉按钮锁定面板，点击外部不再自动隐藏
+---
 
-**OTP 验证码**
-- **独立浮动窗口**：菜单栏右键或快捷键打开，显示所有 OTP 账户的实时验证码
-- **自动复制**：通过快捷键打开时，自动复制当前验证码到剪贴板
-- **倒计时**：进度条实时显示验证码剩余有效时间，≤10 秒变红提醒
-- **添加账户**：粘贴 `otpauth://` URI 自动解析，支持从本地图片识别二维码
+## 核心功能
 
-**Codex 统计**
-- **Token 用量**：查询本地 Codex 数据库，按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
-- **趋势对比**：每个维度显示与上一周期的环比变化
-- **快捷键**：默认 `⌘⇧I`，可自定义
+### 📂 工作台与中转暂存 (Workspace & Drop Shelf)
+- **多 Tab 分类收藏**：常用文件夹与文件拖拽快速纳管（自动路径排重），支持 Tab 拖拽调序、跨收藏夹分类整理与置顶固定。
+- **临时暂存中转架 (Drop Shelf)**：跨窗口中转文件的常驻悬浮槽，支持**拖出即焚**（外部应用接收后自动清理条目）、按住 `⌘` 物理剪切移动（防重名自动顺延编号）及一键转存至收藏夹。
+- **极速检索与预览**：内置拼音搜索引擎，支持全拼、简拼（如 `zb` 匹配 `项目周报.xlsx`）及跨分类聚合模糊搜索；空格键即开系统级 Quick Look 预览；宫格模式采用 macOS `QLThumbnailGenerator` 硬件加速生成高保真文件缩略图。
+- **安全与可逆**：失效文件标灰提醒并安全保留（防误删），全场景支持 `⌘Z` 撤销删除与移动。
 
-**Antigravity 统计**
-- **Token 用量**：查询本地 Antigravity 数据库，按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
-- **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
-- **快捷键**：默认 `⌘⇧G`，可自定义
+### ⚡️ 极速捕获 (Quick Capture)
+- **待办快速录入 (Reminders Integration)**：
+  - **自然语言一句话建任务**：输入日常语句（如「明天下午三点跟张工对需求」），由大模型智能提炼标题、到期时刻、优先级与目标列表并写入 macOS 系统提醒事项。
+  - **确认卡与多行批量拆解**：智能浮出可编辑卡片，四字段均可快速微调；支持一次性粘贴多行文本批量智能拆解建单；断网或超时优雅平滑降级，绝不丢失输入。
+  - **今日看板与日报小结**：下半区展开今日/已逾期任务，支持一键快捷推迟（明天 9:00、下周一等）与完成勾选；提供「今日小结」一键导出 Markdown 完成日报闭环。
+- **闪念投递 (Fleeting Capture)**：
+  - **极速直达 Apple Notes**：菜单栏右键或全局快捷键唤出轻量玻璃卡片，随手记录当下灵感与随笔。
+  - **Jev 语义路由 + 大模型终审**：优先通过 TypeSafe Jev 极速预判目标分类与笔记（~200ms），低置信度自动升级大模型仲裁；支持置顶前插与尾部追加。
+  - **100% 文本真实性铁律**：正文绝对保真用户原始字词，绝不擅自添加前缀破折号或进行 AI 说教扩写；集成一键 AI 错别字与语病润色。
 
-**WorkBuddy 统计**
-- **Token 用量**：扫描本地 `~/.workbuddy/projects` 会话文件（含 subagents，按消息 id 去重），按 5 小时 / 今天 / 7 天 / 30 天维度展示 Token 消耗和会话数
-- **双轨口径**：主卡片为上下文吞吐合计（输入+输出），明细展示净输入 / 缓存命中占比 / 输出
-- **趋势对比**：每个维度显示与上一周期的环比变化，并提供悬浮数值交互的动态折线图
-- **快捷键**：默认 `⌘⇧W`，可自定义
+### 🖥️ 开发者与系统监控 (Dev & Monitor)
+- **端口管家 (Port Manager)**：
+  - **轻量独立浮窗**：聚焦监听（`LISTEN`）网络端口，用完即走，面板关闭时彻底销毁定时器，零后台常驻电量消耗。
+  - **原生 Docker / OrbStack 穿透反查**：自动解析宿主机代理端口（如 `docker-proxy`），穿透识别具体 Docker 容器名与镜像名，支持针对具体容器执行安全平滑停止（`docker stop`）。
+  - **外部暴露安全识别**：精准区分外部暴露（`0.0.0.0` / `*`）与本机隔离（`127.0.0.1`），提供专属过滤胶囊。
+  - **交互式表头双向排序**：支持点击进程表头按名称、PID、端口、分类、CPU、内存一键升降序切换。
+  - **深度进程详情弹窗**：指标卡片严格等高对称排布（64pt），网络暴露安全域归位至头部元信息，多端口清单完整下沉；支持普通进程一键强杀与 root 进程 Touch ID / 密码管理员提权。
+- **键鼠统计 (Input Stats)**：
+  - **外设全景监控**：基于 macOS `CGEvent` 监听击键总数、KPS、CPS、鼠标物理滑行位移换算（米/公里）与页面滚动距离。
+  - **24 小时心流节律**：00:00–23:59 柱状分布图，自动标识单小时峰值 Peak Hour（🔥）与活跃时段。
+  - **7 天 / 30 天历史走势**：折线图与柱状图双形态切换，多日自动结转归档，前台应用活跃排行 (Top Apps) 与常用组合快捷键统计。
+  - **绝对本地隐私**：零击键内容、零密码、零光标敏感坐标留存，纯本地内存轻量聚合。
 
-**待办快速录入**
-- **自然语言解析**：一句话 → 结构化任务（标题 / 到期 / 优先级 / 列表），由 OpenAI 兼容 API（自带 Key，Base URL / API Key / 模型名可配置，本地持久化无系统弹窗）解析后写入 macOS 提醒事项
-- **预览确认卡**：解析结果先浮出可编辑卡片，四字段均可改，⏎ 保存、⎋ 丢弃
-- **失败降级**：断网 / 超时（5s）/ 响应不可解析时，原文直接作为任务标题保存（无到期日），不阻断录入
-- **今日概览**：面板下半区自适应弹性撑开（自适应最高 280pt，一屏尽览 8+ 条任务），支持「已逾期 / 今天到期 / 随时无到期日」三段式轻量分组；悬浮快速操作（一键推迟、一键删除）、右键原生快捷键映射（⌘T 推迟到明天、⌘M 推迟到下周一、⌘O 打开提醒事项、⌘⌫ 删除待办）；支持全局 ⌘Z 或状态栏一键撤销（防误完成/误删除）、跳转系统提醒事项
-- **多行批量录入**：支持单次输入或粘贴多行文本，AI 自动拆解多项任务并唤出批量确认卡，支持单独修改/剔除与一键「全部保存 (⏎)」；失败降级时自动按多行分别拆分入库
-- **今日已完成与日报小结**：底部常驻「今日已完成 · N」折叠列表（支持反选恢复），提供「复制今日总结」一键将当日完成条目格式化导出为 Markdown（带完成时间），写日报周报极速闭环
-- **快捷键直达**：可自定义全局快捷键（默认未设置，可于偏好设置随时录制）
+### 📊 数字账本与实用工具 (Ledger & Utilities)
+- **多 Agent Token 统计总览**：
+  - **全 Agent 本地聚合**：单窗口聚合 Codex / Antigravity (Gemini) / WorkBuddy / ZCode / DSH 五大本地 Agent 的 Token 消耗与会话量。
+  - **全景数据看板**：支持今天 / 昨天 / 近 7 天 / 近 30 天 / 自定义区间；提供 24 小时心流节律卡片、实时 TPS (Tokens/s) 生成速率、半年 GitHub 格热力图、模型份额排行及 CSV 一键导出。
+  - **跨 Agent Skill 调用与沉睡治理**：全量逆向分析工具调用记录，对比本机 35+ 已安装技能库，识别 30 天零调用的沉睡技能并提供治理预警。
+  - **文件级持久化增量缓存**：mtime + fileSize 增量校验，冷启动扫描时延从 4.2s 降至 0.04s，毫秒级秒开。
+- **OTP 两步验证码**：
+  - **独立悬浮窗**：展示所有账户实时 6 位验证码，快捷键唤起时自动复制当前验证码到剪贴板。
+  - **倒计时提示**：环形进度条实时显示有效剩余秒数（≤10 秒高亮提醒），支持粘贴 URI 或图片二维码识别导入。
 
-**闪念投递 (Fleeting Capture)**
-- **极速投递 Apple Notes**：菜单栏右键 →「闪念」或快捷键唤出专属轻量浮动玻璃卡片，支持随手将当下灵感、生活随笔或日常日志一键保存至 macOS 备忘录
-- **Jev 语义路由 + 大模型深度仲裁**：优先接入 TypeSafe Jev System One 极速判定备忘录分类与已有笔记（~200ms），歧义或低置信度时自动升级通用大模型深度终审并注入概率先验，兼顾极速直出与语义深思
-- **下拉自由选择与新建笔记**：推导后提供分类与笔记下拉菜单，支持一键切换分类、目标笔记或新建笔记，支持 [置顶前插 | 尾部追加 | 新建笔记] 三模式自由切换
-- **一键 AI 润色**：输入框集成轻量「AI 润色」按钮，一键修正错别字与语病，提升语句凝练感，严格保真用户意图与情感
-- **文本真实性铁律**：投递内容 100% 绝对保持用户输入的原始字词，绝不擅自添加前缀破折号或进行多余格式篡改
-- **两段式智能确认**：回车触发语义推导与预览确认卡，再次回车写入备忘录；支持 `⌘⏎` 秒级极速直达入库；断网或未配置 AI 时平滑降级为本地规则
-- **历史目标记忆**：动态记忆最近使用过的备忘录目标笔记（LRU 胶囊），支持一键选中、单项删除或全量清空
+---
 
-**键鼠统计 (Input Stats)**
-- **轻量独立浮窗**：菜单栏右键 →「键鼠统计」或快捷键唤出专属 Liquid Glass 质感悬浮面板，展示今日外设与输入全景
-- **四核心指标卡片**：
-  - **键盘敲击**：今日击键总数 + 瞬时 KPS (Keystrokes Per Second) 与今日峰值 Peak KPS
-  - **鼠标点击**：今日点击总数（拆解左键、右键、中键与侧键点击）+ 瞬时 CPS (Clicks Per Second)
-  - **鼠标滑行**：根据屏幕分辨率换算的物理移动位移（米 / 公里，例如 `142.5 m` 或 `1.2 km`）
-  - **页面滚动**：滚轮累计滚动距离（kPx / MPx）
-- **24 小时心流节律**：00:00–23:59 24 小时活跃分布柱状图，自动识别单小时高峰 Peak Hour（带 🔥 标识）与活跃小时数，支持鼠标悬浮精细读数与一键展开/折叠
-- **7 天 / 30 天历史趋势图表 (P1)**：
-  - **双时间维度**：过去 7 天 / 过去 30 天历史走势一键切换，跨日自动结转归档与轻量持久化
-  - **多维度指标切换**：支持在 [键盘 | 点击 | 移动 | 滚动] 四种核心指标间无缝切换，动态联动图标与数据单位
-  - **折线 / 柱状双形态**：支持面积渐变平滑折线图与高对比度圆角柱状图自如切换
-  - **动态总计与日均读数**：实时聚合当前时间区间内的总计用量与日均用量，悬浮任一日期实时联动高亮读数与辅助线
-- **前台应用活跃排行 (Top Apps)**：自动归类 Xcode、VS Code、Chrome、Terminal、微信等前台进程，展示各应用的按键与点击占比进度条
-- **高频按键与常用快捷键**：统计空格、回车、退格、修饰键以及常用组合键（⌘C、⌘V、⌘S、⌘Z 等）的敲击频次
-- **绝对隐私保护与原生签名**：底层基于 `CGEvent.tapCreate` (.listenOnly)，零文本内容留存、零密码/字符记录、零光标敏感坐标记录；使用本地自签名证书，避免第三方工具更新后反复丢失辅助功能授权的问题；提供一键重置与快捷键录制
+## 交互设计与体验
 
-**端口管家 (Port Manager)**
-- **轻量独立浮窗**：菜单栏右键 →「端口管家」或自定义快捷键唤出专属 Liquid Glass 质感面板，聚焦监听（`LISTEN`）端口，用完即走；全应用统一采用极简右上角圆形关闭按钮，彻底告别红绿灯与异形关闭按钮
-- **四项核心概览**：监听端口总数、进程总物理内存占用、瞬时 CPU 占用、Docker 容器与服务数
-- **智能服务与容器识别**：自动高亮识别 Node、Python、Go、Java、Bun、Vite 等开发服务；**原生接入 Docker / OrbStack 容器探测**，自动将宿主代理端口映射穿透至具体的 Docker 容器名与镜像名
-- **外部暴露安全识别**：精准检测绑定 `0.0.0.0` / `*` 的外部暴露服务，提供独立的「外部暴露」过滤标签，区分「局域网暴露」与「本机隔离 (127.0.0.1)」
-- **极速搜索与交互式表头排序**：支持端口号（如 `:3000`）、进程名/容器名、PID 实时过滤，提供 [全部 / 开发服务 / Docker / 用户应用 / 系统服务 / 外部暴露] 一键分流胶囊；**支持点击表头（进程名称 / PID / 监听端口 / 分类 / CPU / 内存）一键升降序切换**
-- **深度详情卡片**：展示进程/容器应用图标、PID、运行状态、网络暴露安全域、严格等高对称指标卡片（监听端口、内存占用、CPU 使用率）、多端口清单、完整可执行文件二进制路径与命令行参数，支持一键拷贝路径与 Finder 快速定位
-- **安全强杀与提权升级**：支持一键强制终止普通进程、安全停止 Docker 容器；遇到 root 进程自动调用系统原生 `osascript` 管理员提权对话框（Touch ID / 密码确认），配合 Taptic 原生触感反馈
-- **零待机开销**：面板打开时轻量异步轮询，面板关闭时彻底销毁定时器，零后台常驻 CPU 与电量消耗
+- **心智聚类菜单**：右键菜单收敛为「工作台与捕获」（收藏夹/待办/闪念）与「数字监控与工具」（总览/各 Agent 明细/键鼠统计/端口管家/OTP）两大心智分区，主菜单清爽精简。
+- **统一功能模块管理 (ModuleManager)**：统一偏好设置面板 (`⌘,`) 提供「功能模块」分页，支持自由独立启闭待办、闪念、Token 看板、键鼠统计、端口管家与 OTP（核心收藏夹常驻不可关），关闭键鼠统计时彻底注销 CGEventTap 零资源开销。
+- **极简圆形关闭按钮规范**：淘汰异形关闭按钮与传统红绿灯，全应用所有子面板（端口管家、统计总览、收藏夹、OTP、待办、闪念、偏好设置）统一采用右上角极简圆形关闭按钮，操作心智高度统一。
+- **Taptic 震动触感反馈**：深度适配 Force Touch 触控板，在待办勾选、路径拷贝、批量保存、撤销、拖拽销毁等高频操作中提供清脆的原生物理触感反馈。
+- **macOS 26 原生 Liquid Glass (质感玻璃)**：全应用深度采用苹果原生质感玻璃（`NSGlassEffectView`）元材质与物理光学分层架构，兼顾晶莹高级折射与高对比度文字可读性（旧版系统优雅平滑降级）。
 
-**通用与偏好设置**
-- **心智聚类菜单**：右键菜单按心智模型划分为「工作台与捕获」（收藏夹/待办/闪念）与「数字监控与工具」（总览/各 Agent 明细/键鼠统计/端口管家/OTP），5 个 Agent 明细自动收敛至「各 Agent 明细 ▶」子菜单，主菜单从 14 项精简至 8 项
-- **统一偏好设置面板 (`⌘,`)**：
-  - **通用**：开机自启开关（`SMAppService`）、临时中转架物理剪切开关、外观主题（自动 / 浅色 / 深色）
-  - **功能模块**：全新功能模块管理页，支持自由启闭待办、闪念、Token 统计看板、键鼠统计、端口管家、OTP 两步验证（核心收藏夹常驻不可关）；模块内支持 Agent 明细勾选与键鼠辅助功能权限实时检查与授权引导；关闭键鼠统计时彻底注销 CGEventTap 零资源开销
-  - **快捷键**：可视化呈现总览、收藏夹、OTP、待办、端口管家及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
-  - **AI 配置**：整合通用大模型端点（Base URL、API Key、模型名）与 TypeSafe Jev 语义路由配置，支持独立连通性测试与状态提示；支持自定义待办「一键推迟默认时刻」
-- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行 / Skill 排行四张表（点击列头排序，支持实时生成速度 TPS 速率展示）、半年 GitHub 格热力图（带月份标注）、明细一键导出 CSV，窗口大小自动记忆；刷新按钮采用与全局关闭按钮一致的极简圆形交互设计；内置「24 小时心流节律」交互卡片；文件级磁盘增量缓存（冷启动时延 4.2s 直降至 0.04s，秒级秒开）
-- **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；收敛于「各 Agent 明细 ▶」子菜单中
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / 键鼠统计 / 端口管家 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
-- **Taptic 震动触感反馈**：深度适配 Mac Force Touch 触控板，在待办勾选完成、批量保存、验证码与路径复制、任务删除、撤销恢复、暂存架拖出即焚等高频场景中提供原生清脆的物理触感反馈（外接普通鼠标或不支持设备上自动静默忽略）
-- **macOS 26 原生 Liquid Glass (质感玻璃) 视觉体验**：全应用浮动面板、卡片与数据总览深度接入 macOS 26 原生 `NSGlassEffectView` 与 `NSGlassEffectContainerView` 质感玻璃元材质，拥有边缘物理折射、倒角景深与镜面高光；独创底层 90%~94% 系统底衬的光学物理分层架构，兼顾晶莹高级通透感与极致锐利的高反差可读性（旧版系统优雅平滑降级）
+---
 
-产品落地页位于 `landing/`（单文件静态页，字体已内联，可部署到任意静态托管）。
-
-## 技术栈
-
-- Swift 6 / SwiftUI / AppKit
-- Swift Package Manager
-- Security-Scoped Bookmarks（安全持久化文件访问）
-- Carbon API（全局快捷键）
-- RFC 6238 TOTP（HMAC-SHA1，6 位，30 秒周期）
-- macOS 14+ (Sonoma) / 深度适配 macOS 26 Liquid Glass 质感玻璃架构
-
-## 项目结构
-
-```
-Sources/
-├── CollectionBox/              # 核心库
-│   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent, PortManagerModels）
-│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore + AppleNotesService + FleetingPrompt + FleetingSettingsStore + FleetingThoughtLLMClient + TypeSafeJevClient + SkillStatsService + InputStatsService + ModuleManager + PortManagerService
-│   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, FleetingCaptureView, JevSettingsView, CodexStatsView, GeminiStatsView, AgentStatsView, PortManagerView, PortProcessDetailView 等）
-│   └── AppKit/                 # AppKit 集成
-│       ├── MenuBarController.swift           # 菜单栏交互与极简扁平菜单
-│       ├── EdgeDockWindowController.swift    # 收藏面板管理
-│       ├── SettingsWindowController.swift    # 统一偏好设置窗口管理
-│       ├── HotkeyRecorder.swift              # 快捷键录制面板（通用组件）
-│       ├── OTPWindowController.swift         # OTP 面板管理
-│       ├── HotkeyManager.swift               # 收藏夹快捷键
-│       ├── OTPHotkeyManager.swift            # OTP 快捷键
-│       ├── CodexStatsWindowController.swift  # Codex 统计面板
-│       ├── CodexStatsHotkeyManager.swift     # Codex 统计快捷键
-│       ├── GeminiStatsWindowController.swift # Antigravity 统计面板
-│       ├── GeminiStatsHotkeyManager.swift    # Antigravity 统计快捷键
-│       ├── WorkBuddyStatsWindowController.swift # WorkBuddy 统计面板
-│       ├── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
-│       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH / 待办 / 闪念快捷键
-│       ├── AgentStatsWindowController.swift     # ZCode / DSH 紧凑统计窗口
-│       ├── PortManagerWindowController.swift    # 端口管家面板窗口管理
-│       ├── HotkeyRegistrationNotifier.swift     # 快捷键注册失败系统通知
-│       ├── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
-│       ├── TodoCaptureWindowController.swift    # 待办快速录入面板
-│       ├── FleetingCaptureWindowController.swift # 闪念投递备忘录面板
-│       ├── AppActivationManager.swift           # 动态激活策略管理（Accessory <-> Regular）
-│       └── TodoSettingsWindowController.swift   # 兼容路由至偏好设置
-└── CollectionBoxApp/           # 应用入口（AppDelegate + NSApplication）
-```
-
-测试：本仓库使用独立测试运行器（CommandLineTools 环境无 XCTest），运行 `swift run PinnerTestRunner`，全部断言通过时退出码为 0。
-
-## 快捷键
+## 快捷键速查
 
 ### 全局快捷键
 
-| 按键 | 功能 |
-|------|------|
-| `⌘⇧P`（默认） | 在鼠标位置展开收藏面板 |
-| `⌘⇧O`（默认） | 在鼠标位置展开 OTP 面板并自动复制验证码 |
-| `⌘⇧I`（默认） | 打开 Codex 统计面板 |
-| `⌘⇧G`（默认） | 打开 Antigravity 统计面板 |
-| `⌘⇧W`（默认） | 打开 WorkBuddy 统计面板 |
+| 快捷键 | 功能描述 | 默认状态 |
+|:---|:---|:---|
+| `⌘⇧P` | 在鼠标当前位置展开收藏面板 | 默认启用 |
+| `⌘⇧O` | 展开 OTP 面板并自动复制当前验证码 | 默认启用 |
+| `⌘⇧I` | 打开 Codex 统计明细面板 | 默认启用 |
+| `⌘⇧G` | 打开 Antigravity 统计明细面板 | 默认启用 |
+| `⌘⇧W` | 打开 WorkBuddy 统计明细面板 | 默认启用 |
+| 自定义 | 统计总览、待办录入、闪念投递、键鼠统计、端口管家、ZCode/DSH | 可在偏好设置 (`⌘,`) 中一键录制 |
 
-待办快速录入、总览、ZCode 与 DSH 统计默认未分配快捷键，可在菜单栏右键 →「偏好设置…」(⌘,) →「快捷键」选项卡中一键录制。
+### 核心面板操作快捷键
 
-### 面板内快捷键
+| 按键 | 适用面板 | 交互动作 |
+|:---|:---|:---|
+| `空格` | 收藏面板 | Quick Look 预览文件（方向键上下移动实时跟随切换） |
+| `Enter` | 收藏面板 / 待办 / 闪念 | 打开选中文件 / 保存待办 / 确认推导投递 |
+| `⌘ Enter` | 待办 / 闪念 | 跳过确认，秒级极速直达入库 |
+| `⌘Z` | 收藏面板 / 待办 | 撤销误删除文件、误完成任务 |
+| `⌘T` / `⌘M` | 待办面板 | 快捷推迟待办任务至明天 / 下周一 |
+| `Esc` | 全面板 | 关闭或收起当前浮动面板 |
 
-| 按键 | 功能 |
-|------|------|
-| ↑ ↓ ← → | 选择文件（宫格模式下左右键按列移动） |
-| Tab | 切换到下一个收藏夹 |
-| Shift + Tab | 切换到上一个收藏夹 |
-| 空格 | Quick Look 预览选中文件（跟随方向键切换实时更新） |
-| 回车 | 打开选中文件 |
-| ⌘Y | Quick Look 预览选中文件 |
-| ⌘Z | 撤销移除 / 删除操作 |
-| Delete | 移除选中的文件 |
-| Esc | 收起面板 |
+---
 
-## 菜单栏
+## 技术架构与工程
 
-- **左键点击**：展开 / 收起收藏面板
-- **右键点击**：打开极简扁平菜单
+- **开发语言与框架**：Swift 6 / SwiftUI / AppKit
+- **系统底层接入**：Security-Scoped Bookmarks、Carbon Events、CGEvent Tap、EventKit、NSAppleScript 进程内自动化、SMAppService 开机自启
+- **系统支持**：macOS 14+ (Sonoma) / 深度适配 macOS 26 (Tahoe) Liquid Glass 质感玻璃
 
-```
-收藏夹                  ← 打开收藏面板 / 屏幕边缘吸附抽屉
-待办                    ← 打开待办快速录入面板（自然语言 → 提醒事项）
-闪念                    ← 打开闪念笔记快速投递（自然语言 → 备忘录）
-──────────
-统计总览                ← 打开 AI 消耗与节律统计大窗口
-各 Agent 明细 ▶         ← 展开分 Agent 统计子菜单（Codex / Antigravity / WorkBuddy / ZCode / DSH）
-键鼠统计                ← 打开全局键鼠敲击与心流统计浮窗
-端口管家                ← 打开端口与本地服务监听管理浮窗
-OTP 验证码              ← 打开 OTP 面板
-──────────
-偏好设置… (⌘,)           ← 打开统一偏好设置面板（通用 / 功能模块 / 快捷键 / AI 配置）
-──────────
-退出 Pinner (⌘Q)        ← 退出应用
-```
+### 源码结构
 
-## 安装
-
-### 方式一：从 Release 下载
-
-1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.12.0.dmg`
-3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
-4. 首次打开时右键选择「打开」以绕过 Gatekeeper
-
-### 修复「已损坏，无法打开」
-
-macOS 从网上下载的 app 首次打开时可能提示「Pinner 已损坏，无法打开」。在终端执行以下命令即可修复：
-
-```bash
-xattr -cr /Applications/Pinner.app
+```text
+Sources/
+├── CollectionBox/              # 核心框架库
+│   ├── Models/                 # 领域模型 (Collection, PortManager, InputStats, OTP, Agent)
+│   ├── Services/               # 核心业务服务
+│   │   ├── PortManagerService.swift       # lsof 异步监听解析、Docker 穿透与进程控制
+│   │   ├── InputStatsService.swift        # CGEvent 键鼠输入捕获、心流节律与历史持久化
+│   │   ├── ModuleManager.swift            # 全局功能模块启闭与菜单动态派发
+│   │   ├── AppleNotesService.swift        # 备忘录进程内自动化与 HTML DOM 前插
+│   │   ├── RemindersService.swift         # EventKit 提醒事项双向同步与管理
+│   │   ├── SkillStatsService.swift        # 跨 Agent 技能扫描与持久化增量缓存
+│   │   └── ...                            # BookmarkService, Haptics, PinyinMatcher 等
+│   ├── ViewModels/             # 视图模型 (CollectionStore, OTPStore)
+│   ├── Views/                  # 现代化 SwiftUI 界面组件
+│   │   ├── PortManagerView.swift          # 端口管家主面板与排序表格
+│   │   ├── PortProcessDetailView.swift    # 进程详情等高卡片与网络安全域
+│   │   ├── InputStatsView.swift           # 键鼠统计仪表盘与趋势图表
+│   │   ├── StatsDashboardView.swift       # 5 大 Agent Token 统计总览大窗口
+│   │   └── ...                            # RootView, SettingsView, TodoCaptureView 等
+│   └── AppKit/                 # 窗口控制与系统集成 (WindowControllers, MenuBarController)
+└── CollectionBoxApp/           # 应用程序启动入口 (AppDelegate + Info.plist)
 ```
 
-### 方式二：从源码编译
+测试：项目采用独立自动化测试套件（适配纯 CommandLineTools 环境），执行 `swift run PinnerTestRunner`，343 项断言全部通过时退出码为 0。
 
-需要 macOS 14+ 和 Xcode Command Line Tools，以及 Homebrew 的 zstd（用于解压 DSH 会话）：
+---
 
-```bash
-brew install zstd
-```
+## 安装与使用
+
+### 方式一：从 Release 下载 DMG（推荐）
+
+1. 前往 [GitHub Releases](../../releases) 页面；
+2. 下载最新版本 **`Pinner-v1.12.0.dmg`**；
+3. 双击打开 DMG，将 Pinner 拖入 `Applications` 应用程序文件夹；
+4. 首次启动时右键选择「打开」即可。
+
+> **提示（若提示「已损坏，无法打开」）**：macOS Gatekeeper 对未走 Apple 公证的开源工具有安全拦截，在终端执行以下命令即可清除隔离标记正常打开：
+> ```bash
+> xattr -cr /Applications/Pinner.app
+> ```
+
+### 方式二：从源码构建
+
+构建依赖：DSH 统计模块依赖 Homebrew 的 `zstd`（`brew install zstd`）。
 
 ```bash
 git clone https://github.com/tienflow/Pinner.git
 cd Pinner
-swift build
-open .build/debug/CollectionBoxApp
+
+# 运行自动化测试套件
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift run PinnerTestRunner
+
+# 编译 Release 并启动
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build -c release --product CollectionBoxApp
+open .build/out/Products/Release/CollectionBoxApp
 ```
 
-> 注意：macOS 26+ 的 CommandLineTools（SDK 27）因缺少 `libSwiftUIMacros.dylib` 宏插件无法编译 SwiftUI `@State`（报 `plugin for module 'SwiftUIMacros' not found`）。临时方案是使用旧 SDK 构建：
->
-> ```bash
-> SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build
-> ```
->
-> 根治方案是安装完整 Xcode（或等待 Apple 修复 CLT 插件缺失）。
+---
 
-### 设为开机自启
+## 许可证
 
-1. 打开「系统设置 → 通用 → 登录项与扩展」
-2. 点击「+」添加 Pinner 应用
-
-## 许可
-
-MIT
+本项目基于 [MIT 许可证](LICENSE) 开源。
