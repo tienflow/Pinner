@@ -47,7 +47,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .inputStats: return "键鼠输入统计"
         case .portManager: return "端口管家"
         case .processManager: return "进程管家"
-        case .otp: return "OTP 两步验证码"
+        case .otp: return "OTP 工具"
         }
     }
 
@@ -59,6 +59,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
             return "快捷键调出智能录入框，由大模型理解自然语言并沉淀至系统提醒事项"
         case .fleeting:
             return "随时随地捕捉灵感与碎碎念，流式规整并自动追加到 Apple 备忘录"
+        case .otp:
+            return "本地加密存储两步验证密钥，快捷计算并自动复制 6 位动态验证码"
         case .agentStats:
             return "跨 IDE 汇总 Codex、Antigravity、WorkBuddy 等各 Agent 的消耗与节律"
         case .inputStats:
@@ -67,8 +69,6 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
             return "监控本地监听端口与开发服务，支持进程详情穿透与一键释放"
         case .processManager:
             return "系统负载诊断、统一内存压力与高耗卡死进程排查与一键处置"
-        case .otp:
-            return "本地加密存储两步验证密钥，快捷计算并自动复制 6 位动态验证码"
         }
     }
 
@@ -77,11 +77,11 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .collection: return "tray.full"
         case .todo: return "checklist"
         case .fleeting: return "note.text.badge.plus"
+        case .otp: return "lock.shield"
         case .agentStats: return "chart.bar.xaxis"
         case .inputStats: return "keyboard"
         case .portManager: return "network"
         case .processManager: return "speedometer"
-        case .otp: return "lock.shield"
         }
     }
 
@@ -92,9 +92,9 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
 
     public var cluster: ModuleCluster {
         switch self {
-        case .collection, .todo, .fleeting:
+        case .collection, .todo, .fleeting, .otp:
             return .captureAndWorkspace
-        case .agentStats, .inputStats, .portManager, .processManager, .otp:
+        case .agentStats, .inputStats, .portManager, .processManager:
             return .monitoringAndTools
         }
     }

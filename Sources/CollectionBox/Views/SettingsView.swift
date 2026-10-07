@@ -215,6 +215,18 @@ public struct SettingsView: View {
                                 set: { moduleManager.setEnabled(.fleeting, to: $0) }
                             )
                         )
+
+                        Divider()
+
+                        // OTP
+                        moduleRow(
+                            module: .otp,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.otp) },
+                                set: { moduleManager.setEnabled(.otp, to: $0) }
+                            )
+                        )
                     }
                 }
 
@@ -322,18 +334,6 @@ public struct SettingsView: View {
                             isOn: Binding(
                                 get: { moduleManager.isEnabled(.processManager) },
                                 set: { moduleManager.setEnabled(.processManager, to: $0) }
-                            )
-                        )
-
-                        Divider()
-
-                        // OTP
-                        moduleRow(
-                            module: .otp,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.otp) },
-                                set: { moduleManager.setEnabled(.otp, to: $0) }
                             )
                         )
                     }

@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 public enum NoteInsertionMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case prepend = "prepend"  // 置顶前插
@@ -50,13 +51,89 @@ public enum AppleNotesError: LocalizedError {
     }
 }
 
-/// Service providing AppleScript-based interaction with macOS Notes.app.
+/// Service providing interaction with macOS Notes.app.
+/// Read path uses direct readonly SQLite queries (zero Notes.app launch / zero Dock icon interruption).
+/// Write path uses in-process NSAppleScript to preserve native iCloud sync and note creation semantics.
 public final class AppleNotesService: @unchecked Sendable {
     public static let shared = AppleNotesService()
 
     private let executionLock = NSRecursiveLock()
 
     public init() {}
+
+    // MARK: - Local SQLite Direct Query (Zero Dock / Notes.app Launch)
+
+    public static var noteStoreDatabasePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+    }
+
+    /// Read folder tree directly from local Notes SQLite database in readonly mode.
+    /// Returns nil if database file does not exist or cannot be read.
+    public static func fetchFolderTreeFromSQLite() -> [FolderItem]? {
+        let dbPath = noteStoreDatabasePath
+        guard FileManager.default.fileExists(atPath: dbPath) else {
+            return nil
+        }
+
+        var db: OpaquePointer?
+        let uri = "file:\(dbPath)?mode=ro"
+        let status = sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
+        guard status == SQLITE_OK, let db else {
+            if let db { sqlite3_close(db) }
+            return nil
+        }
+        defer { sqlite3_close(db) }
+
+        // Query folders and non-deleted notes ordered by folder, then modification date desc
+        let query = """
+        SELECT f.Z_PK, f.ZTITLE2, n.ZTITLE1
+        FROM ZICCLOUDSYNCINGOBJECT f
+        LEFT JOIN ZICCLOUDSYNCINGOBJECT n ON n.ZFOLDER = f.Z_PK 
+            AND n.ZTITLE1 IS NOT NULL 
+            AND (n.ZMARKEDFORDELETION IS NULL OR n.ZMARKEDFORDELETION = 0)
+        WHERE f.ZTITLE2 IS NOT NULL 
+            AND (f.ZFOLDERTYPE IS NULL OR f.ZFOLDERTYPE != 1)
+            AND (f.ZMARKEDFORDELETION IS NULL OR f.ZMARKEDFORDELETION = 0)
+            AND f.ZTITLE2 NOT IN ('Recently Deleted', '最近删除')
+        ORDER BY CASE WHEN f.ZTITLE2 = 'Notes' THEN 0 ELSE 1 END, f.Z_PK ASC, n.ZMODIFICATIONDATE1 DESC;
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var folderOrder: [Int64] = []
+        var folderNames: [Int64: String] = [:]
+        var folderNotes: [Int64: [String]] = [:]
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let folderId = sqlite3_column_int64(stmt, 0)
+            if let folderNamePtr = sqlite3_column_text(stmt, 1) {
+                let folderName = String(cString: folderNamePtr)
+                if folderNames[folderId] == nil {
+                    folderNames[folderId] = folderName
+                    folderOrder.append(folderId)
+                    folderNotes[folderId] = []
+                }
+            }
+            if let noteTitlePtr = sqlite3_column_text(stmt, 2) {
+                let noteTitle = String(cString: noteTitlePtr).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !noteTitle.isEmpty {
+                    folderNotes[folderId]?.append(noteTitle)
+                }
+            }
+        }
+
+        let items = folderOrder.compactMap { id -> FolderItem? in
+            guard let name = folderNames[id] else { return nil }
+            return FolderItem(name: name, notes: folderNotes[id] ?? [])
+        }
+
+        return items
+    }
 
     // MARK: - AppleScript Execution
 
@@ -120,6 +197,7 @@ public final class AppleNotesService: @unchecked Sendable {
     }
 
     /// Fetches all folders and their note titles in one roundtrip with in-memory TTL caching.
+    /// Prefers direct readonly SQLite query to prevent Notes.app from launching in the Dock.
     public func getFolderTree(force: Bool = false) async throws -> [FolderItem] {
         executionLock.lock()
         if !force, let cached = cachedFolderTree, let cachedAt = folderTreeCachedAt,
@@ -129,6 +207,16 @@ public final class AppleNotesService: @unchecked Sendable {
         }
         executionLock.unlock()
 
+        // 1. 优先尝试本地 SQLite 直读（只读 WAL 模式，杜绝唤起 Notes.app 与 Dock 栏图标）
+        if let sqliteTree = Self.fetchFolderTreeFromSQLite() {
+            executionLock.lock()
+            cachedFolderTree = sqliteTree
+            folderTreeCachedAt = Date()
+            executionLock.unlock()
+            return sqliteTree
+        }
+
+        // 2. 降级容灾：若 SQLite 无法读取，回退到 AppleScript
         let script = """
         tell application "Notes"
             set res to ""
@@ -176,7 +264,12 @@ public final class AppleNotesService: @unchecked Sendable {
     }
 
     /// Get all available folders in Notes.app (excluding Recently Deleted).
+    /// Prefers local SQLite cache to avoid launching Notes.app.
     public func getFolders() async throws -> [String] {
+        if let tree = try? await getFolderTree(), !tree.isEmpty {
+            return tree.map { $0.name }
+        }
+
         let script = """
         tell application "Notes"
             set fList to {}
@@ -195,7 +288,18 @@ public final class AppleNotesService: @unchecked Sendable {
     }
 
     /// Get note titles in a specific folder or across the app.
+    /// Prefers local SQLite cache to avoid launching Notes.app.
     public func getNoteTitles(inFolder folder: String? = nil) async throws -> [String] {
+        if let tree = try? await getFolderTree(), !tree.isEmpty {
+            if let folder, !folder.isEmpty {
+                if let matched = tree.first(where: { $0.name.caseInsensitiveCompare(folder) == .orderedSame }) {
+                    return matched.notes
+                }
+            } else {
+                return tree.flatMap { $0.notes }
+            }
+        }
+
         let script: String
         if let folder, !folder.isEmpty {
             let escaped = folder.replacingOccurrences(of: "\"", with: "\\\"")

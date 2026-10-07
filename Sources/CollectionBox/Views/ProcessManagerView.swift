@@ -391,10 +391,7 @@ public struct ProcessManagerView: View {
         HStack(spacing: 8) {
             // 1. Process Info & Category Icon
             HStack(spacing: 8) {
-                Image(systemName: proc.category.iconName)
-                    .font(.system(size: 12))
-                    .foregroundColor(proc.isSuspended ? .secondary.opacity(0.4) : (proc.category == .runtime ? .orange : (proc.category == .docker ? .blue : .secondary)))
-                    .frame(width: 16)
+                processIconView(for: proc)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
@@ -503,6 +500,35 @@ public struct ProcessManagerView: View {
             if case .failure(let err) = res {
                 terminationErrorMessage = err.localizedDescription
             }
+        }
+    }
+
+    @ViewBuilder
+    private func processIconView(for proc: ManagedProcessEntry) -> some View {
+        if let runningApp = NSRunningApplication(processIdentifier: proc.pid),
+           let appIcon = runningApp.icon {
+            Image(nsImage: appIcon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .cornerRadius(4.5)
+                .opacity(proc.isSuspended ? 0.45 : 1.0)
+        } else {
+            // Elegant micro-tile card for command-line / background processes
+            ZStack {
+                RoundedRectangle(cornerRadius: 4.5)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.85))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4.5)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.6)
+                    )
+
+                Image(systemName: proc.category.iconName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(proc.isSuspended ? .secondary.opacity(0.4) : .secondary)
+            }
+            .frame(width: 20, height: 20)
+            .opacity(proc.isSuspended ? 0.45 : 1.0)
         }
     }
 }

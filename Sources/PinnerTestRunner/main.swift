@@ -384,7 +384,7 @@ func testSettingsSubmenuContents() {
     check(topTitles.contains("闪念"), "top-level menu contains fleeting item")
     check(topTitles.contains("键鼠统计"), "top-level menu contains inputStats item")
     check(topTitles.contains("收藏夹"), "top-level menu contains collection item")
-    check(topTitles.contains("OTP 验证码"), "top-level menu contains OTP item")
+    check(topTitles.contains("OTP 工具"), "top-level menu contains OTP item")
     check(topTitles.contains("各 Agent 明细"), "top-level menu contains agent details item")
     check(topTitles.contains("端口管家"), "top-level menu contains portManager item")
     check(topTitles.contains("进程管家"), "top-level menu contains processManager item")
@@ -1365,7 +1365,7 @@ func testModuleManager() {
     let titles = menu.items.map(\.title)
 
     check(!titles.contains("待办"), "menu hides disabled todo module")
-    check(!titles.contains("OTP 验证码"), "menu hides disabled otp module")
+    check(!titles.contains("OTP 工具"), "menu hides disabled otp module")
     check(!titles.contains("端口管家"), "menu hides disabled portManager module")
     check(!titles.contains("Agent 总览"), "menu hides disabled agentStats dashboard")
     check(!titles.contains("各 Agent 明细"), "menu hides disabled agentStats submenu")

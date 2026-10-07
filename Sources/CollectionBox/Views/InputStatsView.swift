@@ -178,7 +178,7 @@ public struct InputStatsView: View {
                 icon: "cursorarrow.rays",
                 value: DailyInputStats.formatNumber(stats.totalClicks),
                 subtitle: clickSubtitle,
-                badgeText: String(format: "%.1f CPS", service.currentCPS),
+                badgeText: nil,
                 badgeColor: .indigo
             )
 

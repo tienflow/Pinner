@@ -195,6 +195,12 @@ public final class MenuBarController: NSObject {
             hasCapture = true
         }
 
+        if modules.isEnabled(.otp) {
+            let otpItem = NSMenuItem(title: "OTP 工具", action: #selector(showOTP), keyEquivalent: "")
+            otpItem.target = self; m.addItem(otpItem)
+            hasCapture = true
+        }
+
         if hasCapture {
             m.addItem(.separator())
         }
@@ -235,12 +241,6 @@ public final class MenuBarController: NSObject {
         if modules.isEnabled(.processManager) {
             let processManagerItem = NSMenuItem(title: "进程管家", action: #selector(showProcessManager), keyEquivalent: "")
             processManagerItem.target = self; m.addItem(processManagerItem)
-            hasMonitoring = true
-        }
-
-        if modules.isEnabled(.otp) {
-            let otpItem = NSMenuItem(title: "OTP 验证码", action: #selector(showOTP), keyEquivalent: "")
-            otpItem.target = self; m.addItem(otpItem)
             hasMonitoring = true
         }
 
