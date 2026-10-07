@@ -32,6 +32,7 @@ public final class MenuBarController: NSObject {
     private let fleetingHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.fleetingHotkey", eventID: 10)
     private let inputStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.inputStatsHotkey", eventID: 11)
     private let portManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.portManagerHotkey", eventID: 12)
+    private let processManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.processManagerHotkey", eventID: 13)
     private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
     private let dshStatsController = AgentStatsWindowController(agent: .dsh)
     private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
@@ -126,6 +127,10 @@ public final class MenuBarController: NSObject {
             guard ModuleManager.shared.isEnabled(.portManager) else { return }
             self?.showPortManager()
         }
+        processManagerHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.processManager) else { return }
+            self?.showProcessManager()
+        }
         dashboardHotkeyManager.register()
         zcodeStatsHotkeyManager.register()
         dshStatsHotkeyManager.register()
@@ -133,6 +138,7 @@ public final class MenuBarController: NSObject {
         fleetingHotkeyManager.register()
         inputStatsHotkeyManager.register()
         portManagerHotkeyManager.register()
+        processManagerHotkeyManager.register()
 
         Task { @MainActor in
             if ModuleManager.shared.isEnabled(.inputStats) {
@@ -196,7 +202,7 @@ public final class MenuBarController: NSObject {
         // Cluster 2: 数字监控与工具
         var hasMonitoring = false
         if modules.isEnabled(.agentStats) {
-            let header = NSMenuItem(title: "统计总览", action: #selector(openDashboard), keyEquivalent: "")
+            let header = NSMenuItem(title: "Agent 总览", action: #selector(openDashboard), keyEquivalent: "")
             header.target = self; m.addItem(header)
             hasMonitoring = true
 
@@ -223,6 +229,12 @@ public final class MenuBarController: NSObject {
         if modules.isEnabled(.portManager) {
             let portManagerItem = NSMenuItem(title: "端口管家", action: #selector(showPortManager), keyEquivalent: "")
             portManagerItem.target = self; m.addItem(portManagerItem)
+            hasMonitoring = true
+        }
+
+        if modules.isEnabled(.processManager) {
+            let processManagerItem = NSMenuItem(title: "进程管家", action: #selector(showProcessManager), keyEquivalent: "")
+            processManagerItem.target = self; m.addItem(processManagerItem)
             hasMonitoring = true
         }
 
@@ -329,6 +341,21 @@ public final class MenuBarController: NSObject {
 
     public func clearPortManagerHotkey() {
         portManagerHotkeyManager.clear()
+    }
+
+    public func processManagerHotkeyString() -> String {
+        processManagerHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordProcessManagerHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置进程管家快捷键") { [weak self] combo in
+            self?.processManagerHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearProcessManagerHotkey() {
+        processManagerHotkeyManager.clear()
     }
 
     public func collectionHotkeyString() -> String {
@@ -552,6 +579,17 @@ public final class MenuBarController: NSObject {
                 PortManagerWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
             } else {
                 PortManagerWindowController.shared.showAtMouse()
+            }
+        }
+    }
+
+    @objc public func showProcessManager() {
+        Task { @MainActor in
+            if let btn = self.statusItem?.button {
+                let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+                ProcessManagerWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
+            } else {
+                ProcessManagerWindowController.shared.showAtMouse()
             }
         }
     }

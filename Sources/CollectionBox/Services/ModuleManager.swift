@@ -33,6 +33,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
     case agentStats = "agentStats"
     case inputStats = "inputStats"
     case portManager = "portManager"
+    case processManager = "processManager"
     case otp = "otp"
 
     public var id: String { rawValue }
@@ -42,9 +43,10 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .collection: return "收藏夹与暂存架"
         case .todo: return "智能待办"
         case .fleeting: return "闪念笔记"
-        case .agentStats: return "AI Token 统计看板"
+        case .agentStats: return "Agent 总览看板"
         case .inputStats: return "键鼠输入统计"
         case .portManager: return "端口管家"
+        case .processManager: return "进程管家"
         case .otp: return "OTP 两步验证码"
         }
     }
@@ -63,6 +65,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
             return "全局按键、鼠标点击、滚轮与移动距离统计，支持心流节律分析"
         case .portManager:
             return "监控本地监听端口与开发服务，支持进程详情穿透与一键释放"
+        case .processManager:
+            return "系统负载诊断、统一内存压力与高耗卡死进程排查与一键处置"
         case .otp:
             return "本地加密存储两步验证密钥，快捷计算并自动复制 6 位动态验证码"
         }
@@ -76,6 +80,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .agentStats: return "chart.bar.xaxis"
         case .inputStats: return "keyboard"
         case .portManager: return "network"
+        case .processManager: return "speedometer"
         case .otp: return "lock.shield"
         }
     }
@@ -89,7 +94,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         switch self {
         case .collection, .todo, .fleeting:
             return .captureAndWorkspace
-        case .agentStats, .inputStats, .portManager, .otp:
+        case .agentStats, .inputStats, .portManager, .processManager, .otp:
             return .monitoringAndTools
         }
     }

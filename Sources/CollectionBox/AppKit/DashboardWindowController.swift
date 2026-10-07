@@ -40,7 +40,7 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
             let w = DashboardWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
-            w.title = "统计总览"
+            w.title = "Agent 总览"
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.standardWindowButton(.closeButton)?.isHidden = true

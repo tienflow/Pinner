@@ -315,6 +315,18 @@ public struct SettingsView: View {
 
                         Divider()
 
+                        // Process Manager
+                        moduleRow(
+                            module: .processManager,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.processManager) },
+                                set: { moduleManager.setEnabled(.processManager, to: $0) }
+                            )
+                        )
+
+                        Divider()
+
                         // OTP
                         moduleRow(
                             module: .otp,
@@ -385,7 +397,7 @@ public struct SettingsView: View {
                 sectionCard(title: "核心功能快捷键", icon: "command") {
                     VStack(spacing: 8) {
                         hotkeyRow(
-                            title: "统计总览看板",
+                            title: "Agent 总览看板",
                             icon: "square.grid.2x2",
                             getCombo: { MenuBarController.shared?.dashboardHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordDashboardHotkey { hotkeyRefreshID = UUID() } },
@@ -438,6 +450,14 @@ public struct SettingsView: View {
                             getCombo: { MenuBarController.shared?.portManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordPortManagerHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearPortManagerHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
+                            title: "进程管家面板",
+                            icon: "speedometer",
+                            getCombo: { MenuBarController.shared?.processManagerHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordProcessManagerHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearProcessManagerHotkey(); hotkeyRefreshID = UUID() }
                         )
                     }
                 }

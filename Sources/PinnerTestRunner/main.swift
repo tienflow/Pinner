@@ -362,7 +362,7 @@ func testMenuBarMenuFollowsSelection() {
     check(!subTitlesOnlyCodex.contains("WorkBuddy 统计"), "submenu hides WorkBuddy stats when disabled")
     check(!subTitlesOnlyCodex.contains("ZCode 统计"), "submenu hides ZCode stats when disabled")
     check(!subTitlesOnlyCodex.contains("DSH 统计"), "submenu hides DSH stats when disabled")
-    check(menuOnlyCodex.items.map(\.title).contains("统计总览"), "menu keeps the dashboard entry")
+    check(menuOnlyCodex.items.map(\.title).contains("Agent 总览"), "menu keeps the dashboard entry")
     check(menuOnlyCodex.items.map(\.title).contains("偏好设置…"), "menu keeps preferences entry")
     check(menuOnlyCodex.items.map(\.title).contains { $0.hasPrefix("退出") }, "menu keeps quit entry")
 }
@@ -386,21 +386,23 @@ func testSettingsSubmenuContents() {
     check(topTitles.contains("收藏夹"), "top-level menu contains collection item")
     check(topTitles.contains("OTP 验证码"), "top-level menu contains OTP item")
     check(topTitles.contains("各 Agent 明细"), "top-level menu contains agent details item")
+    check(topTitles.contains("端口管家"), "top-level menu contains portManager item")
+    check(topTitles.contains("进程管家"), "top-level menu contains processManager item")
 
     let inputStatsItem = menu.items.first { $0.title == "键鼠统计" }
     check(inputStatsItem?.action != nil && inputStatsItem?.target != nil, "inputStats menu item is wired to an action")
 
-    // The "统计总览" item must actually be wired to an action, not a stub.
-    let header = menu.items.first { $0.title == "统计总览" }
+    // The "Agent 总览" item must actually be wired to an action, not a stub.
+    let header = menu.items.first { $0.title == "Agent 总览" }
     check(header?.action != nil && header?.target != nil, "dashboard menu item is wired to an action")
 
     // Fire the action for real: the dashboard window must appear. The runner
     // has no app lifecycle, so NSApplication must be created first.
     _ = NSApplication.shared
     if let header, let action = header.action, NSApp.sendAction(action, to: header.target, from: header) {
-        let found = NSApp.windows.contains { $0.title == "统计总览" }
+        let found = NSApp.windows.contains { $0.title == "Agent 总览" }
         check(found, "dashboard action opens the overview window")
-        if found { NSApp.windows.first { $0.title == "统计总览" }?.close() }
+        if found { NSApp.windows.first { $0.title == "Agent 总览" }?.close() }
     }
 
     // Fire preferences action: settings window should appear
@@ -1082,6 +1084,17 @@ func testFleetingCapture() {
         return []
     }()
     check(itemsParsed.isEmpty, "empty list descriptor yields empty array without crash")
+
+    // 10. AppleNotesService SQLite readonly direct read (zero Dock launch)
+    let dbPath = AppleNotesService.noteStoreDatabasePath
+    check(dbPath.hasSuffix("NoteStore.sqlite"), "noteStoreDatabasePath points to NoteStore.sqlite")
+    if let sqliteTree = AppleNotesService.fetchFolderTreeFromSQLite() {
+        check(!sqliteTree.isEmpty, "fetchFolderTreeFromSQLite returns non-empty folder list on local macOS")
+        check(!sqliteTree.contains(where: { $0.name == "Recently Deleted" || $0.name == "最近删除" }), "fetchFolderTreeFromSQLite excludes Recently Deleted")
+        if let notesFolder = sqliteTree.first(where: { $0.name == "Notes" }) {
+            check(!notesFolder.name.isEmpty, "fetchFolderTreeFromSQLite includes default Notes folder")
+        }
+    }
 }
 
 // MARK: - Entry Point
@@ -1126,6 +1139,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testInputStats()
     testModuleManager()
     testPortManager()
+    testProcessManager()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value
@@ -1353,7 +1367,7 @@ func testModuleManager() {
     check(!titles.contains("待办"), "menu hides disabled todo module")
     check(!titles.contains("OTP 验证码"), "menu hides disabled otp module")
     check(!titles.contains("端口管家"), "menu hides disabled portManager module")
-    check(!titles.contains("统计总览"), "menu hides disabled agentStats dashboard")
+    check(!titles.contains("Agent 总览"), "menu hides disabled agentStats dashboard")
     check(!titles.contains("各 Agent 明细"), "menu hides disabled agentStats submenu")
     check(titles.contains("收藏夹"), "menu retains core collection module")
     check(titles.contains("键鼠统计"), "menu retains enabled inputStats module")
@@ -1451,6 +1465,64 @@ func testPortManager() {
     check(stats.totalCpuPercent == 15.6, "summary totalCpuPercent matches 15.6")
     check(stats.cpuDisplayString == "15.6%", "summary cpuDisplayString matches 15.6%")
     check(stats.exposedPortCount == 4, "summary exposedPortCount matches 4")
+}
+
+@MainActor
+func testProcessManager() {
+    // 1. Process Classification
+    check(ProcessManagerService.classifyProcess(name: "node") == .runtime, "classify node as runtime")
+    check(ProcessManagerService.classifyProcess(name: "python3") == .runtime, "classify python3 as runtime")
+    check(ProcessManagerService.classifyProcess(name: "swift-frontend") == .runtime, "classify swift-frontend as runtime")
+    check(ProcessManagerService.classifyProcess(name: "Xcode") == .devTool, "classify Xcode as devTool")
+    check(ProcessManagerService.classifyProcess(name: "Cursor") == .devTool, "classify Cursor as devTool")
+    check(ProcessManagerService.classifyProcess(name: "Terminal") == .devTool, "classify Terminal as devTool")
+    check(ProcessManagerService.classifyProcess(name: "orbstack") == .docker, "classify orbstack as docker")
+    check(ProcessManagerService.classifyProcess(name: "docker") == .docker, "classify docker as docker")
+    check(ProcessManagerService.classifyProcess(name: "com.apple.loginwindow") == .system, "classify com.apple.* as system")
+    check(ProcessManagerService.classifyProcess(name: "Arc") == .userApp, "classify Arc as userApp")
+
+    // 2. SystemPressureInfo formatting
+    let pressure = SystemPressureInfo(
+        cpuUserPercent: 25.5,
+        cpuSystemPercent: 12.3,
+        cpuTotalPercent: 37.8,
+        logicalCores: 8,
+        memoryPressure: .normal,
+        physicalMemoryUsedBytes: 17_179_869_184, // 16 GB
+        physicalMemoryTotalBytes: 34_359_738_368, // 32 GB
+        swapUsedBytes: 1_048_576_000, // ~1000 MB
+        swapTotalBytes: 2_147_483_648
+    )
+    check(pressure.memoryDisplayString == "16.0 GB / 32 GB", "pressure memoryDisplayString matches")
+    check(pressure.swapDisplayString == "1000 MB", "pressure swapDisplayString matches")
+
+    // 3. ManagedProcessEntry
+    let proc = ManagedProcessEntry(
+        pid: 12345,
+        name: "node",
+        arguments: "vite dev",
+        cpuPercent: 95.2,
+        residentMemoryBytes: 1_073_741_824, // 1 GB
+        isSuspended: false,
+        category: .runtime
+    )
+    check(proc.displayName == "node (vite dev)", "ManagedProcessEntry formats displayName with arguments")
+    check(proc.cpuDisplayString == "95.2%", "ManagedProcessEntry cpuDisplayString matches")
+    check(proc.memoryDisplayString == "1.00 GB", "ManagedProcessEntry memoryDisplayString matches")
+
+    // 4. ModuleManager & MenuBarController integration
+    check(ModuleManager.shared.isEnabled(.processManager), "processManager enabled by default in ModuleManager")
+    let bar = MenuBarController(store: CollectionStore(inMemory: true))
+    let menu = bar.makeMenu()
+    check(menu.items.map(\.title).contains("进程管家"), "menu contains 进程管家")
+    check(menu.items.map(\.title).contains("端口管家"), "menu contains 端口管家")
+    check(menu.items.map(\.title).contains("Agent 总览"), "menu contains Agent 总览")
+
+    // 5. Disabled module check
+    let customManager = ModuleManager(defaults: UserDefaults(suiteName: "test-process-mgr-\(UUID().uuidString)")!)
+    customManager.setEnabled(.processManager, to: false)
+    let menuWithoutProc = bar.makeMenu(modules: customManager)
+    check(!menuWithoutProc.items.map(\.title).contains("进程管家"), "menu hides disabled processManager")
 }
 
 
