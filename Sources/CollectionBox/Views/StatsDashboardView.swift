@@ -147,6 +147,13 @@ struct StatsDashboardView: View {
         .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
         .liquidGlassBackground(cornerRadius: 16)
         .ignoresSafeArea()
+        .onKeyPress(phases: .down) { press in
+            if press.key == .escape {
+                DashboardWindowController.shared.close()
+                return .handled
+            }
+            return .ignored
+        }
         .onAppear { reload() }
         .onChange(of: range) { _, _ in updateSnapshot() }
         .onChange(of: customStart) { _, _ in if range == .custom { updateSnapshot() } }
@@ -469,7 +476,7 @@ struct StatsDashboardView: View {
                 reload(force: true)
             }
 
-            PanelCloseButton(helpText: "关闭总览 (⌘W)") {
+            PanelCloseButton(helpText: "关闭总览 (⎋ / ⌘W)") {
                 DashboardWindowController.shared.close()
             }
         }
