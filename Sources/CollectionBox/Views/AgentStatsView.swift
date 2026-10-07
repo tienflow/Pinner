@@ -4,6 +4,7 @@ import SwiftUI
 /// input/cache/output split, so the breakdown row is hidden for it.
 struct AgentStatsView: View {
     let agent: StatsAgent
+    var onClose: (() -> Void)? = nil
     @State private var selectedRange: StatsTimeRange = .today
     @State private var stats: AgentStats?
     @State private var trend: [TrendPoint] = []
@@ -36,6 +37,10 @@ struct AgentStatsView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            if let onClose = onClose {
+                PanelCloseButton(helpText: "关闭面板 (⎋)", action: onClose)
+            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct WorkBuddyStatsView: View {
+    var onClose: (() -> Void)? = nil
     @State private var selectedRange: StatsTimeRange = .today
     @State private var stats: WorkBuddyStats?
     @State private var trend: [TrendPoint] = []
@@ -34,6 +35,10 @@ struct WorkBuddyStatsView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            if let onClose = onClose {
+                PanelCloseButton(helpText: "关闭面板 (⎋)", action: onClose)
+            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

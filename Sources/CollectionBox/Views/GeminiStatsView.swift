@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct GeminiStatsView: View {
+    var onClose: (() -> Void)? = nil
     @State private var selectedRange: StatsTimeRange = .today
     @State private var stats: GeminiStats?
     @State private var trend: [TrendPoint] = []
@@ -33,6 +34,10 @@ struct GeminiStatsView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            if let onClose = onClose {
+                PanelCloseButton(helpText: "关闭面板 (⎋)", action: onClose)
+            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

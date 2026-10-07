@@ -100,6 +100,10 @@ public struct FleetingCaptureView: View {
                 .foregroundColor(.primary)
 
             Spacer()
+
+            PanelCloseButton(helpText: "关闭面板 (⎋)") {
+                onClose?()
+            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

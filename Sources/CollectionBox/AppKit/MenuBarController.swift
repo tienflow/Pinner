@@ -31,6 +31,7 @@ public final class MenuBarController: NSObject {
     private var fleetingController: FleetingCaptureWindowController?
     private let fleetingHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.fleetingHotkey", eventID: 10)
     private let inputStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.inputStatsHotkey", eventID: 11)
+    private let portManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.portManagerHotkey", eventID: 12)
     private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
     private let dshStatsController = AgentStatsWindowController(agent: .dsh)
     private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
@@ -121,12 +122,17 @@ public final class MenuBarController: NSObject {
             guard ModuleManager.shared.isEnabled(.inputStats) else { return }
             self?.showInputStats()
         }
+        portManagerHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.portManager) else { return }
+            self?.showPortManager()
+        }
         dashboardHotkeyManager.register()
         zcodeStatsHotkeyManager.register()
         dshStatsHotkeyManager.register()
         todoHotkeyManager.register()
         fleetingHotkeyManager.register()
         inputStatsHotkeyManager.register()
+        portManagerHotkeyManager.register()
 
         Task { @MainActor in
             if ModuleManager.shared.isEnabled(.inputStats) {
@@ -211,6 +217,12 @@ public final class MenuBarController: NSObject {
         if modules.isEnabled(.inputStats) {
             let inputStatsItem = NSMenuItem(title: "键鼠统计", action: #selector(showInputStats), keyEquivalent: "")
             inputStatsItem.target = self; m.addItem(inputStatsItem)
+            hasMonitoring = true
+        }
+
+        if modules.isEnabled(.portManager) {
+            let portManagerItem = NSMenuItem(title: "端口管家", action: #selector(showPortManager), keyEquivalent: "")
+            portManagerItem.target = self; m.addItem(portManagerItem)
             hasMonitoring = true
         }
 
@@ -302,6 +314,21 @@ public final class MenuBarController: NSObject {
 
     public func clearInputStatsHotkey() {
         inputStatsHotkeyManager.clear()
+    }
+
+    public func portManagerHotkeyString() -> String {
+        portManagerHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordPortManagerHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置端口管家快捷键") { [weak self] combo in
+            self?.portManagerHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearPortManagerHotkey() {
+        portManagerHotkeyManager.clear()
     }
 
     public func collectionHotkeyString() -> String {
@@ -514,6 +541,17 @@ public final class MenuBarController: NSObject {
                 InputStatsWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
             } else {
                 InputStatsWindowController.shared.showAtMouse()
+            }
+        }
+    }
+
+    @objc public func showPortManager() {
+        Task { @MainActor in
+            if let btn = self.statusItem?.button {
+                let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+                PortManagerWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
+            } else {
+                PortManagerWindowController.shared.showAtMouse()
             }
         }
     }

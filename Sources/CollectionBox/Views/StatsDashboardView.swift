@@ -201,7 +201,7 @@ struct StatsDashboardView: View {
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 14)
-            .padding(.top, 36)
+            .padding(.top, 14)
         }
     }
 
@@ -442,7 +442,7 @@ struct StatsDashboardView: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
-            .padding(.top, 36)
+            .padding(.top, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -465,10 +465,13 @@ struct StatsDashboardView: View {
             if let last = lastUpdated {
                 Text("刷新于 \(last, style: .time)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
-            Button(action: { reload(force: true) }) {
-                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .medium))
-                    .frame(width: 24, height: 24).contentShape(Rectangle())
-            }.buttonStyle(.plain).help("刷新").accessibilityLabel("刷新")
+            PanelRefreshButton(isLoading: loadedAgents.count < visibleAgents.count, helpText: "刷新总览 (⌘R)") {
+                reload(force: true)
+            }
+
+            PanelCloseButton(helpText: "关闭总览 (⌘W)") {
+                DashboardWindowController.shared.close()
+            }
         }
     }
 

@@ -32,6 +32,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
     case fleeting = "fleeting"
     case agentStats = "agentStats"
     case inputStats = "inputStats"
+    case portManager = "portManager"
     case otp = "otp"
 
     public var id: String { rawValue }
@@ -43,6 +44,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .fleeting: return "闪念笔记"
         case .agentStats: return "AI Token 统计看板"
         case .inputStats: return "键鼠输入统计"
+        case .portManager: return "端口管家"
         case .otp: return "OTP 两步验证码"
         }
     }
@@ -59,6 +61,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
             return "跨 IDE 汇总 Codex、Antigravity、WorkBuddy 等各 Agent 的消耗与节律"
         case .inputStats:
             return "全局按键、鼠标点击、滚轮与移动距离统计，支持心流节律分析"
+        case .portManager:
+            return "监控本地监听端口与开发服务，支持进程详情穿透与一键释放"
         case .otp:
             return "本地加密存储两步验证密钥，快捷计算并自动复制 6 位动态验证码"
         }
@@ -71,6 +75,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .fleeting: return "note.text.badge.plus"
         case .agentStats: return "chart.bar.xaxis"
         case .inputStats: return "keyboard"
+        case .portManager: return "network"
         case .otp: return "lock.shield"
         }
     }
@@ -84,7 +89,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         switch self {
         case .collection, .todo, .fleeting:
             return .captureAndWorkspace
-        case .agentStats, .inputStats, .otp:
+        case .agentStats, .inputStats, .portManager, .otp:
             return .monitoringAndTools
         }
     }
@@ -109,9 +114,20 @@ public final class ModuleManager: ObservableObject {
             var decoded = Set(saved.compactMap(PinnerModule.init(rawValue:)))
             // Core module is always active
             decoded.insert(.collection)
+            // Ensure newly introduced modules like portManager default to enabled
+            let migrationKey = "Pinner.initializedModules"
+            var initialized = Set(defaults.stringArray(forKey: migrationKey) ?? [])
+            for module in PinnerModule.allCases {
+                if !initialized.contains(module.rawValue) {
+                    decoded.insert(module)
+                    initialized.insert(module.rawValue)
+                }
+            }
+            defaults.set(Array(initialized), forKey: migrationKey)
             self.enabledModules = decoded
         } else {
             self.enabledModules = Set(PinnerModule.allCases)
+            defaults.set(PinnerModule.allCases.map(\.rawValue), forKey: "Pinner.initializedModules")
         }
     }
 
@@ -134,6 +150,10 @@ public final class ModuleManager: ObservableObject {
             if module == .inputStats {
                 Task { @MainActor in
                     InputStatsService.shared.stopMonitoring()
+                }
+            } else if module == .portManager {
+                Task { @MainActor in
+                    PortManagerWindowController.shared.hide()
                 }
             }
         }

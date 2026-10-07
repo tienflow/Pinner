@@ -62,7 +62,9 @@ final class WorkBuddyStatsWindowController: NSObject {
         p.delegate = self
         p.isReleasedWhenClosed = false
 
-        let hv = NSHostingView(rootView: WorkBuddyStatsView())
+        let hv = NSHostingView(rootView: WorkBuddyStatsView { [weak self] in
+            self?.hide()
+        })
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)

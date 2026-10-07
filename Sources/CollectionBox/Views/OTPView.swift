@@ -5,6 +5,7 @@ struct OTPView: View {
     @State var store: OTPStore
     var autoCopyOnAppear: Bool = false
     var onAddRequested: (() -> Void)?
+    var onClose: (() -> Void)? = nil
     @State private var now = Date()
     @State private var copiedID: UUID?
 
@@ -35,13 +36,24 @@ struct OTPView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 8) {
             Image(systemName: "key.2").font(.system(size: 13)).foregroundStyle(.secondary)
             Text("OTP 验证码").font(.system(size: 13, weight: .semibold))
             Spacer()
             Button(action: { onAddRequested?() }) {
-                Image(systemName: "plus").font(.system(size: 12))
-            }.buttonStyle(.plain)
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("添加验证码")
+
+            PanelCloseButton(helpText: "关闭面板 (⎋)") {
+                onClose?()
+            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

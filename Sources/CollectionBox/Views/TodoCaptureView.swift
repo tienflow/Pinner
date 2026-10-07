@@ -64,6 +64,12 @@ struct TodoCaptureView: View {
         "\(dayFormatter.string(from: date)) \(timeFormatter.string(from: date))"
     }
 
+    public var onClose: (() -> Void)? = nil
+
+    public init(onClose: (() -> Void)? = nil) {
+        self.onClose = onClose
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -140,6 +146,10 @@ struct TodoCaptureView: View {
             Spacer()
             if isCardPresent {
                 Text("确认后按 ⏎ 保存").font(.system(size: Design.micro)).foregroundStyle(.secondary)
+            }
+
+            PanelCloseButton(helpText: "关闭面板 (⎋)") {
+                onClose?()
             }
         }
         .frame(height: 32)

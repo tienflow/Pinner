@@ -79,7 +79,9 @@ final class AgentStatsWindowController: NSObject {
         // Remember user-resized size; anchor stays at the menu bar / cursor.
         p.setFrameAutosaveName("PinnerAgentStatsPanel.\(agent.rawValue)")
 
-        let hv = NSHostingView(rootView: AgentStatsView(agent: agent))
+        let hv = NSHostingView(rootView: AgentStatsView(agent: agent, onClose: { [weak self] in
+            self?.hide()
+        }))
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)

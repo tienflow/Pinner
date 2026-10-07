@@ -18,6 +18,10 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
                              backing: .buffered, defer: false)
             w.title = "统计总览"
             w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.standardWindowButton(.closeButton)?.isHidden = true
+            w.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            w.standardWindowButton(.zoomButton)?.isHidden = true
             w.isOpaque = false
             w.backgroundColor = .clear
             w.hasShadow = true
@@ -31,6 +35,10 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
         AppActivationManager.updateActivationPolicy()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func close() {
+        window?.close()
     }
 
     func windowWillClose(_ notification: Notification) {

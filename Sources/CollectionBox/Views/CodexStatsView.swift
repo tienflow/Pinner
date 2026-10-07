@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CodexStatsView: View {
+    var onClose: (() -> Void)? = nil
     @State private var selectedRange: StatsTimeRange = .today
     @State private var stats: CodexStats?
     @State private var trend: [TrendPoint] = []
@@ -33,6 +34,10 @@ struct CodexStatsView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            if let onClose = onClose {
+                PanelCloseButton(helpText: "关闭面板 (⎋)", action: onClose)
+            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

@@ -40,7 +40,7 @@ public struct SettingsView: View {
         VStack(spacing: 0) {
             // Unified Titlebar & Tab Header
             HStack(spacing: 0) {
-                Spacer().frame(width: 60)
+                Spacer().frame(width: 32)
                 Spacer()
                 HStack(spacing: 4) {
                     ForEach(SettingsTab.allCases) { tab in
@@ -48,10 +48,13 @@ public struct SettingsView: View {
                     }
                 }
                 Spacer()
-                Spacer().frame(width: 60)
+                PanelCloseButton(helpText: "关闭设置 (⌘W)") {
+                    NSApp.keyWindow?.close()
+                }
+                .frame(width: 32, alignment: .trailing)
             }
             .frame(height: 52)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 14)
 
             Divider().opacity(0.35)
 
@@ -300,6 +303,18 @@ public struct SettingsView: View {
 
                         Divider()
 
+                        // Port Manager
+                        moduleRow(
+                            module: .portManager,
+                            isCore: false,
+                            isOn: Binding(
+                                get: { moduleManager.isEnabled(.portManager) },
+                                set: { moduleManager.setEnabled(.portManager, to: $0) }
+                            )
+                        )
+
+                        Divider()
+
                         // OTP
                         moduleRow(
                             module: .otp,
@@ -415,6 +430,14 @@ public struct SettingsView: View {
                             getCombo: { MenuBarController.shared?.inputStatsHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordInputStatsHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearInputStatsHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
+                            title: "端口管家面板",
+                            icon: "network",
+                            getCombo: { MenuBarController.shared?.portManagerHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordPortManagerHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearPortManagerHotkey(); hotkeyRefreshID = UUID() }
                         )
                     }
                 }

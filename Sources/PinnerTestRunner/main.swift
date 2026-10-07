@@ -1125,6 +1125,7 @@ let allPassed = await Task { @MainActor () -> Bool in
     testOTPServiceTimeRemaining()
     testInputStats()
     testModuleManager()
+    testPortManager()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value
@@ -1309,27 +1310,33 @@ func testModuleManager() {
     check(manager.isEnabled(.fleeting), "fleeting is enabled")
     check(manager.isEnabled(.agentStats), "agentStats is enabled")
     check(manager.isEnabled(.inputStats), "inputStats is enabled")
+    check(manager.isEnabled(.portManager), "portManager is enabled")
     check(manager.isEnabled(.otp), "otp is enabled")
 
     // Core module (.collection) cannot be disabled
     manager.setEnabled(.collection, to: false)
     check(manager.isEnabled(.collection), "core module collection remains enabled even if set to false")
 
-    // Toggle off todo and otp
+    // Toggle off todo, portManager and otp
     manager.setEnabled(.todo, to: false)
     manager.setEnabled(.otp, to: false)
+    manager.setEnabled(.portManager, to: false)
     check(!manager.isEnabled(.todo), "todo is disabled after setEnabled false")
     check(!manager.isEnabled(.otp), "otp is disabled after setEnabled false")
+    check(!manager.isEnabled(.portManager), "portManager is disabled after setEnabled false")
 
     // Reload from defaults
     let reloaded = ModuleManager(defaults: suite)
     check(!reloaded.isEnabled(.todo), "disabled todo persists across reloads")
     check(!reloaded.isEnabled(.otp), "disabled otp persists across reloads")
+    check(!reloaded.isEnabled(.portManager), "disabled portManager persists across reloads")
     check(reloaded.isEnabled(.collection), "core collection remains active across reloads")
 
     // Re-enable
     manager.setEnabled(.todo, to: true)
+    manager.setEnabled(.portManager, to: true)
     check(manager.isEnabled(.todo), "todo is re-enabled successfully")
+    check(manager.isEnabled(.portManager), "portManager is re-enabled successfully")
 
     // Menu generation respects module settings
     let customSuite = UserDefaults(suiteName: "test-menu-modules-\(UUID().uuidString)")!
@@ -1337,6 +1344,7 @@ func testModuleManager() {
     customManager.setEnabled(.todo, to: false)
     customManager.setEnabled(.otp, to: false)
     customManager.setEnabled(.agentStats, to: false)
+    customManager.setEnabled(.portManager, to: false)
 
     let bar = MenuBarController(store: CollectionStore(inMemory: true))
     let menu = bar.makeMenu(modules: customManager)
@@ -1344,6 +1352,7 @@ func testModuleManager() {
 
     check(!titles.contains("待办"), "menu hides disabled todo module")
     check(!titles.contains("OTP 验证码"), "menu hides disabled otp module")
+    check(!titles.contains("端口管家"), "menu hides disabled portManager module")
     check(!titles.contains("统计总览"), "menu hides disabled agentStats dashboard")
     check(!titles.contains("各 Agent 明细"), "menu hides disabled agentStats submenu")
     check(titles.contains("收藏夹"), "menu retains core collection module")
@@ -1351,6 +1360,99 @@ func testModuleManager() {
     check(titles.contains("偏好设置…"), "menu retains preferences")
     check(titles.contains { $0.hasPrefix("退出") }, "menu retains quit")
 }
+
+@MainActor
+func testPortManager() {
+    // 1. PortProcessInfo Display Formatting
+    let proc1 = PortProcessInfo(
+        pid: 3001,
+        command: "node",
+        fullPath: "/opt/homebrew/bin/node",
+        user: "apple",
+        ports: [3000, 3001],
+        cpuPercent: 1.5,
+        memoryBytes: 52428800, // 50 MB
+        category: .devServer
+    )
+    check(proc1.displayName == "node", "PortProcessInfo displayName uses command")
+    check(proc1.portsDisplayString == "3000, 3001", "PortProcessInfo formats multiple ports")
+    check(proc1.memoryDisplayString == "50 MB", "PortProcessInfo formats 50 MB")
+
+    let proc2 = PortProcessInfo(
+        pid: 9999,
+        command: "",
+        fullPath: "/usr/local/bin/custom_service",
+        ports: [8080]
+    )
+    check(proc2.displayName == "custom_service", "PortProcessInfo fallback to fullPath last component")
+
+    let proc3 = PortProcessInfo(pid: 8888, command: "", fullPath: "")
+    check(proc3.displayName == "PID 8888", "PortProcessInfo fallback to PID string")
+
+    // 2. formatBytes scale checks
+    check(PortProcessInfo.formatBytes(0) == "0 B", "formatBytes 0")
+    check(PortProcessInfo.formatBytes(512) == "512 B", "formatBytes small bytes")
+    check(PortProcessInfo.formatBytes(2048) == "2 KB", "formatBytes 2 KB")
+    check(PortProcessInfo.formatBytes(1073741824) == "1.0 GB", "formatBytes 1.0 GB")
+
+    // 3. Process Classification Rules
+    check(PortManagerService.classifyProcess(command: "node", fullPath: "/usr/local/bin/node", user: "apple") == .devServer, "classify node as devServer")
+    check(PortManagerService.classifyProcess(command: "python3", fullPath: "/opt/homebrew/bin/python3", user: "apple") == .devServer, "classify python3 as devServer")
+    check(PortManagerService.classifyProcess(command: "vite", fullPath: "", user: "apple") == .devServer, "classify vite as devServer")
+    check(PortManagerService.classifyProcess(command: "postgres", fullPath: "", user: "apple") == .devServer, "classify postgres as devServer")
+    check(PortManagerService.classifyProcess(command: "redis-server", fullPath: "", user: "apple") == .devServer, "classify redis as devServer")
+
+    check(PortManagerService.classifyProcess(command: "rapportd", fullPath: "/usr/libexec/rapportd", user: "apple") == .systemDaemon, "classify rapportd as systemDaemon")
+    check(PortManagerService.classifyProcess(command: "ControlCenter", fullPath: "/System/Library/CoreServices/ControlCenter.app", user: "apple") == .systemDaemon, "classify ControlCenter as systemDaemon")
+    check(PortManagerService.classifyProcess(command: "custom_daemon", fullPath: "", user: "_windowserver") == .systemDaemon, "classify _user as systemDaemon")
+
+    check(PortManagerService.classifyProcess(command: "Arc", fullPath: "/Applications/Arc.app/Contents/MacOS/Arc", user: "apple") == .userApp, "classify Arc as userApp")
+    check(PortManagerService.classifyProcess(command: "WeChat", fullPath: "/Applications/WeChat.app/Contents/MacOS/WeChat", user: "apple") == .userApp, "classify WeChat as userApp")
+
+    // Docker classification
+    check(PortManagerService.classifyProcess(command: "orbstack", fullPath: "", user: "apple") == .docker, "classify orbstack as docker")
+    check(PortManagerService.classifyProcess(command: "docker-proxy", fullPath: "", user: "apple") == .docker, "classify docker-proxy as docker")
+    check(ProcessCategory.docker.rawValue == "Docker", "ProcessCategory.docker rawValue is Docker")
+    check(ProcessFilterCategory.docker.rawValue == "Docker", "ProcessFilterCategory.docker rawValue is Docker")
+    check(ProcessFilterCategory.exposed.rawValue == "外部暴露", "ProcessFilterCategory.exposed rawValue is 外部暴露")
+
+    let dockerProc = PortProcessInfo(
+        pid: 52903,
+        command: "finance-app",
+        ports: [8000],
+        category: .docker,
+        isExposed: true,
+        exposedPorts: [8000],
+        containerName: "finance-app",
+        containerImage: "finance-app:1.0"
+    )
+    check(dockerProc.displayName == "finance-app", "dockerProc displayName is containerName")
+    check(dockerProc.id == "52903_finance-app", "dockerProc id incorporates containerName")
+    check(dockerProc.isExposed == true, "dockerProc isExposed matches true")
+    check(dockerProc.exposedPorts == [8000], "dockerProc exposedPorts matches 8000")
+
+    // Sort Fields
+    check(PortTableSortField.allCases.count == 6, "PortTableSortField has 6 fields")
+
+    // 4. Summary Stats
+    var stats = PortSummaryStats(
+        activePortCount: 12,
+        totalMemoryBytes: 2147483648,
+        devServerCount: 5,
+        dockerCount: 2,
+        rootProcessCount: 1,
+        totalCpuPercent: 15.6,
+        exposedPortCount: 4
+    )
+    check(stats.activePortCount == 12, "summary activePortCount matches")
+    check(stats.dockerCount == 2, "summary dockerCount matches 2")
+    check(stats.dockerContainerCount == 2, "summary dockerContainerCount alias matches 2")
+    check(stats.memoryDisplayString == "2.0 GB", "summary memoryDisplayString matches 2.0 GB")
+    check(stats.totalCpuPercent == 15.6, "summary totalCpuPercent matches 15.6")
+    check(stats.cpuDisplayString == "15.6%", "summary cpuDisplayString matches 15.6%")
+    check(stats.exposedPortCount == 4, "summary exposedPortCount matches 4")
+}
+
 
 
 

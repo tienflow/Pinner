@@ -74,6 +74,8 @@ final class OTPWindowController: NSObject {
 
         let hv = NSHostingView(rootView: OTPView(store: store, autoCopyOnAppear: autoCopy, onAddRequested: { [weak self] in
             self?.showAddWindow()
+        }, onClose: { [weak self] in
+            self?.hide()
         }))
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]

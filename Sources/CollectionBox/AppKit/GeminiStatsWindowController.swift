@@ -62,7 +62,9 @@ final class GeminiStatsWindowController: NSObject {
         p.delegate = self
         p.isReleasedWhenClosed = false
 
-        let hv = NSHostingView(rootView: GeminiStatsView())
+        let hv = NSHostingView(rootView: GeminiStatsView { [weak self] in
+            self?.hide()
+        })
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)

@@ -106,6 +106,7 @@ final class EdgeDockWindowController: NSObject {
 
         let hv = NSHostingView(rootView: RootView(
             store: store,
+            onClose: { [weak self] in self?.collapse() },
             onPinToggle: { [weak self] in self?.isPinned.toggle() },
             onQuickLook: { [weak self] ids in self?.toggleQuickLook(for: ids) }
         ))

@@ -62,7 +62,9 @@ final class CodexStatsWindowController: NSObject {
         p.delegate = self
         p.isReleasedWhenClosed = false
 
-        let hv = NSHostingView(rootView: CodexStatsView())
+        let hv = NSHostingView(rootView: CodexStatsView { [weak self] in
+            self?.hide()
+        })
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)

@@ -28,6 +28,9 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             w.hasShadow = true
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
+            w.standardWindowButton(.closeButton)?.isHidden = true
+            w.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            w.standardWindowButton(.zoomButton)?.isHidden = true
             w.isMovableByWindowBackground = true
             w.isReleasedWhenClosed = false
             w.setContentSize(NSSize(width: 560, height: 600))

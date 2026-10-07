@@ -254,3 +254,68 @@ extension View {
         modifier(LiquidGlassCard(cornerRadius: cornerRadius, style: style, tintColor: tintColor))
     }
 }
+
+/// Unified circular close button used across all Pinner panels and windows.
+/// Clean, minimalistic, no traffic lights: 24x24 circle with a centered xmark.
+public struct PanelCloseButton: View {
+    public var helpText: String
+    public var action: () -> Void
+
+    public init(helpText: String = "关闭面板", action: @escaping () -> Void) {
+        self.helpText = helpText
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: 24, height: 24)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+    }
+}
+
+/// Unified circular refresh button used across Pinner headers and windows.
+/// Perfectly matches PanelCloseButton: 24x24 circle with a centered arrow.clockwise icon and subtle background.
+public struct PanelRefreshButton: View {
+    public var isLoading: Bool
+    public var helpText: String
+    public var action: () -> Void
+
+    public init(
+        isLoading: Bool = false,
+        helpText: String = "刷新",
+        action: @escaping () -> Void
+    ) {
+        self.isLoading = isLoading
+        self.helpText = helpText
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: {
+            Haptics.light()
+            action()
+        }) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+                .rotationEffect(.degrees(isLoading ? 360 : 0))
+                .animation(isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isLoading)
+                .frame(width: 24, height: 24)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+        .accessibilityLabel(helpText)
+    }
+}
+

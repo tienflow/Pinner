@@ -48,16 +48,19 @@ SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift run Pinner
 每次代码修改完成并验证通过后，**必须主动、自动重启用户本地的 Pinner 进程**，严禁让用户手动重启或等用户催促：
 
 ```
-# 标准重装并平滑重启流程
+# 标准重装并平滑重启流程（必须等 build 彻底退出并核验时间戳后，再执行后续命令，严禁抢跑！）
 SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build -c release --product CollectionBoxApp
-cp .build/release/CollectionBoxApp Pinner.app/Contents/MacOS/Pinner
+cp .build/out/Products/Release/CollectionBoxApp Pinner.app/Contents/MacOS/Pinner
 codesign --force --deep --sign "Pinner Development" Pinner.app
 rm -rf /Applications/Pinner.app && cp -R Pinner.app /Applications/
 killall Pinner 2>/dev/null || pkill -f "Pinner.app/Contents/MacOS/Pinner" || true
 sleep 1
 open /Applications/Pinner.app
+# 必须显式验证新进程已拉起并记录启动时间戳
+ps -eo pid,lstart,command | grep -i "[P]inner"
 ```
 
+⚠️ **严禁异步抢跑拷贝**：若构建转入后台任务，必须等待任务完成通知、并核验二进制修改时间戳（`ls -la .build/out/Products/Release/CollectionBoxApp`）为最新后，方可拷贝！提前拷贝会导致复制旧版本二进制，造成“已重启但代码未生效”的假象。
 ⚠️ 注意必须更新 `/Applications/Pinner.app` 并启动该 bundle 路径，避免裸二进制启动导致的 UserDefaults 域隔离问题。
 
 ## 3. 质量验证（🔴 改完必须跑）

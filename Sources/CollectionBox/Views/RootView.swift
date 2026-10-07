@@ -36,6 +36,7 @@ extension UTType {
 
 struct RootView: View {
     @State var store: CollectionStore
+    var onClose: (() -> Void)? = nil
     var onPinToggle: (() -> Void)?
     var onQuickLook: (([UUID]) -> Void)?
     @State private var isPinnedState: Bool = false
@@ -250,6 +251,14 @@ struct RootView: View {
 
     private var topBar: some View {
         HStack(spacing: 6) {
+            PanelCloseButton(helpText: "关闭面板 (⎋)") {
+                if let onClose = onClose {
+                    onClose()
+                } else {
+                    NotificationCenter.default.post(name: .panelShouldCollapse, object: nil)
+                }
+            }
+
             Spacer()
             Button(action: { onPinToggle?(); isPinnedState.toggle() }) {
                 Image(systemName: isPinnedState ? "pin.fill" : "pin.slash")

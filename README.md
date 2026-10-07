@@ -80,16 +80,26 @@
 - **高频按键与常用快捷键**：统计空格、回车、退格、修饰键以及常用组合键（⌘C、⌘V、⌘S、⌘Z 等）的敲击频次
 - **绝对隐私保护与原生签名**：底层基于 `CGEvent.tapCreate` (.listenOnly)，零文本内容留存、零密码/字符记录、零光标敏感坐标记录；使用本地自签名证书，避免第三方工具更新后反复丢失辅助功能授权的问题；提供一键重置与快捷键录制
 
+**端口管家 (Port Manager)**
+- **轻量独立浮窗**：菜单栏右键 →「端口管家」或自定义快捷键唤出专属 Liquid Glass 质感面板，聚焦监听（`LISTEN`）端口，用完即走；全应用统一采用极简右上角圆形关闭按钮，彻底告别红绿灯与异形关闭按钮
+- **四项核心概览**：监听端口总数、进程总物理内存占用、瞬时 CPU 占用、Docker 容器与服务数
+- **智能服务与容器识别**：自动高亮识别 Node、Python、Go、Java、Bun、Vite 等开发服务；**原生接入 Docker / OrbStack 容器探测**，自动将宿主代理端口映射穿透至具体的 Docker 容器名与镜像名
+- **外部暴露安全识别**：精准检测绑定 `0.0.0.0` / `*` 的外部暴露服务，提供独立的「外部暴露」过滤标签，区分「局域网暴露」与「本机隔离 (127.0.0.1)」
+- **极速搜索与交互式表头排序**：支持端口号（如 `:3000`）、进程名/容器名、PID 实时过滤，提供 [全部 / 开发服务 / Docker / 用户应用 / 系统服务 / 外部暴露] 一键分流胶囊；**支持点击表头（进程名称 / PID / 监听端口 / 分类 / CPU / 内存）一键升降序切换**
+- **深度详情卡片**：展示进程/容器应用图标、PID、运行状态、网络暴露安全域、严格等高对称指标卡片（监听端口、内存占用、CPU 使用率）、多端口清单、完整可执行文件二进制路径与命令行参数，支持一键拷贝路径与 Finder 快速定位
+- **安全强杀与提权升级**：支持一键强制终止普通进程、安全停止 Docker 容器；遇到 root 进程自动调用系统原生 `osascript` 管理员提权对话框（Touch ID / 密码确认），配合 Taptic 原生触感反馈
+- **零待机开销**：面板打开时轻量异步轮询，面板关闭时彻底销毁定时器，零后台常驻 CPU 与电量消耗
+
 **通用与偏好设置**
-- **心智聚类菜单**：右键菜单按心智模型划分为「工作台与捕获」（收藏夹/待办/闪念）与「数字监控与工具」（总览/各 Agent 明细/键鼠统计/OTP），5 个 Agent 明细自动收敛至「各 Agent 明细 ▶」子菜单，主菜单从 14 项精简至 8 项
+- **心智聚类菜单**：右键菜单按心智模型划分为「工作台与捕获」（收藏夹/待办/闪念）与「数字监控与工具」（总览/各 Agent 明细/键鼠统计/端口管家/OTP），5 个 Agent 明细自动收敛至「各 Agent 明细 ▶」子菜单，主菜单从 14 项精简至 8 项
 - **统一偏好设置面板 (`⌘,`)**：
   - **通用**：开机自启开关（`SMAppService`）、临时中转架物理剪切开关、外观主题（自动 / 浅色 / 深色）
-  - **功能模块**：全新功能模块管理页，支持自由启闭待办、闪念、Token 统计看板、键鼠统计、OTP 两步验证（核心收藏夹常驻不可关）；模块内支持 Agent 明细勾选与键鼠辅助功能权限实时检查与授权引导；关闭键鼠统计时彻底注销 CGEventTap 零资源开销
-  - **快捷键**：可视化呈现总览、收藏夹、OTP、待办及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
+  - **功能模块**：全新功能模块管理页，支持自由启闭待办、闪念、Token 统计看板、键鼠统计、端口管家、OTP 两步验证（核心收藏夹常驻不可关）；模块内支持 Agent 明细勾选与键鼠辅助功能权限实时检查与授权引导；关闭键鼠统计时彻底注销 CGEventTap 零资源开销
+  - **快捷键**：可视化呈现总览、收藏夹、OTP、待办、端口管家及各 Agent 统计的全局快捷键状态，支持独立录制与恢复默认
   - **AI 配置**：整合通用大模型端点（Base URL、API Key、模型名）与 TypeSafe Jev 语义路由配置，支持独立连通性测试与状态提示；支持自定义待办「一键推迟默认时刻」
-- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行 / Skill 排行四张表（点击列头排序，支持实时生成速度 TPS 速率展示）、半年 GitHub 格热力图（带月份标注）、明细一键导出 CSV，窗口大小自动记忆；内置「24 小时心流节律」交互卡片（24 小时柱状分布、单小时峰值 Peak Hour、4 小时滚动黄金产出时段 Golden Window 与四大生理时段划分）；跨 Agent 扫描 Skill 调用频次并对比本地 35+ 已安装技能库，提供 30 天沉睡技能治理预警；文件级磁盘增量缓存（冷启动时延 4.2s 直降至 0.04s，秒级秒开）
+- **统计总览**：菜单栏右键 →「总览」打开统计大窗口，聚合五个 Agent（Codex / Antigravity / WorkBuddy / ZCode / DSH）的本地 Token 用量，默认展示今天，可切换昨天 / 近 7 天 / 近 30 天 / 全部 / 自定义日期；支持直接点击上方 Agent 卡片一键下钻聚焦（全页面明细与排行联动筛选，再次点击或点击清除胶囊还原）；支持勾选参与统计的 Agent，右键菜单的「X 统计」入口跟随勾选结果同步显示 / 隐藏（至少保留一个 Agent）；含合计与分 Agent 卡片、按 Agent 份额条、每日明细 / 会话排行 / 模型排行 / Skill 排行四张表（点击列头排序，支持实时生成速度 TPS 速率展示）、半年 GitHub 格热力图（带月份标注）、明细一键导出 CSV，窗口大小自动记忆；刷新按钮采用与全局关闭按钮一致的极简圆形交互设计；内置「24 小时心流节律」交互卡片；文件级磁盘增量缓存（冷启动时延 4.2s 直降至 0.04s，秒级秒开）
 - **分 Agent 统计面板**：Codex / Antigravity / WorkBuddy 为专属面板；ZCode / DSH 为同款紧凑浮动面板（时间范围、Token/会话卡、明细行、趋势图）；收敛于「各 Agent 明细 ▶」子菜单中
-- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / 键鼠统计 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
+- **全局快捷键**：收藏夹 `⌘⇧P`、OTP `⌘⇧O`、Codex 统计 `⌘⇧I`、Antigravity 统计 `⌘⇧G`、WorkBuddy 统计 `⌘⇧W`，均可自定义；总览 / 待办 / 键鼠统计 / 端口管家 / ZCode / DSH 统计可在偏好设置中随时配置；组合键被系统或其他应用占用时弹系统通知提醒
 - **Taptic 震动触感反馈**：深度适配 Mac Force Touch 触控板，在待办勾选完成、批量保存、验证码与路径复制、任务删除、撤销恢复、暂存架拖出即焚等高频场景中提供原生清脆的物理触感反馈（外接普通鼠标或不支持设备上自动静默忽略）
 - **macOS 26 原生 Liquid Glass (质感玻璃) 视觉体验**：全应用浮动面板、卡片与数据总览深度接入 macOS 26 原生 `NSGlassEffectView` 与 `NSGlassEffectContainerView` 质感玻璃元材质，拥有边缘物理折射、倒角景深与镜面高光；独创底层 90%~94% 系统底衬的光学物理分层架构，兼顾晶莹高级通透感与极致锐利的高反差可读性（旧版系统优雅平滑降级）
 
@@ -109,10 +119,10 @@
 ```
 Sources/
 ├── CollectionBox/              # 核心库
-│   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent）
-│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore + AppleNotesService + FleetingPrompt + FleetingSettingsStore + FleetingThoughtLLMClient + TypeSafeJevClient + SkillStatsService + InputStatsService + ModuleManager
+│   ├── Models/                 # 数据模型（CollectionTab, BookmarkEntry, OTPAccount, StatsAgent, PortManagerModels）
+│   ├── Services/               # BookmarkService + OTPService + Haptics + PinyinMatcher + CodexStatsService + GeminiStatsService + WorkBuddyStatsService + AgentStatsService + RemindersService + TodoLLMClient + TodoPrompt + TodoSettingsStore + AppleNotesService + FleetingPrompt + FleetingSettingsStore + FleetingThoughtLLMClient + TypeSafeJevClient + SkillStatsService + InputStatsService + ModuleManager + PortManagerService
 │   ├── ViewModels/             # CollectionStore + OTPStore（状态 + 持久化）
-│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, FleetingCaptureView, JevSettingsView, CodexStatsView, GeminiStatsView, AgentStatsView 等）
+│   ├── Views/                  # SwiftUI 界面（RootView, OTPView, SettingsView, TodoCaptureView, FleetingCaptureView, JevSettingsView, CodexStatsView, GeminiStatsView, AgentStatsView, PortManagerView, PortProcessDetailView 等）
 │   └── AppKit/                 # AppKit 集成
 │       ├── MenuBarController.swift           # 菜单栏交互与极简扁平菜单
 │       ├── EdgeDockWindowController.swift    # 收藏面板管理
@@ -129,6 +139,7 @@ Sources/
 │       ├── WorkBuddyStatsHotkeyManager.swift    # WorkBuddy 统计快捷键
 │       ├── AgentStatsHotkeyManager.swift        # ZCode / DSH / 待办 / 闪念快捷键
 │       ├── AgentStatsWindowController.swift     # ZCode / DSH 紧凑统计窗口
+│       ├── PortManagerWindowController.swift    # 端口管家面板窗口管理
 │       ├── HotkeyRegistrationNotifier.swift     # 快捷键注册失败系统通知
 │       ├── DashboardWindowController.swift      # 总览与单 Agent 统计窗口
 │       ├── TodoCaptureWindowController.swift    # 待办快速录入面板
@@ -181,6 +192,7 @@ Sources/
 统计总览                ← 打开 AI 消耗与节律统计大窗口
 各 Agent 明细 ▶         ← 展开分 Agent 统计子菜单（Codex / Antigravity / WorkBuddy / ZCode / DSH）
 键鼠统计                ← 打开全局键鼠敲击与心流统计浮窗
+端口管家                ← 打开端口与本地服务监听管理浮窗
 OTP 验证码              ← 打开 OTP 面板
 ──────────
 偏好设置… (⌘,)           ← 打开统一偏好设置面板（通用 / 功能模块 / 快捷键 / AI 配置）
@@ -193,7 +205,7 @@ OTP 验证码              ← 打开 OTP 面板
 ### 方式一：从 Release 下载
 
 1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `Pinner-v1.11.0.dmg`
+2. 下载最新版本的 `Pinner-v1.12.0.dmg`
 3. 打开 DMG，将 Pinner 拖入「应用程序」文件夹
 4. 首次打开时右键选择「打开」以绕过 Gatekeeper
 

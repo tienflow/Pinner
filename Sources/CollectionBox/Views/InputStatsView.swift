@@ -107,17 +107,10 @@ public struct InputStatsView: View {
             Spacer()
 
             // Close button
-            Button {
+            PanelCloseButton(helpText: "关闭面板 (⎋)") {
                 Haptics.light()
                 onClose()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(.secondary)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .help("关闭面板 (⎋)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
