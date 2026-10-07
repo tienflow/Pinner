@@ -90,7 +90,7 @@ ps -eo pid,lstart,command | grep -i "[P]inner"
 4. 更新 README.md → 验证: 功能列表与代码一致，安装段的 DMG 文件名与当前版本一致
 5. git add + commit → 验证: git status 干净
 6. git push + git tag -a vX.X.X → 验证: 远程分支和 tag 已同步
-7. gh release create vX.X.X + gh release upload vX.X.X Pinner-vX.X.X.dmg → 验证: Release 页面有 DMG 下载
+7. gh release create vX.X.X Pinner-vX.X.X.dmg --title "vX.X.X"（🔴 Release Title 严格统一为极简纯版本号 vX.X.X，严禁带项目名前缀或功能副标题）→ 验证: Release 页面有 DMG 下载且标题规整统一
 8. 更新项目记忆 → 验证: Obsidian vault 已同步
 9. 执行 neat-freak 知识收尾 → 验证: 审计代码、运行态、文档、规则、记忆与工作区残留
 ```
@@ -98,6 +98,7 @@ ps -eo pid,lstart,command | grep -i "[P]inner"
 ### 5.2 常见遗漏（必须检查）
 
 - ✅ 代码已 commit 并 push（不要只创建 release 忘了 push）
+- ✅ Release 标题严格统一为 `vX.X.X`（杜绝 `Pinner vX.X.X` 或拼接中文后缀）
 - ✅ README.md 功能列表已更新（不要保留已删除的功能描述）
 - ✅ 版本号已更新
 - ✅ 项目记忆已同步
