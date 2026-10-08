@@ -5,7 +5,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue.svg)](https://github.com/tienflow/Pinner/releases)
 [![Swift](https://img.shields.io/badge/Swift-6.0-orange.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.12.0-brightgreen.svg)](https://github.com/tienflow/Pinner/releases/tag/v1.12.0)
+[![Release](https://img.shields.io/badge/release-v1.13.0-brightgreen.svg)](https://github.com/tienflow/Pinner/releases/tag/v1.13.0)
 
 ---
 
@@ -50,6 +50,8 @@
   - **全 Agent 本地聚合**：单窗口聚合 Codex / Antigravity (Gemini) / WorkBuddy / ZCode / DSH 五大本地 Agent 的 Token 消耗与会话量。
   - **全景数据看板**：支持今天 / 昨天 / 近 7 天 / 近 30 天 / 自定义区间；提供 24 小时心流节律卡片、实时 TPS (Tokens/s) 生成速率、半年 GitHub 格热力图、模型份额排行及 CSV 一键导出。
   - **跨 Agent Skill 调用与沉睡治理**：全量逆向分析工具调用记录，对比本机 35+ 已安装技能库，识别 30 天零调用的沉睡技能并提供治理预警。
+  - **模型别名重命名**：自定义映射规则将冗长原始模型名（如带时间戳的快照版本号）统一显示为简洁别名，全看板生效，配置本地持久化。
+  - **高性能扫描内核**：会话日志统一 mmap 单次读取 + single-flight 并发去重闸门（相同时间窗共享一次扫描），消除重复全量读取与 zstd 重复解压，Dashboard 刷新开销减半。
   - **文件级持久化增量缓存**：mtime + fileSize 增量校验，冷启动扫描时延从 4.2s 降至 0.04s，毫秒级秒开。
 - **OTP 工具**：
   - **独立悬浮窗**：展示所有账户实时 6 位验证码，快捷键唤起时自动复制当前验证码到剪贴板。
@@ -59,9 +61,10 @@
 
 ## 交互设计与体验
 
-- **心智聚类菜单**：右键菜单收敛为「工作台与工具」（收藏夹/待办/闪念/OTP 工具）与「数字监控与管家」（Agent 总览/各 Agent 明细/键鼠统计/端口管家/进程管理）两大心智分区，主菜单清爽精简。
+- **心智聚类菜单**：右键菜单收敛为「录入」（收藏夹/待办/闪念）、「观测」（Agent 总览/各 Agent 明细/键鼠统计）与「工具」（端口管家/进程管理/OTP 工具）三大心智分区，主菜单清爽精简；模块命名由 ModuleManager 单一来源统一派发，菜单与设置面板永不漂移。
 - **统一功能模块管理 (ModuleManager)**：统一偏好设置面板 (`⌘,`) 提供「功能模块」分页，支持自由独立启闭待办、闪念、OTP 工具、Agent 总览、键鼠统计、端口管家与进程管理（核心收藏夹常驻不可关），关闭键鼠统计时彻底注销 CGEventTap 零资源开销。
 - **极简圆形关闭按钮规范**：淘汰异形关闭按钮与传统红绿灯，全应用所有子面板（端口管家、进程管理、Agent 总览、收藏夹、OTP 工具、待办、闪念、偏好设置）统一采用右上角极简圆形关闭按钮，操作心智高度统一。
+- **统一 Esc 关闭行为**：全部浮动面板与子窗口由共享 `EscDismissableWindow` 承载， tooltips 承诺的「关闭面板 (⎋)」在每一处真实生效。
 - **Taptic 震动触感反馈**：深度适配 Force Touch 触控板，在待办勾选、路径拷贝、批量保存、撤销、拖拽销毁等高频操作中提供清脆的原生物理触感反馈。
 - **macOS 26 原生 Liquid Glass (质感玻璃)**：全应用深度采用苹果原生质感玻璃（`NSGlassEffectView`）元材质与物理光学分层架构，兼顾晶莹高级折射与高对比度文字可读性（旧版系统优雅平滑降级）。
 
@@ -112,6 +115,9 @@ Sources/
 │   │   ├── AppleNotesService.swift        # 备忘录进程内自动化与 HTML DOM 前插
 │   │   ├── RemindersService.swift         # EventKit 提醒事项双向同步与管理
 │   │   ├── SkillStatsService.swift        # 跨 Agent 技能扫描与持久化增量缓存
+│   │   ├── JSONLReader.swift              # 会话日志 mmap 共享读取内核
+│   │   ├── ScanGate.swift                 # 高开销扫描 single-flight 并发闸门
+│   │   ├── ModelAliasService.swift        # 模型别名重命名规则与本地持久化
 │   │   └── ...                            # BookmarkService, Haptics, PinyinMatcher 等
 │   ├── ViewModels/             # 视图模型 (CollectionStore, OTPStore)
 │   ├── Views/                  # 现代化 SwiftUI 界面组件
@@ -133,7 +139,7 @@ Sources/
 ### 方式一：从 Release 下载 DMG（推荐）
 
 1. 前往 [GitHub Releases](../../releases) 页面；
-2. 下载最新版本 **`Pinner-v1.12.0.dmg`**；
+2. 下载最新版本 **`Pinner-v1.13.0.dmg`**；
 3. 双击打开 DMG，将 Pinner 拖入 `Applications` 应用程序文件夹；
 4. 首次启动时右键选择「打开」即可。
 

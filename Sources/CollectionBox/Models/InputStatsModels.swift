@@ -106,11 +106,22 @@ public struct DailyInputStats: Codable, Sendable {
         self.keyFrequencies = keyFrequencies
     }
 
+    /// yyyy-MM-dd for the current day. Called from the key/mouse event hot
+    /// path (date rollover check), so the formatter is cached rather than
+    /// rebuilt per event — DateFormatter init costs 10-50 µs and this fires up
+    /// to ~40×/second while typing.
     public static func todayDateString() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
+        cachedDateFormatter.string(from: Date())
     }
+
+    private static let cachedDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        // Locale is irrelevant for a numeric-only pattern; pinning it keeps
+        // output stable regardless of the user's region settings.
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 
     // MARK: - Formatting Helpers
 

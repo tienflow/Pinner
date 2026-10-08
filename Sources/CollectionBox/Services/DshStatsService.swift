@@ -63,14 +63,25 @@ final class DshStatsService {
     private static var scanCache: ScanCache?
     private static var persistentCache: [String: DiskFileCacheEntry]?
 
-    private static let cacheFileURL: URL = {
+    /// Parse-rule version. Part of the cache filename so a bump starts a fresh
+    /// file: mtime/size alone cannot detect a change in how records are parsed.
+    static let scannerVersion = 2
+
+    static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let legacy = dir.appendingPathComponent("dsh_scan_cache.json")
-        try? FileManager.default.removeItem(at: legacy)
-        return dir.appendingPathComponent("dsh_scan_cache_v2.json")
+        for legacy in ["dsh_scan_cache.json", "dsh_scan_cache_v2.json"] {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(legacy))
+        }
+        for stale in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            let name = stale.lastPathComponent
+            if name.hasPrefix("dsh_scan_cache.v"), name != "dsh_scan_cache.v\(scannerVersion).json" {
+                try? FileManager.default.removeItem(at: stale)
+            }
+        }
+        return dir.appendingPathComponent("dsh_scan_cache.v\(scannerVersion).json")
     }()
 
     private static func getDiskCache() -> [String: DiskFileCacheEntry] {
@@ -116,6 +127,10 @@ final class DshStatsService {
         let durationMs: Int?
     }
 
+    /// Single-flight guard: without it, a Dashboard reload and an agent panel
+    /// opening together both miss the cache and both decompress every `.zstd`.
+    private static let scanGate = ScanGate()
+
     func collectRecords(sinceMs: Int64) -> [PublicRecord] {
         Self.cacheLock.lock()
         let cached = Self.scanCache
@@ -124,7 +139,7 @@ final class DshStatsService {
            Date().timeIntervalSince(cached.at) < 120 {
             return cached.records.filter { $0.tsMs >= sinceMs }.map(\.asPublic)
         }
-        let records = scan(sinceMs: sinceMs)
+        let records = Self.scanGate.run(key: "\(sinceMs)") { scan(sinceMs: sinceMs) }
         Self.cacheLock.lock()
         Self.scanCache = ScanCache(sinceMs: sinceMs, records: records, at: Date())
         Self.cacheLock.unlock()

@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class AgentStatsKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 /// Compact stats panel for an agent, mirroring WorkBuddyStatsWindowController.
 final class AgentStatsWindowController: NSObject {
     private let agent: StatsAgent
@@ -59,7 +54,7 @@ final class AgentStatsWindowController: NSObject {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = AgentStatsKeyPanel(contentRect: frame,
+        let p = EscDismissablePanel(contentRect: frame,
                                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                                    backing: .buffered, defer: true)
         p.level = .floating

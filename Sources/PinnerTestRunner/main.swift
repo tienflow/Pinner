@@ -351,19 +351,19 @@ func testMenuBarMenuFollowsSelection() {
     check(detailsItem?.submenu != nil, "各 Agent 明细 has submenu")
     let subTitles = detailsItem?.submenu?.items.map { $0.title } ?? []
     for agent in StatsAgent.allCases {
-        check(subTitles.contains("\(agent.label) 统计"), "submenu shows \(agent.label) stats when enabled")
+        check(subTitles.contains(agent.label), "submenu shows \(agent.label) when enabled")
     }
 
     let menuOnlyCodex = MenuBarController(store: CollectionStore(inMemory: true)).makeMenu(enabledAgents: [.codex])
     let detailsOnlyCodex = menuOnlyCodex.items.first { $0.title == "各 Agent 明细" }
     let subTitlesOnlyCodex = detailsOnlyCodex?.submenu?.items.map { $0.title } ?? []
-    check(subTitlesOnlyCodex.contains("Codex 统计"), "submenu shows Codex stats when only Codex enabled")
-    check(!subTitlesOnlyCodex.contains("Antigravity 统计"), "submenu hides Antigravity stats when disabled")
-    check(!subTitlesOnlyCodex.contains("WorkBuddy 统计"), "submenu hides WorkBuddy stats when disabled")
-    check(!subTitlesOnlyCodex.contains("ZCode 统计"), "submenu hides ZCode stats when disabled")
-    check(!subTitlesOnlyCodex.contains("DSH 统计"), "submenu hides DSH stats when disabled")
+    check(subTitlesOnlyCodex.contains("Codex"), "submenu shows Codex when only Codex enabled")
+    check(!subTitlesOnlyCodex.contains("Antigravity"), "submenu hides Antigravity when disabled")
+    check(!subTitlesOnlyCodex.contains("WorkBuddy"), "submenu hides WorkBuddy when disabled")
+    check(!subTitlesOnlyCodex.contains("ZCode"), "submenu hides ZCode when disabled")
+    check(!subTitlesOnlyCodex.contains("DSH"), "submenu hides DSH when disabled")
     check(menuOnlyCodex.items.map(\.title).contains("Agent 总览"), "menu keeps the dashboard entry")
-    check(menuOnlyCodex.items.map(\.title).contains("偏好设置…"), "menu keeps preferences entry")
+    check(menuOnlyCodex.items.map(\.title).contains("设置"), "menu keeps preferences entry")
     check(menuOnlyCodex.items.map(\.title).contains { $0.hasPrefix("退出") }, "menu keeps quit entry")
 }
 
@@ -371,7 +371,7 @@ func testMenuBarMenuFollowsSelection() {
 func testSettingsSubmenuContents() {
     let controller = MenuBarController(store: CollectionStore(inMemory: true))
     let menu = controller.makeMenu(enabledAgents: Set(StatsAgent.allCases))
-    let settings = menu.items.first { $0.title == "偏好设置…" }
+    let settings = menu.items.first { $0.title == "设置" }
     check(settings != nil, "preferences menu item exists")
     check(settings?.submenu == nil, "preferences item itself has no cascading submenu")
     check(settings?.keyEquivalent == ",", "preferences shortcut is Cmd+,")
@@ -384,10 +384,10 @@ func testSettingsSubmenuContents() {
     check(topTitles.contains("闪念"), "top-level menu contains fleeting item")
     check(topTitles.contains("键鼠统计"), "top-level menu contains inputStats item")
     check(topTitles.contains("收藏夹"), "top-level menu contains collection item")
-    check(topTitles.contains("OTP 工具"), "top-level menu contains OTP item")
+    check(topTitles.contains("验证码"), "top-level menu contains OTP item")
     check(topTitles.contains("各 Agent 明细"), "top-level menu contains agent details item")
-    check(topTitles.contains("端口管家"), "top-level menu contains portManager item")
-    check(topTitles.contains("进程管理"), "top-level menu contains processManager item")
+    check(topTitles.contains("端口"), "top-level menu contains portManager item")
+    check(topTitles.contains("进程"), "top-level menu contains processManager item")
 
     let inputStatsItem = menu.items.first { $0.title == "键鼠统计" }
     check(inputStatsItem?.action != nil && inputStatsItem?.target != nil, "inputStats menu item is wired to an action")
@@ -462,8 +462,8 @@ func testDailySortHelpers() {
     let sessionTpsDesc = view.sessionSort(key: "tps", ascending: false)
     check(sessionTpsDesc(s2, s1) && !sessionTpsDesc(s1, s2), "session tps desc orders by tps")
 
-    let m1 = StatsDashboardView.ModelRankRow(id: "x", name: "model-a", agents: "Codex", tokens: 700, sessions: 4, tps: 20.0)
-    let m2 = StatsDashboardView.ModelRankRow(id: "y", name: "model-b", agents: "DSH", tokens: 200, sessions: 9, tps: 80.0)
+    let m1 = StatsDashboardView.ModelRankRow(id: "x", name: "model-a", agents: "Codex", tokens: 700, sessions: 4, tps: 20.0, mergedFrom: [])
+    let m2 = StatsDashboardView.ModelRankRow(id: "y", name: "model-b", agents: "DSH", tokens: 200, sessions: 9, tps: 80.0, mergedFrom: ["model-b-1", "model-b-2"])
     let modelDesc = view.modelSort(key: "tokens", ascending: false)
     check(modelDesc(m1, m2) && !modelDesc(m2, m1), "model tokens desc orders by tokens")
     let modelSessions = view.modelSort(key: "sessions", ascending: true)
@@ -539,6 +539,110 @@ func testHourlyFlowMetrics() {
     check(metrics.peakTokens == 200_000, "hourly peakTokens is 200k")
     check(metrics.activeHours == 3, "hourly activeHours is 3 (10, 14, 15)")
     check(metrics.goldenWindow?.contains("12:00–16:00") == true, "hourly goldenWindow identifies the peak block")
+}
+
+/// Built-in suffix rules and the user layer, without touching disk.
+@MainActor
+func testModelAliasResolution() {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("pinner-alias-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    let svc = ModelAliasService(fileURL: tmp)
+
+    // Built-in layer: the exact case that motivated this — Antigravity renamed
+    // gemini-3.8-flash to gemini-3.8-flash-n on 2026-10-01.
+    check(svc.canonicalName(for: "gemini-3.8-flash-n") == "gemini-3.8-flash",
+          "built-in rule folds gemini-3.8-flash-n into gemini-3.8-flash")
+    check(svc.canonicalName(for: "gemini-3.8-flash") == "gemini-3.8-flash",
+          "built-in rule leaves the base name alone")
+    check(svc.canonicalName(for: "gemini-3.8-flash-tiered") == "gemini-3.8-flash",
+          "built-in rule folds the -tiered variant")
+
+    // The blacklist must stay narrow: these are real capability/tier markers,
+    // and merging them would silently corrupt totals.
+    for kept in ["gemini-3.1-flash-lite", "gemini-3.8-flash-high",
+                 "gemini-3.8-flash-medium", "gpt-oss-120b-medium", "gemini-3.8-flash-low"] {
+        check(svc.canonicalName(for: kept) == kept, "built-in rule does not touch \(kept)")
+    }
+
+    // Never strip a name down to nothing.
+    check(svc.canonicalName(for: "-n") == "-n", "a bare suffix is not stripped to empty")
+    check(svc.canonicalName(for: nil) == nil, "nil model stays nil (unknown bucket)")
+    check(svc.canonicalName(for: "") == nil, "empty model stays nil (unknown bucket)")
+
+    // User layer wins over the built-in rule, including an identity mapping
+    // that opts a model back out of it.
+    check(svc.upsert(raw: "gemini-3.8-flash", canonical: "Gemini 3.8 Flash"), "upsert accepts a user alias")
+    check(svc.canonicalName(for: "gemini-3.8-flash") == "Gemini 3.8 Flash", "user alias overrides the raw name")
+    check(svc.canonicalName(for: "gemini-3.8-flash-n") == "Gemini 3.8 Flash",
+          "built-in strip then re-lookup lands on the user's name")
+    check(svc.upsert(raw: "gemini-3.8-flash-n", canonical: "gemini-3.8-flash-n"),
+          "identity alias is accepted")
+    check(svc.canonicalName(for: "gemini-3.8-flash-n") == "gemini-3.8-flash-n",
+          "identity alias opts a model out of the built-in rule")
+    check(svc.upsert(raw: "  ", canonical: "x") == false, "blank raw is rejected")
+    check(svc.upsert(raw: "x", canonical: "   ") == false, "blank canonical is rejected")
+
+    // Grouping collapses the two IDs into one row and reports the merge.
+    let records = [
+        UnifiedUsageRecord(agent: .gemini, model: "gemini-3.8-flash", title: nil, tsMs: 0,
+                           tokens: 100, freshInput: 0, cached: 0, output: 0,
+                           hasBreakdown: false, sessionId: "s1", durationMs: nil),
+        UnifiedUsageRecord(agent: .gemini, model: "gemini-3.8-flash-n", title: nil, tsMs: 0,
+                           tokens: 250, freshInput: 0, cached: 0, output: 0,
+                           hasBreakdown: false, sessionId: "s2", durationMs: nil)
+    ]
+    let grouped = StatsDashboardView.mergedModelGroups(records, aliases: ModelAliasTable())
+    check(grouped.count == 1, "built-in rule collapses both raw names into one row")
+    check(grouped.first?.tokens == 350, "merged row sums the tokens of both names")
+    check(grouped.first?.mergedFrom == ["gemini-3.8-flash-n"],
+          "merged row reports the folded raw name")
+
+    // An un-aliased model carries no badge at all.
+    let plain = StatsDashboardView.mergedModelGroups(
+        [UnifiedUsageRecord(agent: .dsh, model: "glm-4", title: nil, tsMs: 0, tokens: 10,
+                            freshInput: 0, cached: 0, output: 0, hasBreakdown: false,
+                            sessionId: "s3", durationMs: nil)],
+        aliases: ModelAliasTable())
+    check(plain.first?.mergedFrom.isEmpty == true, "a 1:1 model reports no merge sources")
+}
+
+/// Round-trips the table through a real file, including the corrupt-file
+/// fallback that must never take the dashboard down.
+@MainActor
+func testModelAliasPersistence() async {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("pinner-alias-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let svc = ModelAliasService(fileURL: tmp)
+    check(svc.loadFailed == false, "a missing file is not a load failure")
+    check(svc.aliases.isEmpty, "a missing file yields an empty table")
+    _ = svc.upsert(raw: "zeta-model", canonical: "Zeta")
+    _ = svc.upsert(raw: "alpha-model", canonical: "Alpha")
+
+    let reloaded = ModelAliasService(fileURL: tmp)
+    check(reloaded.loadFailed == false, "a valid file loads cleanly")
+    check(reloaded.aliases.count == 2, "both aliases survive a reload")
+    check(reloaded.aliases.map(\.raw) == ["alpha-model", "zeta-model"],
+          "aliases are stored sorted so hand-diffs stay stable")
+    check(reloaded.canonicalName(for: "zeta-model") == "Zeta", "a reloaded alias still resolves")
+
+    // A hand-edit that breaks the JSON must degrade to an empty table, not
+    // crash — and the UI needs to know to warn.
+    try? Data("{ not json".utf8).write(to: tmp)
+    let broken = ModelAliasService(fileURL: tmp)
+    check(broken.loadFailed == true, "a malformed file sets loadFailed")
+    check(broken.aliases.isEmpty, "a malformed file falls back to an empty table")
+    check(broken.canonicalName(for: "anything") == "anything",
+          "a malformed file still resolves via the built-in layer")
+
+    // Removal and clear only touch the user layer.
+    broken.removeAll()
+    let cleared = ModelAliasService(fileURL: tmp)
+    check(cleared.aliases.isEmpty, "removeAll empties the table")
+    check(cleared.canonicalName(for: "gemini-3.8-flash-n") == "gemini-3.8-flash",
+          "built-in rules survive clearing the user layer")
 }
 
 @MainActor
@@ -1123,6 +1227,8 @@ let allPassed = await Task { @MainActor () -> Bool in
     await testDshScanCacheReusesResults()
     testDailySortHelpers()
     testHourlyFlowMetrics()
+    testModelAliasResolution()
+    await testModelAliasPersistence()
     testTodoPromptBuild()
     testTodoLLMParseResponse()
     testTodoSettingsStoreStorage()
@@ -1365,13 +1471,13 @@ func testModuleManager() {
     let titles = menu.items.map(\.title)
 
     check(!titles.contains("待办"), "menu hides disabled todo module")
-    check(!titles.contains("OTP 工具"), "menu hides disabled otp module")
-    check(!titles.contains("端口管家"), "menu hides disabled portManager module")
+    check(!titles.contains("验证码"), "menu hides disabled otp module")
+    check(!titles.contains("端口"), "menu hides disabled portManager module")
     check(!titles.contains("Agent 总览"), "menu hides disabled agentStats dashboard")
     check(!titles.contains("各 Agent 明细"), "menu hides disabled agentStats submenu")
     check(titles.contains("收藏夹"), "menu retains core collection module")
     check(titles.contains("键鼠统计"), "menu retains enabled inputStats module")
-    check(titles.contains("偏好设置…"), "menu retains preferences")
+    check(titles.contains("设置"), "menu retains preferences")
     check(titles.contains { $0.hasPrefix("退出") }, "menu retains quit")
 }
 
@@ -1516,15 +1622,44 @@ func testProcessManager() {
     check(ModuleManager.shared.isEnabled(.processManager), "processManager enabled by default in ModuleManager")
     let bar = MenuBarController(store: CollectionStore(inMemory: true))
     let menu = bar.makeMenu()
-    check(menu.items.map(\.title).contains("进程管理"), "menu contains 进程管理")
-    check(menu.items.map(\.title).contains("端口管家"), "menu contains 端口管家")
+    check(menu.items.map(\.title).contains("进程"), "menu contains 进程")
+    check(menu.items.map(\.title).contains("端口"), "menu contains 端口")
     check(menu.items.map(\.title).contains("Agent 总览"), "menu contains Agent 总览")
+
+    // The menu and the settings pane must share one naming source, otherwise
+    // the same feature drifts into two different labels.
+    check(
+        Set(menu.items.map(\.title)).isSuperset(of: PinnerModule.allCases.filter { $0 != .collection }.map(\.title)),
+        "menu uses PinnerModule.title for every enabled module"
+    )
+    check(PinnerModule.inputStats.title == "键鼠统计", "inputStats title is 键鼠统计")
+
+    // Parse-rule version must be part of every scanner cache filename.
+    // mtime/size validation cannot detect a change in how a file is parsed,
+    // so a version bump is the only way to stop a stale cache from silently
+    // winning forever.
+    let scannerCaches: [(String, URL)] = [
+        ("skill", SkillStatsService.cacheFileURL),
+        ("workbuddy", WorkBuddyStatsService.cacheFileURL),
+        ("dsh", DshStatsService.cacheFileURL),
+        ("gemini", GeminiStatsService.cacheFileURL),
+    ]
+    for (name, url) in scannerCaches {
+        check(
+            url.lastPathComponent.contains(".v"),
+            "\(name) cache filename carries a version: \(url.lastPathComponent)"
+        )
+        check(
+            url.lastPathComponent.hasSuffix(".json"),
+            "\(name) cache filename keeps the .json extension"
+        )
+    }
 
     // 5. Disabled module check
     let customManager = ModuleManager(defaults: UserDefaults(suiteName: "test-process-mgr-\(UUID().uuidString)")!)
     customManager.setEnabled(.processManager, to: false)
     let menuWithoutProc = bar.makeMenu(modules: customManager)
-    check(!menuWithoutProc.items.map(\.title).contains("进程管理"), "menu hides disabled processManager")
+    check(!menuWithoutProc.items.map(\.title).contains("进程"), "menu hides disabled processManager")
 
     // 6. ProcessFilterOption cases
     check(ProcessFilterOption.allCases.count == 4, "ProcessFilterOption has 4 options")

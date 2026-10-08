@@ -65,7 +65,7 @@ public struct InputStatsView: View {
                     // 5. 按应用统计 (按照截图，放在最下面，支持按时间筛选与多列条形图)
                     appStatsCard
                 }
-                .padding(14)
+                .padding(16)
             }
 
             Divider().opacity(0.15)
@@ -87,23 +87,6 @@ public struct InputStatsView: View {
             Text("键鼠统计")
                 .font(.system(size: 14, weight: .bold))
 
-            // Status Indicator Dot
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(service.hasAccessibilityPermission && service.isMonitoring ? Color.green : Color.orange)
-                    .frame(width: 6, height: 6)
-
-                Text(service.hasAccessibilityPermission ? (service.isMonitoring ? "监控中" : "未启动") : "需授权")
-                    .font(.system(size: Design.micro, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(service.hasAccessibilityPermission ? Color.green.opacity(0.12) : Color.orange.opacity(0.12))
-            )
-
             Spacer()
 
             // Close button
@@ -112,7 +95,7 @@ public struct InputStatsView: View {
                 onClose()
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
@@ -513,7 +496,8 @@ public struct InputStatsView: View {
                 }
             }
         }
-        .padding(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: Design.radiusM)
                 .fill(Color(NSColor.controlBackgroundColor).opacity(0.35))
@@ -1311,7 +1295,7 @@ public struct InputStatsView: View {
                 .help("重置今日统计数据")
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
 }

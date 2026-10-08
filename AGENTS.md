@@ -63,11 +63,10 @@ ps -eo pid,lstart,command | grep -i "[P]inner"
 ⚠️ **严禁异步抢跑拷贝**：若构建转入后台任务，必须等待任务完成通知、并核验二进制修改时间戳（`ls -la .build/out/Products/Release/CollectionBoxApp`）为最新后，方可拷贝！提前拷贝会导致复制旧版本二进制，造成“已重启但代码未生效”的假象。
 ⚠️ 注意必须更新 `/Applications/Pinner.app` 并启动该 bundle 路径，避免裸二进制启动导致的 UserDefaults 域隔离问题。
 
-## 3. 质量验证（🔴 改完必须跑）
+## 3. 质量验证
 
-- 改完跑项目的构建命令（`npm run build` / `swift build` / `cargo build` / `make` 等）
-- 改完跑项目的测试命令（`npm test` / `swift run xxTests` / `cargo test` / `make test` 等）
-- 本项目测试命令：`swift run PinnerTestRunner`（全部断言通过时退出码 0）。⚠️ 纯 CommandLineTools 环境无 XCTest，`swift test` 无法构建，不要使用
+- 改完跑构建验证（`swift build` / `-c release`）
+- 🔴 **免测规则（2026-10-07 用户明确纠偏）**：日常代码修改与功能迭代**严禁自动运行测试套件**（`swift run PinnerTestRunner` 耗时过长且极度消耗 Token 与系统资源）；仅在用户明确发出「跑测试」或「回归测试」指令时才执行。
 - 不要为了让代码跑起来而注释掉报错
 
 ## 4. Git 规范

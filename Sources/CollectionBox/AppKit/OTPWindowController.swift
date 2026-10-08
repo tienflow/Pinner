@@ -2,11 +2,6 @@ import AppKit
 import SwiftUI
 
 /// NSPanel subclass that can become key window (needed for text input in floating panels).
-private final class OTPKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 final class OTPWindowController: NSObject {
     private let store: OTPStore
     private var panel: NSPanel?
@@ -54,7 +49,7 @@ final class OTPWindowController: NSObject {
     }
 
     private func showPanel(in frame: NSRect, autoCopy: Bool) {
-        let p = OTPKeyPanel(contentRect: frame,
+        let p = EscDismissablePanel(contentRect: frame,
                         styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                         backing: .buffered, defer: true)
         p.level = .floating

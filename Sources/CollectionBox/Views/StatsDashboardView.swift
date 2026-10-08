@@ -48,6 +48,9 @@ struct StatsDashboardView: View {
         let tokens: Int
         let sessions: Int
         let tps: Double?
+        /// Raw model names folded into this row by an alias or a built-in
+        /// suffix rule. Empty when the row maps 1:1 — drives the merge badge.
+        let mergedFrom: [String]
     }
 
     struct HourlyBucket: Identifiable, Sendable {
@@ -126,6 +129,7 @@ struct StatsDashboardView: View {
     @State private var snapshotTask: Task<Void, Never>?
     @State private var selectedAgentFilter: StatsAgent? = nil
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
+    @ObservedObject private var aliasService = ModelAliasService.shared
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
     private let service = StatsDashboardService.shared
 
@@ -159,6 +163,9 @@ struct StatsDashboardView: View {
         .onChange(of: customStart) { _, _ in if range == .custom { updateSnapshot() } }
         .onChange(of: customEnd) { _, _ in if range == .custom { updateSnapshot() } }
         .onChange(of: enabledAgents) { _, _ in reload() }
+        // Alias edits reshape the model rows without touching the raw records.
+        .onChange(of: aliasService.aliases) { _, _ in updateSnapshot() }
+        .onChange(of: aliasService.loadFailed) { _, _ in updateSnapshot() }
     }
 
     // MARK: - Range Window
@@ -1158,8 +1165,18 @@ struct StatsDashboardView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
                         HStack(spacing: 0) {
-                            Text(row.name).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            HStack(spacing: 4) {
+                                Text(row.name).font(.system(size: Design.caption)).lineLimit(1).truncationMode(.middle)
+                                if !row.mergedFrom.isEmpty {
+                                    // A merged row is a computed total — never
+                                    // let it pass as a literal model name.
+                                    Image(systemName: "arrow.triangle.merge")
+                                        .font(.system(size: Design.micro))
+                                        .foregroundStyle(.tertiary)
+                                        .help("已合并 \(row.mergedFrom.count) 个原始 ID：\(row.mergedFrom.joined(separator: "、"))")
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
                                 .frame(width: 95, alignment: .leading)
                             GeometryReader { geo in
@@ -1435,6 +1452,9 @@ struct StatsDashboardView: View {
         let untilMs = effectiveUntilMs
         let sessionKey = sessionSortKey
         let sessionAsc = sessionSortAsc
+        // Snapshot the alias rules on the main actor: the detached task below
+        // must not read observable state.
+        let table = aliasService.table
 
         snapshotTask = Task.detached(priority: .userInitiated) {
             let snap = Self.buildSnapshot(
@@ -1447,7 +1467,8 @@ struct StatsDashboardView: View {
                 effectiveSinceMs: sinceMs,
                 effectiveUntilMs: untilMs,
                 sessionSortKey: sessionKey,
-                sessionSortAsc: sessionAsc
+                sessionSortAsc: sessionAsc,
+                aliasTable: table
             )
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -1466,7 +1487,8 @@ struct StatsDashboardView: View {
         effectiveSinceMs: Int64,
         effectiveUntilMs: Int64,
         sessionSortKey: String,
-        sessionSortAsc: Bool
+        sessionSortAsc: Bool,
+        aliasTable: ModelAliasTable = ModelAliasTable()
     ) -> DashboardSnapshot {
         let enabledRecords = records.filter { enabledAgents.contains($0.agent) }
         let now = Date()
@@ -1481,7 +1503,7 @@ struct StatsDashboardView: View {
         let allSessionsCount = Set(enabledRecords.map { "\($0.agent):\($0.sessionId)" }).count
 
         let totalAll = enabledRecords.reduce(0) { $0 + $1.tokens }
-        let topModels = mergedModelGroups(enabledRecords)
+        let topModels = mergedModelGroups(enabledRecords, aliases: aliasTable)
             .prefix(5).enumerated()
             .map { i, g in RankRow(idx: i + 1, name: g.name, tokens: g.tokens,
                                    share: totalAll > 0 ? Double(g.tokens) / Double(totalAll) * 100 : 0) }
@@ -1594,14 +1616,15 @@ struct StatsDashboardView: View {
             .prefix(30)
             .map { $0 }
 
-        let modelRankRows: [ModelRankRow] = mergedModelGroups(current).map { g in
+        let modelRankRows: [ModelRankRow] = mergedModelGroups(current, aliases: aliasTable).map { g in
             ModelRankRow(
                 id: g.name.lowercased(),
                 name: g.name,
                 agents: g.agents.map(\.label).joined(separator: " / "),
                 tokens: g.tokens,
                 sessions: g.sessions,
-                tps: g.tps
+                tps: g.tps,
+                mergedFrom: g.mergedFrom
             )
         }
 
@@ -1771,7 +1794,16 @@ struct StatsDashboardView: View {
     /// case variants (glm-5.3-flash vs GLM-5.3-Flash) merge; the displayed
     /// name is the most frequent original casing. Unknown models stay
     /// per-agent buckets.
-    static func mergedModelGroups(_ records: [UnifiedUsageRecord]) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?)] {
+    ///
+    /// Raw names first go through `ModelAliasService`, so upstream re-routes
+    /// (`gemini-3.8-flash` vs `gemini-3.8-flash-n`) and hand-written user
+    /// aliases collapse into a single row. Every group remembers which raw
+    /// names fed it, and rows built from more than one are flagged so the UI
+    /// can show "已合并 N 个原始 ID" — a merge must never be invisible.
+    static func mergedModelGroups(
+        _ records: [UnifiedUsageRecord],
+        aliases: ModelAliasTable = ModelAliasTable()
+    ) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?, mergedFrom: [String])] {
         struct Group {
             var tokens = 0
             var sessions = Set<String>()
@@ -1779,16 +1811,20 @@ struct StatsDashboardView: View {
             var casings: [String: Int] = [:]
             var validOutput = 0
             var validDurationMs = 0
+            var raws = Set<String>()
         }
         var groups: [String: Group] = [:]
         for r in records {
-            let display = r.model ?? "未知（\(r.agent.label)）"
+            // A nil model keeps the per-agent "unknown" bucket; an alias never
+            // promotes an unnamed record into a named one.
+            let display = aliases.canonicalName(for: r.model) ?? "未知（\(r.agent.label)）"
             let key = display.lowercased()
             var g = groups[key] ?? Group()
             g.tokens += r.tokens
             g.sessions.insert("\(r.agent):\(r.sessionId)")
             g.agents.insert(r.agent)
             g.casings[display, default: 0] += 1
+            if let raw = r.model { g.raws.insert(raw) }
             if let d = r.durationMs, d >= 100, r.output > 0 {
                 g.validOutput += r.output
                 g.validDurationMs += d
@@ -1799,9 +1835,12 @@ struct StatsDashboardView: View {
             .map { key, g in
                 let name = g.casings.max { $0.value < $1.value }?.key ?? key
                 let tps = g.validDurationMs > 0 ? Double(g.validOutput) / (Double(g.validDurationMs) / 1000.0) : nil
+                // Only report sources that actually differ from the shown
+                // name, so an un-aliased model shows no badge at all.
+                let others = g.raws.filter { $0.caseInsensitiveCompare(name) != .orderedSame }.sorted()
                 return (name: name, tokens: g.tokens, sessions: g.sessions.count,
                         agents: g.agents.sorted { $0.rawValue < $1.rawValue },
-                        tps: tps)
+                        tps: tps, mergedFrom: others)
             }
             .sorted { $0.tokens > $1.tokens }
     }

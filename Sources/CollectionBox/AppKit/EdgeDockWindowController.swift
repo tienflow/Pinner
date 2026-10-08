@@ -183,8 +183,16 @@ final class QuickLookDataSource: NSObject, QLPreviewPanelDataSource, QLPreviewPa
 
 // MARK: - KeyPanel
 
-final class KeyPanel: NSPanel {
+/// Collection drawer panel. Esc collapses instead of closing (RootView listens
+/// for `.panelShouldCollapse`), and the arrow/return/space keys are forwarded to
+/// RootView as key notifications. Quick Look needs the full keyDown override,
+/// so the shared Esc handling is inherited rather than inherited-from-Window.
+final class KeyPanel: EscDismissablePanel {
     weak var quickLookSource: QuickLookDataSource?
+
+    override func handleEscape() {
+        NotificationCenter.default.post(name: .panelShouldCollapse, object: nil)
+    }
 
     override func keyDown(with event: NSEvent) {
         let key: String?

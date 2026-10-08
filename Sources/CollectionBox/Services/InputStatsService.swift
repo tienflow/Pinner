@@ -153,7 +153,7 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
         Self.normalizeKeyFrequencies(&self.stats.keyFrequencies)
         self.history = hist
         checkPermission()
-        startDecayTimer()
+        // Timers start from startMonitoring() only — see stopDecayTimer().
     }
 
     private static func normalizeKeyFrequencies(_ freqs: inout [String: Int]) {
@@ -205,6 +205,11 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
         isMonitoring = ok
         if ok {
             startSaveTimer()
+            // The 0.5 s decay only exists to age out the 1-second KPS/CPS
+            // window. With no event tap running there is nothing to age out, so
+            // the timer would just wake the main actor twice a second for the
+            // whole app lifetime.
+            startDecayTimer()
         }
     }
 
@@ -213,7 +218,21 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
         isMonitoring = false
         saveTimer?.invalidate()
         saveTimer = nil
+        stopDecayTimer()
         flushPendingSave()
+    }
+
+    /// Clears the sliding window and zeroes the published rates. Called when
+    /// monitoring stops so a panel that stays open does not display a stale
+    /// non-zero KPS forever.
+    private func stopDecayTimer() {
+        decayTimer?.invalidate()
+        decayTimer = nil
+        keyTimestamps.removeAll()
+        clickTimestamps.removeAll()
+        currentKPS = 0
+        currentCPS = 0
+        currentAPM = 0
     }
 
     // MARK: - Reset
@@ -260,13 +279,30 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
         return min(max(hour, 0), 23)
     }
 
+    // MARK: - Frontmost App Cache
+
+    private var cachedFrontmostPid: pid_t = 0
+    private var cachedFrontmost: (bundleId: String, name: String) = ("unknown", "未知应用")
+
+    /// `NSWorkspace.frontmostApplication` is a synchronous XPC round trip to the
+    /// window server (~0.1-1 ms). It used to run per key press and per scroll
+    /// tick, putting a main-thread IPC on the global input path.
+    ///
+    /// The frontmost app only changes when the user switches windows, so the
+    /// answer is cached until the observed pid differs. A background refresh
+    /// keeps the "unknown" bootstrap case honest.
     private func activeAppInfo() -> (bundleId: String, name: String) {
         if let app = NSWorkspace.shared.frontmostApplication {
-            let bundle = app.bundleIdentifier ?? "unknown"
-            let name = app.localizedName ?? bundle
-            return (bundle, name)
+            if app.processIdentifier != cachedFrontmostPid {
+                cachedFrontmostPid = app.processIdentifier
+                let bundle = app.bundleIdentifier ?? "unknown"
+                cachedFrontmost = (bundle, app.localizedName ?? bundle)
+            }
+        } else if cachedFrontmostPid != 0 {
+            cachedFrontmostPid = 0
+            cachedFrontmost = ("unknown", "未知应用")
         }
-        return ("unknown", "未知应用")
+        return cachedFrontmost
     }
 
     private func recordAppActivity(isKey: Bool = false, isClick: Bool = false, scrollPixels: Double = 0.0) {

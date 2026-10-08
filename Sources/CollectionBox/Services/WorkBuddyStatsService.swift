@@ -92,12 +92,25 @@ final class WorkBuddyStatsService: Sendable {
     private static var scanCache: ScanCache?
     private static var persistentCache: [String: DiskFileCacheEntry]?
 
-    private static let cacheFileURL: URL = {
+    /// Parse-rule version. Part of the cache filename so a bump starts a fresh
+    /// file: mtime/size alone cannot detect a change in how lines are matched,
+    /// and a stale hit would silently serve the old interpretation forever.
+    static let scannerVersion = 2
+
+    static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("workbuddy_scan_cache.json")
+        let legacy = dir.appendingPathComponent("workbuddy_scan_cache.json")
+        try? FileManager.default.removeItem(at: legacy)
+        for stale in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            let name = stale.lastPathComponent
+            if name.hasPrefix("workbuddy_scan_cache.v"), name != "workbuddy_scan_cache.v\(scannerVersion).json" {
+                try? FileManager.default.removeItem(at: stale)
+            }
+        }
+        return dir.appendingPathComponent("workbuddy_scan_cache.v\(scannerVersion).json")
     }()
 
     private static func getDiskCache() -> [String: DiskFileCacheEntry] {
@@ -131,6 +144,11 @@ final class WorkBuddyStatsService: Sendable {
         }
     }
 
+    /// Single-flight guard: without it, a Dashboard reload and an agent panel
+    /// opening together both miss the cache and both walk ~270 MB of session
+    /// files. The follower waits and reuses the leader's records.
+    private static let scanGate = ScanGate()
+
     private func cachedCollect(sinceMs: Int64) -> [UsageRecord] {
         Self.cacheLock.lock()
         let cached = Self.scanCache
@@ -139,7 +157,11 @@ final class WorkBuddyStatsService: Sendable {
            Date().timeIntervalSince(cached.at) < 120 {
             return cached.records.filter { $0.tsMs >= sinceMs }
         }
-        let records = collect(sinceMs: sinceMs)
+        // The gate is keyed by the window so a narrow-window scan is never
+        // served to a full-history caller.
+        let records = Self.scanGate.run(key: "\(sinceMs)") {
+            collect(sinceMs: sinceMs)
+        }
         Self.cacheLock.lock()
         Self.scanCache = ScanCache(sinceMs: sinceMs, records: records, at: Date())
         Self.cacheLock.unlock()

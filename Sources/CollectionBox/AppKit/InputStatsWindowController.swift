@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class InputStatsKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 @MainActor
 public final class InputStatsWindowController: NSObject, NSWindowDelegate {
     public static let shared = InputStatsWindowController()
@@ -55,7 +50,7 @@ public final class InputStatsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = InputStatsKeyPanel(
+        let p = EscDismissablePanel(
             contentRect: frame,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,

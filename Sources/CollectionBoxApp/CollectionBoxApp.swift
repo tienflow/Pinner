@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "关于 Pinner", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        let prefItem = NSMenuItem(title: "偏好设置…", action: #selector(openPreferences), keyEquivalent: ",")
+        let prefItem = NSMenuItem(title: "设置…", action: #selector(openPreferences), keyEquivalent: ",")
         prefItem.target = self
         appMenu.addItem(prefItem)
         appMenu.addItem(.separator())

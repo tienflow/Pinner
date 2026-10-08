@@ -3,24 +3,29 @@ import Combine
 
 /// Mental model clusters for grouping Pinner capabilities.
 public enum ModuleCluster: String, CaseIterable, Sendable {
-    case captureAndWorkspace = "工作台与捕获"
-    case monitoringAndTools = "数字监控与工具"
+    case capture = "录入"
+    case observation = "观测"
+    case tools = "工具"
 
     public var subtitle: String {
         switch self {
-        case .captureAndWorkspace:
-            return "文件收纳、碎片灵感与任务录入工作流"
-        case .monitoringAndTools:
-            return "AI 编程开销监控、硬件键鼠节律与效率工具"
+        case .capture:
+            return "任务与灵感的快捷录入工作流"
+        case .observation:
+            return "AI 编程开销与键鼠输入的只读统计"
+        case .tools:
+            return "本地系统检视与快捷操作工具"
         }
     }
 
     public var icon: String {
         switch self {
-        case .captureAndWorkspace:
-            return "tray.2.fill"
-        case .monitoringAndTools:
+        case .capture:
+            return "square.and.pencil"
+        case .observation:
             return "chart.xyaxis.line"
+        case .tools:
+            return "wrench.and.screwdriver"
         }
     }
 }
@@ -38,16 +43,18 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
 
     public var id: String { rawValue }
 
+    /// Single naming source for both the status-bar menu and the settings
+    /// pane. Keeping two titles in sync by hand is how drift starts.
     public var title: String {
         switch self {
-        case .collection: return "收藏夹与暂存架"
-        case .todo: return "智能待办"
-        case .fleeting: return "闪念笔记"
-        case .agentStats: return "Agent 总览看板"
-        case .inputStats: return "键鼠输入统计"
-        case .portManager: return "端口管家"
-        case .processManager: return "进程管理"
-        case .otp: return "OTP 工具"
+        case .collection: return "收藏夹"
+        case .todo: return "待办"
+        case .fleeting: return "闪念"
+        case .otp: return "验证码"
+        case .agentStats: return "Agent 总览"
+        case .inputStats: return "键鼠统计"
+        case .portManager: return "端口"
+        case .processManager: return "进程"
         }
     }
 
@@ -92,10 +99,12 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
 
     public var cluster: ModuleCluster {
         switch self {
-        case .collection, .todo, .fleeting, .otp:
-            return .captureAndWorkspace
-        case .agentStats, .inputStats, .portManager, .processManager:
-            return .monitoringAndTools
+        case .collection, .todo, .fleeting:
+            return .capture
+        case .agentStats, .inputStats:
+            return .observation
+        case .portManager, .processManager, .otp:
+            return .tools
         }
     }
 }

@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class TodoCaptureKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 /// Menu-bar quick-capture panel: one line of natural language → confirmed
 /// fields → an Apple Reminder.
 ///
@@ -50,7 +45,7 @@ final class TodoCaptureWindowController: NSObject {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = TodoCaptureKeyPanel(contentRect: frame,
+        let p = EscDismissablePanel(contentRect: frame,
                                     styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                                     backing: .buffered, defer: true)
         p.level = .floating

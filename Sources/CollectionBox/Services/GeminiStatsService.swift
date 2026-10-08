@@ -113,17 +113,29 @@ final class GeminiStatsService: Sendable {
     private static let cacheLock = NSLock()
     private static var persistentCache: [String: DiskFileCacheEntry]?
 
+    /// Parse-rule version. Part of the cache filename so a bump starts a fresh
+    /// file: mtime/size alone cannot detect a change in how steps are parsed.
+    static let scannerVersion = 2
+
     static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let legacy = dir.appendingPathComponent("gemini_scan_cache.json")
-        try? FileManager.default.removeItem(at: legacy)
-        return dir.appendingPathComponent("gemini_scan_cache_v2.json")
+        for legacy in ["gemini_scan_cache.json", "gemini_scan_cache_v2.json"] {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(legacy))
+        }
+        for stale in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            let name = stale.lastPathComponent
+            if name.hasPrefix("gemini_scan_cache.v"), name != "gemini_scan_cache.v\(scannerVersion).json" {
+                try? FileManager.default.removeItem(at: stale)
+            }
+        }
+        return dir.appendingPathComponent("gemini_scan_cache.v\(scannerVersion).json")
     }()
 
     static func resetMemoryCacheForTesting() {
+        scanGate.reset()
         cacheLock.lock()
         persistentCache = nil
         cacheLock.unlock()
@@ -293,7 +305,16 @@ final class GeminiStatsService: Sendable {
     }
 
     /// Collect steps across eligible databases using the persistent disk cache
+    /// Single-flight guard: `getEligibleDbFiles` stats every `.db` in the
+    /// Antigravity tree, so a Dashboard reload and an agent panel opening
+    /// together used to repeat the whole directory walk.
+    private static let scanGate = ScanGate()
+
     private func collectSteps(sinceUnix: Int) -> [(cid: String, steps: [StepTokenUsage])] {
+        Self.scanGate.run(key: "\(sinceUnix)") { collectStepsUncached(sinceUnix: sinceUnix) }
+    }
+
+    private func collectStepsUncached(sinceUnix: Int) -> [(cid: String, steps: [StepTokenUsage])] {
         let eligibleFiles = getEligibleDbFiles(since: sinceUnix)
         guard !eligibleFiles.isEmpty else { return [] }
 

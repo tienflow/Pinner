@@ -40,8 +40,10 @@ public struct PortManagerView: View {
                     .padding(16)
                 }
 
-                Divider().opacity(0.15)
-                bottomBar
+                if terminationErrorMessage != nil {
+                    Divider().opacity(0.15)
+                    terminationErrorBar
+                }
             }
 
             // Detail Sheet Overlay
@@ -58,9 +60,20 @@ public struct PortManagerView: View {
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
             }
         }
-        .frame(width: 680, height: 600)
+        .frame(width: 720, height: 600)
         .liquidGlassBackground(cornerRadius: Design.radiusL)
         .ignoresSafeArea()
+        .onKeyPress(phases: .down) { press in
+            if press.key == .escape {
+                if selectedProcessForDetail != nil {
+                    selectedProcessForDetail = nil
+                    return .handled
+                }
+                onClose()
+                return .handled
+            }
+            return .ignored
+        }
         .confirmationDialog(
             "终止进程",
             isPresented: Binding(
@@ -95,23 +108,8 @@ public struct PortManagerView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.accentColor)
 
-            Text("端口管家")
+            Text("端口")
                 .font(.system(size: 14, weight: .bold))
-
-            // Status Indicator Dot
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
-
-                Text("实时监控")
-                    .font(.system(size: Design.micro, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.green.opacity(0.12))
-            .cornerRadius(Design.radiusS)
 
             Spacer()
 
@@ -198,31 +196,41 @@ public struct PortManagerView: View {
         isSelected: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(color)
                 Text(title)
-                    .font(.system(size: Design.caption, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
                 Spacer()
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .foregroundColor(color)
+                if isSelected {
+                    Text("筛选中")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(color.opacity(0.12))
+                        .cornerRadius(Design.radiusS)
+                }
             }
 
             Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundColor(.primary)
 
             Text(sub)
-                .font(.system(size: Design.micro))
-                .foregroundColor(isSelected ? color : .secondary)
+                .font(.system(size: 10))
+                .foregroundColor(isSelected ? color : .secondary.opacity(0.85))
+                .lineLimit(1)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? color.opacity(0.12) : Color.primary.opacity(Design.hoverAlpha))
+        .background(isSelected ? color.opacity(0.12) : Color(NSColor.controlBackgroundColor).opacity(0.45))
         .cornerRadius(Design.radiusM)
         .overlay(
             RoundedRectangle(cornerRadius: Design.radiusM)
-                .strokeBorder(isSelected ? color : Color.clear, lineWidth: 1.5)
+                .stroke(isSelected ? color : color.opacity(0.2), lineWidth: 1)
         )
     }
 
@@ -233,19 +241,19 @@ public struct PortManagerView: View {
             // Search Input
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
 
                 TextField("搜索进程名、PID 或端口 (如 :3000)...", text: $service.searchText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: Design.ui))
+                    .font(.system(size: 12))
 
                 if !service.searchText.isEmpty {
                     Button {
                         service.searchText = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -253,30 +261,38 @@ public struct PortManagerView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color.primary.opacity(Design.slotAlpha))
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
             .cornerRadius(Design.radiusS)
+            .overlay(
+                RoundedRectangle(cornerRadius: Design.radiusS)
+                    .stroke(Color.primary.opacity(0.1), lineWidth: 0.8)
+            )
 
             // Category Filter Picker
             HStack(spacing: 2) {
                 ForEach(ProcessFilterCategory.allCases) { cat in
                     let isSelected = service.selectedFilter == cat
                     Button {
+                        Haptics.light()
                         service.selectedFilter = cat
                     } label: {
                         Text(cat.rawValue)
-                            .font(.system(size: Design.micro, weight: isSelected ? .semibold : .regular))
-                            .padding(.horizontal, 8)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 6)
                             .padding(.vertical, 4)
-                            .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+                            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
                             .foregroundColor(isSelected ? .accentColor : .secondary)
-                            .cornerRadius(4)
+                            .cornerRadius(Design.radiusS)
                     }
                     .buttonStyle(.plain)
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             .padding(2)
-            .background(Color.primary.opacity(Design.slotAlpha))
-            .cornerRadius(6)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+            .cornerRadius(Design.radiusS + 2)
         }
     }
 
@@ -360,7 +376,7 @@ public struct PortManagerView: View {
             // Table Header
             tableHeaderRow
 
-            Divider().opacity(0.12)
+            Divider().opacity(0.15)
 
             let list = sortedAndFilteredProcesses
             if list.isEmpty {
@@ -375,43 +391,44 @@ public struct PortManagerView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
             } else {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: 0) {
                     ForEach(list) { proc in
                         processRow(proc)
+                        Divider().opacity(0.08)
                     }
                 }
             }
         }
-        .background(Color.primary.opacity(0.03))
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
         .cornerRadius(Design.radiusM)
         .overlay(
             RoundedRectangle(cornerRadius: Design.radiusM)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.8)
         )
     }
 
     private var tableHeaderRow: some View {
         HStack(spacing: 8) {
-            sortableHeader(title: "进程名称", field: .name, width: 160, alignment: .leading)
+            sortableHeader(title: "进程名称", field: .name, width: nil, alignment: .leading)
             sortableHeader(title: "PID", field: .pid, width: 50, alignment: .leading)
             sortableHeader(title: "监听端口", field: .port, width: 135, alignment: .leading)
             sortableHeader(title: "分类", field: .category, width: 64, alignment: .leading)
             sortableHeader(title: "CPU", field: .cpu, width: 50, alignment: .trailing)
             sortableHeader(title: "内存", field: .memory, width: 65, alignment: .trailing)
 
-            Spacer()
-
             Text("操作")
-                .font(.system(size: Design.micro, weight: .medium))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
                 .frame(width: 60, alignment: .center)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.25))
     }
 
-    private func sortableHeader(title: String, field: PortTableSortField, width: CGFloat, alignment: Alignment) -> some View {
-        Button {
+    @ViewBuilder
+    private func sortableHeader(title: String, field: PortTableSortField, width: CGFloat?, alignment: Alignment) -> some View {
+        let button = Button {
             if sortField == field {
                 sortAscending.toggle()
             } else {
@@ -424,23 +441,28 @@ public struct PortManagerView: View {
                     Spacer(minLength: 0)
                 }
                 Text(title)
-                    .font(.system(size: Design.micro, weight: sortField == field ? .semibold : .medium))
+                    .font(.system(size: 11, weight: sortField == field ? .bold : .semibold))
                     .foregroundColor(sortField == field ? .primary : .secondary)
 
                 if sortField == field {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundColor(.accentColor)
                 }
                 if alignment == .leading {
                     Spacer(minLength: 0)
                 }
             }
-            .frame(width: width, alignment: alignment)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("按\(title)\(sortField == field ? (sortAscending ? "降序" : "升序") : "排序")")
+
+        if let width = width {
+            button.frame(width: width, alignment: alignment)
+        } else {
+            button.frame(maxWidth: .infinity, alignment: alignment)
+        }
     }
 
     private func processRow(_ proc: PortProcessInfo) -> some View {
@@ -473,7 +495,7 @@ public struct PortManagerView: View {
                         .lineLimit(1)
                 }
             }
-            .frame(width: 160, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // 2. PID
             Text("\(proc.pid)")
@@ -537,6 +559,8 @@ public struct PortManagerView: View {
                     .font(.system(size: 8))
                 Text(proc.category.rawValue)
                     .font(.system(size: 9))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(badgeColor(for: proc.category))
             .padding(.horizontal, 4)
@@ -556,8 +580,6 @@ public struct PortManagerView: View {
                 .font(.system(size: Design.caption, design: .monospaced))
                 .foregroundColor(.secondary)
                 .frame(width: 65, alignment: .trailing)
-
-            Spacer()
 
             // 7. Actions: Detail (Waveform) + Terminate (Power)
             HStack(spacing: 8) {
@@ -591,8 +613,8 @@ public struct PortManagerView: View {
             }
             .frame(width: 60, alignment: .center)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .contentShape(Rectangle())
     }
 
@@ -634,34 +656,30 @@ public struct PortManagerView: View {
 
     // MARK: - Bottom Bar
 
-    private var bottomBar: some View {
-        HStack {
-            if let err = terminationErrorMessage {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundColor(.red)
-                    Text(err)
-                        .font(.system(size: Design.micro))
-                        .foregroundColor(.red)
-                }
-            }
-
+    /// Shown only when a termination failed — a failed `SIGKILL` must never be
+    /// indistinguishable from a success.
+    private var terminationErrorBar: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundColor(.red)
+            Text(terminationErrorMessage ?? "")
+                .font(.system(size: Design.micro))
+                .foregroundColor(.red)
+                .lineLimit(2)
             Spacer()
-
-            if let updated = service.lastUpdated {
-                Text("更新于 \(formattedTime(updated))")
-                    .font(.system(size: Design.micro))
+            Button {
+                terminationErrorMessage = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(.secondary)
             }
+            .buttonStyle(.plain)
+            .help("关闭提示")
+            .accessibilityLabel("关闭提示")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-    }
-
-    private func formattedTime(_ date: Date) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "HH:mm:ss"
-        return fmt.string(from: date)
     }
 
     private func executeTermination(for proc: PortProcessInfo) {

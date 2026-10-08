@@ -25,6 +25,9 @@ public struct SettingsView: View {
     @ObservedObject private var moduleManager = ModuleManager.shared
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     @ObservedObject private var inputStatsService = InputStatsService.shared
+    @ObservedObject private var aliasService = ModelAliasService.shared
+    @State private var newAliasRaw = ""
+    @State private var newAliasCanonical = ""
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var currentTheme: Int = UserDefaults.standard.integer(forKey: "CollectionBox.theme")
     @State private var hotkeyRefreshID = UUID()
@@ -168,6 +171,11 @@ public struct SettingsView: View {
                     }
                 }
 
+                // Section: Todo Snooze
+                sectionCard(title: "待办", icon: "checklist") {
+                    todoBehaviorSection
+                }
+
             }
             .padding(20)
         }
@@ -178,168 +186,308 @@ public struct SettingsView: View {
     private var modulesTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Section 1: 工作台与捕获
-                sectionCard(title: ModuleCluster.captureAndWorkspace.rawValue, icon: ModuleCluster.captureAndWorkspace.icon) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(ModuleCluster.captureAndWorkspace.subtitle)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-
-                        // Collection (Core)
-                        moduleRow(
-                            module: .collection,
-                            isCore: true,
-                            isOn: .constant(true)
-                        )
-
-                        Divider()
-
-                        // Todo
-                        moduleRow(
-                            module: .todo,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.todo) },
-                                set: { moduleManager.setEnabled(.todo, to: $0) }
-                            )
-                        )
-
-                        Divider()
-
-                        // Fleeting
-                        moduleRow(
-                            module: .fleeting,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.fleeting) },
-                                set: { moduleManager.setEnabled(.fleeting, to: $0) }
-                            )
-                        )
-
-                        Divider()
-
-                        // OTP
-                        moduleRow(
-                            module: .otp,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.otp) },
-                                set: { moduleManager.setEnabled(.otp, to: $0) }
-                            )
-                        )
-                    }
-                }
-
-                // Section 2: 数字监控与工具
-                sectionCard(title: ModuleCluster.monitoringAndTools.rawValue, icon: ModuleCluster.monitoringAndTools.icon) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(ModuleCluster.monitoringAndTools.subtitle)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-
-                        // Agent Stats
-                        moduleRow(
-                            module: .agentStats,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.agentStats) },
-                                set: { moduleManager.setEnabled(.agentStats, to: $0) }
-                            )
-                        )
-
-                        if moduleManager.isEnabled(.agentStats) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("参与统计的 Agent（至少保留一项）：")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-
-                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                                    ForEach(StatsAgent.allCases, id: \.self) { agent in
-                                        let isEnabled = agentSelection.enabledAgents.contains(agent)
-                                        Toggle(isOn: Binding(
-                                            get: { isEnabled },
-                                            set: { turnOn in
-                                                if !turnOn && agentSelection.enabledAgents.count <= 1 { return }
-                                                agentSelection.setEnabled(agent, to: turnOn)
-                                            }
-                                        )) {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: agent.symbolName)
-                                                    .font(.system(size: 11))
-                                                    .foregroundColor(.secondary)
-                                                Text(agent.label)
-                                                    .font(.system(size: 12))
-                                            }
-                                        }
-                                        .toggleStyle(.checkbox)
-                                    }
-                                }
-                            }
-                            .padding(.leading, 30)
-                            .padding(.vertical, 4)
-                        }
-
-                        Divider()
-
-                        // Input Stats
-                        moduleRow(
-                            module: .inputStats,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.inputStats) },
-                                set: { moduleManager.setEnabled(.inputStats, to: $0) }
-                            )
-                        )
-
-                        if moduleManager.isEnabled(.inputStats) {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(inputStatsService.hasAccessibilityPermission ? Color.green : Color.orange)
-                                    .frame(width: 7, height: 7)
-                                Text(inputStatsService.hasAccessibilityPermission ? "全局辅助功能权限已授予" : "未授予辅助功能权限，无法捕获全局击键")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                if !inputStatsService.hasAccessibilityPermission {
-                                    Button("去授权") {
-                                        inputStatsService.requestAccessibility()
-                                        inputStatsService.openAccessibilityPreferences()
-                                    }
-                                    .font(.system(size: 11))
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                            }
-                            .padding(.leading, 30)
-                        }
-
-                        Divider()
-
-                        // Port Manager
-                        moduleRow(
-                            module: .portManager,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.portManager) },
-                                set: { moduleManager.setEnabled(.portManager, to: $0) }
-                            )
-                        )
-
-                        Divider()
-
-                        // Process Manager
-                        moduleRow(
-                            module: .processManager,
-                            isCore: false,
-                            isOn: Binding(
-                                get: { moduleManager.isEnabled(.processManager) },
-                                set: { moduleManager.setEnabled(.processManager, to: $0) }
-                            )
-                        )
-                    }
+                // Sections are driven by ModuleCluster so the menu and this
+                // settings pane can never drift apart.
+                ForEach(ModuleCluster.allCases, id: \.rawValue) { cluster in
+                    clusterCard(cluster)
                 }
             }
             .padding(20)
+        }
+    }
+
+    private func clusterCard(_ cluster: ModuleCluster) -> some View {
+        sectionCard(title: cluster.rawValue, icon: cluster.icon) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(cluster.subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+
+                ForEach(Array(modulesIn(cluster: cluster).enumerated()), id: \.element.id) { index, module in
+                    if index > 0 { Divider() }
+                    moduleSection(module)
+                }
+            }
+        }
+    }
+
+    private func modulesIn(cluster: ModuleCluster) -> [PinnerModule] {
+        PinnerModule.allCases.filter { $0.cluster == cluster }
+    }
+
+    @ViewBuilder
+    private func moduleSection(_ module: PinnerModule) -> some View {
+        switch module {
+        case .collection:
+            moduleRow(
+                module: module,
+                isCore: true,
+                isOn: .constant(true)
+            )
+        case .todo:
+            moduleRow(
+                module: module,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.todo) },
+                    set: { moduleManager.setEnabled(.todo, to: $0) }
+                )
+            )
+        case .fleeting:
+            moduleRow(
+                module: module,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.fleeting) },
+                    set: { moduleManager.setEnabled(.fleeting, to: $0) }
+                )
+            )
+        case .otp:
+            moduleRow(
+                module: module,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.otp) },
+                    set: { moduleManager.setEnabled(.otp, to: $0) }
+                )
+            )
+        case .agentStats:
+            agentStatsSection
+        case .inputStats:
+            inputStatsSection
+        case .portManager:
+            moduleRow(
+                module: module,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.portManager) },
+                    set: { moduleManager.setEnabled(.portManager, to: $0) }
+                )
+            )
+        case .processManager:
+            moduleRow(
+                module: module,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.processManager) },
+                    set: { moduleManager.setEnabled(.processManager, to: $0) }
+                )
+            )
+        }
+    }
+
+    private var agentStatsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            moduleRow(
+                module: .agentStats,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.agentStats) },
+                    set: { moduleManager.setEnabled(.agentStats, to: $0) }
+                )
+            )
+
+            if moduleManager.isEnabled(.agentStats) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("参与统计的 Agent（至少保留一项）：")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(StatsAgent.allCases, id: \.self) { agent in
+                            let isEnabled = agentSelection.enabledAgents.contains(agent)
+                            Toggle(isOn: Binding(
+                                get: { isEnabled },
+                                set: { turnOn in
+                                    if !turnOn && agentSelection.enabledAgents.count <= 1 { return }
+                                    agentSelection.setEnabled(agent, to: turnOn)
+                                }
+                            )) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: agent.symbolName)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                    Text(agent.label)
+                                        .font(.system(size: 12))
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                }
+                .padding(.leading, 30)
+                .padding(.vertical, 4)
+
+                Divider().padding(.leading, 30).padding(.vertical, 4)
+
+                modelAliasEditor
+                    .padding(.leading, 30)
+            }
+        }
+    }
+
+    // MARK: - Model Alias Editor
+
+    /// User layer of the model-name resolution. The built-in suffix list is
+    /// shown read-only: it ships with Pinner and every user hits the same
+    /// upstream re-route, so making everyone re-add it per release would be
+    /// busywork rather than control.
+    private var modelAliasEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.merge")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Text("模型别名")
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
+                if !aliasService.aliases.isEmpty {
+                    Button("全部清除") { aliasService.removeAll() }
+                        .font(.system(size: 10))
+                        .buttonStyle(.link)
+                }
+                Button("在 Finder 中打开") { aliasService.revealInFinder() }
+                    .font(.system(size: 10))
+                    .buttonStyle(.link)
+            }
+
+            Text("Agent 上报的模型 ID 变了时（如同一个模型被换名），在这里把它们合并成一行，历史数据一并归拢。")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Built-in layer, read-only.
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text("内置规则")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Text("不可编辑 · 随版本更新")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                HStack(spacing: 4) {
+                    ForEach(ModelAliasService.builtinSuffixes, id: \.self) { suffix in
+                        Text(suffix)
+                            .font(.system(size: Design.micro, design: .monospaced))
+                            .padding(.horizontal, 5).padding(.vertical, 1.5)
+                            .background(Capsule().fill(Color.secondary.opacity(Design.slotAlpha)))
+                            .foregroundColor(.secondary)
+                            .help("自动剥除该后缀：xxx\(suffix) 与 xxx 视为同一模型")
+                    }
+                }
+            }
+
+            if aliasService.loadFailed {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                    Text("别名文件解析失败，已回退为空表。请检查 JSON 格式。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                }
+            }
+
+            // User layer, editable.
+            VStack(alignment: .leading, spacing: 4) {
+                Text("我的别名")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                if aliasService.aliases.isEmpty {
+                    Text("暂无。填写「原始 ID」与「显示为」，同一条记录会按后者合并。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ForEach(aliasService.aliases) { alias in
+                        HStack(spacing: 6) {
+                            Text(alias.raw)
+                                .font(.system(size: 11, design: .monospaced))
+                                .lineLimit(1).truncationMode(.middle)
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                            Text(alias.canonical)
+                                .font(.system(size: 11, design: .monospaced))
+                                .lineLimit(1).truncationMode(.middle)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button {
+                                aliasService.remove(alias)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.tertiary)
+                            .help("删除该别名")
+                        }
+                    }
+                }
+            }
+
+            // Add row. Blank inputs are rejected rather than stored.
+            HStack(spacing: 6) {
+                TextField("原始 ID", text: $newAliasRaw)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                TextField("显示为", text: $newAliasCanonical)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+                Button {
+                    if aliasService.upsert(raw: newAliasRaw, canonical: newAliasCanonical) {
+                        newAliasRaw = ""
+                        newAliasCanonical = ""
+                    }
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .disabled(newAliasRaw.trimmingCharacters(in: .whitespaces).isEmpty
+                          || newAliasCanonical.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("添加别名")
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private var inputStatsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            moduleRow(
+                module: .inputStats,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.inputStats) },
+                    set: { moduleManager.setEnabled(.inputStats, to: $0) }
+                )
+            )
+
+            if moduleManager.isEnabled(.inputStats) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(inputStatsService.hasAccessibilityPermission ? Color.green : Color.orange)
+                        .frame(width: 7, height: 7)
+                    Text(inputStatsService.hasAccessibilityPermission ? "全局辅助功能权限已授予" : "未授予辅助功能权限，无法捕获全局击键")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if !inputStatsService.hasAccessibilityPermission {
+                        Button("去授权") {
+                            inputStatsService.requestAccessibility()
+                            inputStatsService.openAccessibilityPreferences()
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(.leading, 30)
+            }
         }
     }
 
@@ -397,7 +545,7 @@ public struct SettingsView: View {
                 sectionCard(title: "核心功能快捷键", icon: "command") {
                     VStack(spacing: 8) {
                         hotkeyRow(
-                            title: "Agent 总览看板",
+                            title: "Agent 总览",
                             icon: "square.grid.2x2",
                             getCombo: { MenuBarController.shared?.dashboardHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordDashboardHotkey { hotkeyRefreshID = UUID() } },
@@ -429,7 +577,7 @@ public struct SettingsView: View {
                         )
                         Divider()
                         hotkeyRow(
-                            title: "OTP 验证码面板",
+                            title: "验证码面板",
                             icon: "key.fill",
                             getCombo: { MenuBarController.shared?.otpHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordOTPHotkey { hotkeyRefreshID = UUID() } },
@@ -445,7 +593,7 @@ public struct SettingsView: View {
                         )
                         Divider()
                         hotkeyRow(
-                            title: "端口管家面板",
+                            title: "端口面板",
                             icon: "network",
                             getCombo: { MenuBarController.shared?.portManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordPortManagerHotkey { hotkeyRefreshID = UUID() } },
@@ -453,7 +601,7 @@ public struct SettingsView: View {
                         )
                         Divider()
                         hotkeyRow(
-                            title: "进程管理面板",
+                            title: "进程面板",
                             icon: "speedometer",
                             getCombo: { MenuBarController.shared?.processManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordProcessManagerHotkey { hotkeyRefreshID = UUID() } },
@@ -568,10 +716,6 @@ public struct SettingsView: View {
 
                 sectionCard(title: "通用模型服务 (OpenAI 兼容端点)", icon: "sparkles") {
                     TodoSettingsView()
-                }
-
-                sectionCard(title: "待办偏好", icon: "clock.arrow.circlepath") {
-                    todoBehaviorSection
                 }
             }
             .padding(20)

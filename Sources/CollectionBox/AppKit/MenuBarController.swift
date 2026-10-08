@@ -175,83 +175,31 @@ public final class MenuBarController: NSObject {
     ) -> NSMenu {
         let m = NSMenu()
 
-        // Cluster 1: 工作台与捕获
-        var hasCapture = false
-        if modules.isEnabled(.collection) {
-            let collectionItem = NSMenuItem(title: "收藏夹", action: #selector(openCollection), keyEquivalent: "")
-            collectionItem.target = self; m.addItem(collectionItem)
-            hasCapture = true
-        }
+        // The collection drawer is the core entry; it is pinned above the
+        // clusters instead of sitting under a "录入" header with two siblings.
+        addItem(for: .collection, to: m)
 
-        if modules.isEnabled(.todo) {
-            let todoItem = NSMenuItem(title: "待办", action: #selector(showTodo), keyEquivalent: "")
-            todoItem.target = self; m.addItem(todoItem)
-            hasCapture = true
-        }
+        for cluster in ModuleCluster.allCases {
+            let members = PinnerModule.allCases.filter {
+                $0 != .collection && $0.cluster == cluster && modules.isEnabled($0)
+            }
+            guard !members.isEmpty else { continue }
 
-        if modules.isEnabled(.fleeting) {
-            let fleetingItem = NSMenuItem(title: "闪念", action: #selector(showFleeting), keyEquivalent: "")
-            fleetingItem.target = self; m.addItem(fleetingItem)
-            hasCapture = true
-        }
-
-        if modules.isEnabled(.otp) {
-            let otpItem = NSMenuItem(title: "OTP 工具", action: #selector(showOTP), keyEquivalent: "")
-            otpItem.target = self; m.addItem(otpItem)
-            hasCapture = true
-        }
-
-        if hasCapture {
-            m.addItem(.separator())
-        }
-
-        // Cluster 2: 数字监控与工具
-        var hasMonitoring = false
-        if modules.isEnabled(.agentStats) {
-            let header = NSMenuItem(title: "Agent 总览", action: #selector(openDashboard), keyEquivalent: "")
-            header.target = self; m.addItem(header)
-            hasMonitoring = true
-
-            // Submenu: 各 Agent 明细 ▶
-            let activeAgents = StatsAgent.allCases.filter { enabledAgents.contains($0) }
-            if !activeAgents.isEmpty {
-                let detailsItem = NSMenuItem(title: "各 Agent 明细", action: nil, keyEquivalent: "")
-                let sub = NSMenu()
-                for agent in activeAgents {
-                    let item = NSMenuItem(title: "\(agent.label) 统计", action: #selector(showAgentStats(_:)), keyEquivalent: "")
-                    item.target = self; item.representedObject = agent; sub.addItem(item)
+            m.addItem(.sectionHeader(title: cluster.rawValue))
+            for module in members {
+                addItem(for: module, to: m)
+                if module == .agentStats {
+                    addAgentDetails(to: m, enabledAgents: enabledAgents)
                 }
-                detailsItem.submenu = sub
-                m.addItem(detailsItem)
             }
         }
 
-        if modules.isEnabled(.inputStats) {
-            let inputStatsItem = NSMenuItem(title: "键鼠统计", action: #selector(showInputStats), keyEquivalent: "")
-            inputStatsItem.target = self; m.addItem(inputStatsItem)
-            hasMonitoring = true
-        }
+        m.addItem(.separator())
 
-        if modules.isEnabled(.portManager) {
-            let portManagerItem = NSMenuItem(title: "端口管家", action: #selector(showPortManager), keyEquivalent: "")
-            portManagerItem.target = self; m.addItem(portManagerItem)
-            hasMonitoring = true
-        }
-
-        if modules.isEnabled(.processManager) {
-            let processManagerItem = NSMenuItem(title: "进程管理", action: #selector(showProcessManager), keyEquivalent: "")
-            processManagerItem.target = self; m.addItem(processManagerItem)
-            hasMonitoring = true
-        }
-
-        if hasMonitoring {
-            m.addItem(.separator())
-        }
-
-        // Section 3: 系统与偏好
-        let settingsItem = NSMenuItem(title: "偏好设置…", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.image = nil
         m.addItem(settingsItem)
 
         m.addItem(.separator())
@@ -260,6 +208,40 @@ public final class MenuBarController: NSObject {
         quit.target = self; quit.keyEquivalentModifierMask = [.command]; m.addItem(quit)
 
         return m
+    }
+
+    private func addItem(for module: PinnerModule, to menu: NSMenu) {
+        let item = NSMenuItem(title: module.title, action: action(for: module), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+    }
+
+    private func action(for module: PinnerModule) -> Selector {
+        switch module {
+        case .collection: return #selector(openCollection)
+        case .todo: return #selector(showTodo)
+        case .fleeting: return #selector(showFleeting)
+        case .otp: return #selector(showOTP)
+        case .agentStats: return #selector(openDashboard)
+        case .inputStats: return #selector(showInputStats)
+        case .portManager: return #selector(showPortManager)
+        case .processManager: return #selector(showProcessManager)
+        }
+    }
+
+    /// Drill-down from the aggregate dashboard into each enabled agent.
+    private func addAgentDetails(to menu: NSMenu, enabledAgents: Set<StatsAgent>) {
+        let activeAgents = StatsAgent.allCases.filter { enabledAgents.contains($0) }
+        guard !activeAgents.isEmpty else { return }
+
+        let detailsItem = NSMenuItem(title: "各 Agent 明细", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for agent in activeAgents {
+            let item = NSMenuItem(title: agent.label, action: #selector(showAgentStats(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = agent; sub.addItem(item)
+        }
+        detailsItem.submenu = sub
+        menu.addItem(detailsItem)
     }
 
     @objc public func openSettings() {
@@ -273,7 +255,7 @@ public final class MenuBarController: NSObject {
     }
 
     public func recordDashboardHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置总览快捷键") { [weak self] combo in
+        HotkeyRecorder.present(title: "设置 Agent 总览快捷键") { [weak self] combo in
             self?.dashboardHotkeyManager.save(combo: combo)
             completion?()
         }
@@ -333,7 +315,7 @@ public final class MenuBarController: NSObject {
     }
 
     public func recordPortManagerHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置端口管家快捷键") { [weak self] combo in
+        HotkeyRecorder.present(title: "设置端口快捷键") { [weak self] combo in
             self?.portManagerHotkeyManager.save(combo: combo)
             completion?()
         }
@@ -348,7 +330,7 @@ public final class MenuBarController: NSObject {
     }
 
     public func recordProcessManagerHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置进程管理快捷键") { [weak self] combo in
+        HotkeyRecorder.present(title: "设置进程快捷键") { [weak self] combo in
             self?.processManagerHotkeyManager.save(combo: combo)
             completion?()
         }
@@ -378,7 +360,7 @@ public final class MenuBarController: NSObject {
     }
 
     public func recordOTPHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置 OTP 快捷键") { [weak self] combo in
+        HotkeyRecorder.present(title: "设置验证码快捷键") { [weak self] combo in
             self?.otpHotkeyManager?.save(combo: combo)
             completion?()
         }

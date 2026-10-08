@@ -61,21 +61,41 @@ final class SkillStatsService: @unchecked Sendable {
     private var cachedRecords: [SkillRecord]?
     private var cachedInstalled: Set<String>?
     private var lastScanAt: Date?
+    /// Single-flight guard so a Dashboard reload and an agent panel opening
+    /// together don't both run the four scanners over the same files.
+    private let collectGate = ScanGate()
 
     private static let diskCacheLock = NSLock()
     private static var diskCacheMemoryMap: [String: DiskSkillCacheEntry]?
+
+    /// Parse-rule version for the skill scanners. Bump it whenever a scanner's
+    /// matching logic changes: the version is part of the cache filename, so a
+    /// bump starts a fresh file instead of serving entries whose mtime/size
+    /// still match but whose records were produced by the old rules.
+    static let scannerVersion = 2
 
     static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
         let dir = base.appendingPathComponent("com.tienyeung.Pinner")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("skill_scan_cache.json")
+        // Pre-versioning caches, plus caches from any older scanner version.
+        let legacy = dir.appendingPathComponent("skill_scan_cache.json")
+        try? FileManager.default.removeItem(at: legacy)
+        for stale in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            let name = stale.lastPathComponent
+            if name.hasPrefix("skill_scan_cache.v"), name != "skill_scan_cache.v\(scannerVersion).json" {
+                try? FileManager.default.removeItem(at: stale)
+            }
+        }
+        return dir.appendingPathComponent("skill_scan_cache.v\(scannerVersion).json")
     }()
 
     init() {}
 
     func clearCacheForTesting() {
+        collectGate.reset()
+
         memoryLock.lock()
         cachedRecords = nil
         cachedInstalled = nil
@@ -250,7 +270,19 @@ final class SkillStatsService: @unchecked Sendable {
         return records
     }
 
+    /// Byte-level pre-filter tags. A line must contain at least one of these to
+    /// be worth parsing as JSON; `"Skill"` covers the tool name in every casing
+    /// variant the logs produce.
+    private static let skillLineTags: [Data] = [
+        Data("\"Skill\"".utf8),
+        Data("\"skill\"".utf8),
+    ]
+
     /// Scan WorkBuddy JSONL session logs with mtime/size persistent caching
+    ///
+    /// Uses the same mmap + byte-tag path as `WorkBuddyStatsService` so a
+    /// Dashboard refresh no longer reads the whole tree twice (this used to
+    /// decode every file into a `String` and scan it three times).
     private func scanWorkBuddy(cache: inout [String: DiskSkillCacheEntry]) -> [SkillRecord] {
         let projectsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".workbuddy/projects")
@@ -275,30 +307,25 @@ final class SkillStatsService: @unchecked Sendable {
                 continue
             }
 
+            let sid = fileURL.deletingPathExtension().lastPathComponent
             var fileRecords: [SkillRecord] = []
-            if let content = try? String(contentsOf: fileURL, encoding: .utf8),
-               content.contains("\"Skill\"") || content.contains("\"skill\"") {
-                let sid = fileURL.deletingPathExtension().lastPathComponent
-                for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-                    guard line.contains("\"function_call\""),
-                          (line.contains("\"Skill\"") || line.contains("\"skill\"")),
-                          let data = line.data(using: .utf8),
-                          let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          d["type"] as? String == "function_call" else { continue }
-                    let name = d["name"] as? String ?? ""
-                    guard name.caseInsensitiveCompare("skill") == .orderedSame else { continue }
-                    let ts = (d["timestamp"] as? NSNumber)?.int64Value ?? 0
-                    var skillName: String?
-                    if let args = d["arguments"] as? [String: Any] {
-                        skillName = (args["skill"] as? String) ?? (args["name"] as? String) ?? (args["command"] as? String)
-                    } else if let argsStr = d["arguments"] as? String,
-                              let argsData = argsStr.data(using: .utf8),
-                              let argsObj = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
-                        skillName = (argsObj["skill"] as? String) ?? (argsObj["name"] as? String) ?? (argsObj["command"] as? String)
-                    }
-                    if let skillName = skillName?.trimmingCharacters(in: .whitespacesAndNewlines), !skillName.isEmpty {
-                        fileRecords.append(SkillRecord(agent: .workbuddy, skillName: skillName, tsMs: ts, sessionId: sid))
-                    }
+            JSONLReader.forEachLine(of: fileURL, requiredTags: Self.skillLineTags) { line in
+                guard line.firstRange(of: Data("\"function_call\"".utf8)) != nil,
+                      let d = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                      d["type"] as? String == "function_call" else { return }
+                let name = d["name"] as? String ?? ""
+                guard name.caseInsensitiveCompare("skill") == .orderedSame else { return }
+                let ts = (d["timestamp"] as? NSNumber)?.int64Value ?? 0
+                var skillName: String?
+                if let args = d["arguments"] as? [String: Any] {
+                    skillName = (args["skill"] as? String) ?? (args["name"] as? String) ?? (args["command"] as? String)
+                } else if let argsStr = d["arguments"] as? String,
+                          let argsData = argsStr.data(using: .utf8),
+                          let argsObj = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
+                    skillName = (argsObj["skill"] as? String) ?? (argsObj["name"] as? String) ?? (argsObj["command"] as? String)
+                }
+                if let skillName = skillName?.trimmingCharacters(in: .whitespacesAndNewlines), !skillName.isEmpty {
+                    fileRecords.append(SkillRecord(agent: .workbuddy, skillName: skillName, tsMs: ts, sessionId: sid))
                 }
             }
 
@@ -338,40 +365,39 @@ final class SkillStatsService: @unchecked Sendable {
 
             var fileRecords: [SkillRecord] = []
             let sid = cDir.lastPathComponent
-            if let content = try? String(contentsOf: transcriptURL, encoding: .utf8), content.contains("skills") {
-                for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-                    guard line.contains("skills"),
-                          let data = line.data(using: .utf8),
-                          let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let toolCalls = d["tool_calls"] as? [[String: Any]],
-                          !toolCalls.isEmpty else { continue }
+            // Bare `skills`, no quotes: the match is a path segment such as
+            // `~/.claude/skills/<name>` inside a tool-call argument. Requiring
+            // a quoted `"skills"` here silently dropped every Antigravity row.
+            JSONLReader.forEachLine(of: transcriptURL, requiredTags: [Data("skills".utf8)]) { line in
+                guard let d = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                      let toolCalls = d["tool_calls"] as? [[String: Any]],
+                      !toolCalls.isEmpty else { return }
 
-                    let dateStr = d["created_at"] as? String
-                    let date = dateStr.flatMap { isoFormatter.date(from: $0) ?? fallbackIso.date(from: $0) }
-                    let tsMs = Int64((date?.timeIntervalSince1970 ?? 0) * 1000)
+                let dateStr = d["created_at"] as? String
+                let date = dateStr.flatMap { isoFormatter.date(from: $0) ?? fallbackIso.date(from: $0) }
+                let tsMs = Int64((date?.timeIntervalSince1970 ?? 0) * 1000)
 
-                    for tc in toolCalls {
-                        guard let args = tc["args"] as? [String: Any] else { continue }
-                        var matchedInCall = Set<String>()
+                for tc in toolCalls {
+                    guard let args = tc["args"] as? [String: Any] else { continue }
+                    var matchedInCall = Set<String>()
 
-                        for (_, val) in args {
-                            guard let strVal = val as? String, strVal.contains("skills") else { continue }
-                            let parts = strVal.split(separator: "/")
-                            for i in 0..<parts.count {
-                                if parts[i] == "skills" && i + 1 < parts.count {
-                                    var raw = String(parts[i + 1])
-                                    raw = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'\\ `;,()[]{}"))
-                                    if let firstSpace = raw.firstIndex(of: " ") {
-                                        raw = String(raw[..<firstSpace])
-                                    }
-                                    let lower = raw.lowercased()
-                                    guard !lower.isEmpty && !ignoredFolders.contains(lower) else { continue }
+                    for (_, val) in args {
+                        guard let strVal = val as? String, strVal.contains("skills") else { continue }
+                        let parts = strVal.split(separator: "/")
+                        for i in 0..<parts.count {
+                            if parts[i] == "skills" && i + 1 < parts.count {
+                                var raw = String(parts[i + 1])
+                                raw = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'\\ `;,()[]{}"))
+                                if let firstSpace = raw.firstIndex(of: " ") {
+                                    raw = String(raw[..<firstSpace])
+                                }
+                                let lower = raw.lowercased()
+                                guard !lower.isEmpty && !ignoredFolders.contains(lower) else { continue }
 
-                                    if (lowerInstalled.contains(lower) || lower.hasSuffix("-skill") || lower.hasPrefix("skill-")) && !matchedInCall.contains(lower) {
-                                        matchedInCall.insert(lower)
-                                        let canonical = installed.first { $0.caseInsensitiveCompare(raw) == .orderedSame } ?? raw
-                                        fileRecords.append(SkillRecord(agent: .gemini, skillName: canonical, tsMs: tsMs, sessionId: sid))
-                                    }
+                                if (lowerInstalled.contains(lower) || lower.hasSuffix("-skill") || lower.hasPrefix("skill-")) && !matchedInCall.contains(lower) {
+                                    matchedInCall.insert(lower)
+                                    let canonical = installed.first { $0.caseInsensitiveCompare(raw) == .orderedSame } ?? raw
+                                    fileRecords.append(SkillRecord(agent: .gemini, skillName: canonical, tsMs: tsMs, sessionId: sid))
                                 }
                             }
                         }
@@ -387,6 +413,10 @@ final class SkillStatsService: @unchecked Sendable {
 
     /// Full collect across all agents and installed directories with 180s in-memory caching
     /// and persistent mtime/size disk caching
+    ///
+    /// `force: true` bypasses the caches, so a force refresh concurrent with a
+    /// normal one must not let both run the four scanners — hence the gate,
+    /// keyed by the force flag.
     func collectAll(force: Bool = false) -> (records: [SkillRecord], installed: Set<String>) {
         memoryLock.lock()
         if !force, let existing = cachedRecords, let installed = cachedInstalled,
@@ -396,24 +426,25 @@ final class SkillStatsService: @unchecked Sendable {
         }
         memoryLock.unlock()
 
-        let installed = scanInstalledSkills()
-        var diskCache = Self.loadDiskCache()
-        let initialCount = diskCache.count
+        return collectGate.run(key: force ? "force" : "normal") {
+            let installed = scanInstalledSkills()
+            var diskCache = Self.loadDiskCache()
 
-        var allRecords: [SkillRecord] = []
-        allRecords.append(contentsOf: scanZCode())
-        allRecords.append(contentsOf: scanDsh(cache: &diskCache))
-        allRecords.append(contentsOf: scanWorkBuddy(cache: &diskCache))
-        allRecords.append(contentsOf: scanGemini(installed: installed, cache: &diskCache))
+            var allRecords: [SkillRecord] = []
+            allRecords.append(contentsOf: scanZCode())
+            allRecords.append(contentsOf: scanDsh(cache: &diskCache))
+            allRecords.append(contentsOf: scanWorkBuddy(cache: &diskCache))
+            allRecords.append(contentsOf: scanGemini(installed: installed, cache: &diskCache))
 
-        Self.saveDiskCache(diskCache)
+            Self.saveDiskCache(diskCache)
 
-        memoryLock.lock()
-        cachedRecords = allRecords
-        cachedInstalled = installed
-        lastScanAt = Date()
-        memoryLock.unlock()
+            memoryLock.lock()
+            cachedRecords = allRecords
+            cachedInstalled = installed
+            lastScanAt = Date()
+            memoryLock.unlock()
 
-        return (allRecords, installed)
+            return (allRecords, installed)
+        }
     }
 }

@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class PortManagerKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 @MainActor
 public final class PortManagerWindowController: NSObject, NSWindowDelegate {
     public static let shared = PortManagerWindowController()
@@ -31,7 +26,7 @@ public final class PortManagerWindowController: NSObject, NSWindowDelegate {
     public func showAtMouse() {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 680, h: CGFloat = 600
+        let w: CGFloat = 720, h: CGFloat = 600
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
 
@@ -45,7 +40,7 @@ public final class PortManagerWindowController: NSObject, NSWindowDelegate {
     public func showAtMenuBar(buttonFrame: NSRect) {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 680, h: CGFloat = 600
+        let w: CGFloat = 720, h: CGFloat = 600
         let x = min(buttonFrame.maxX - w, (NSScreen.main?.frame.maxX ?? 1200) - w - 10)
         let y = buttonFrame.origin.y - h - 4
         let frame = NSRect(x: max(10, x), y: y, width: w, height: h)
@@ -54,13 +49,13 @@ public final class PortManagerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = PortManagerKeyPanel(
+        let p = EscDismissablePanel(
             contentRect: frame,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
-        p.minSize = NSSize(width: 580, height: 480)
+        p.minSize = NSSize(width: 600, height: 480)
         p.level = .floating
         p.isOpaque = false
         p.backgroundColor = .clear

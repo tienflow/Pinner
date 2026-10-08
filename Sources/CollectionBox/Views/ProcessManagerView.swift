@@ -86,6 +86,11 @@ public struct ProcessManagerView: View {
                 }
                 .padding(16)
             }
+
+            if terminationErrorMessage != nil {
+                Divider().opacity(0.15)
+                terminationErrorBar
+            }
         }
         .frame(width: 720, height: 600)
         .liquidGlassBackground(cornerRadius: Design.radiusL)
@@ -124,23 +129,19 @@ public struct ProcessManagerView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.accentColor)
 
-            Text("进程管理")
+            Text("进程")
                 .font(.system(size: 14, weight: .bold))
 
-            // Status Indicator Dot
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
-
-                Text("采样中 (2s)")
-                    .font(.system(size: Design.micro, weight: .medium))
-                    .foregroundColor(.secondary)
+            // Termination progress, shown while a kill syscall is in flight.
+            if isTerminating {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("正在终止…")
+                        .font(.system(size: Design.micro, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.green.opacity(0.12))
-            .cornerRadius(Design.radiusS)
 
             Spacer()
 
@@ -531,7 +532,8 @@ public struct ProcessManagerView: View {
                     .cornerRadius(Design.radiusS)
                 }
                 .buttonStyle(.plain)
-                .help("终止此进程 (SIGKILL)")
+                .disabled(isTerminating)
+                .help(isTerminating ? "正在终止中…" : "终止此进程 (SIGKILL)")
             }
             .frame(width: 125, alignment: .center)
         }
@@ -540,13 +542,47 @@ public struct ProcessManagerView: View {
         .background(proc.isSuspended ? Color.secondary.opacity(0.04) : Color.clear)
     }
 
+    // MARK: - Termination Error Bar
+
+    /// A failed `SIGKILL` is indistinguishable from success unless we say so —
+    /// silently swallowing it makes users believe a root-owned process died.
+    private var terminationErrorBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.red)
+            Text(terminationErrorMessage ?? "")
+                .font(.system(size: Design.micro))
+                .foregroundColor(.red)
+                .lineLimit(2)
+            Spacer()
+            Button {
+                terminationErrorMessage = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("关闭提示")
+            .accessibilityLabel("关闭提示")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(Color.red.opacity(Design.wellAlpha))
+    }
+
     private func executeTermination(for proc: ManagedProcessEntry) {
+        processPendingTermination = nil
+        isTerminating = true
+        terminationErrorMessage = nil
+
         Task {
-            isTerminating = true
             let res = await service.terminateProcess(process: proc, force: true)
             isTerminating = false
-            processPendingTermination = nil
-            if case .failure(let err) = res {
+            switch res {
+            case .success:
+                terminationErrorMessage = nil
+            case .failure(let err):
                 terminationErrorMessage = err.localizedDescription
             }
         }

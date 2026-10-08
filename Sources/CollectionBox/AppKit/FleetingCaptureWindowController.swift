@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class FleetingCaptureKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 /// Floating panel controller for fleeting thoughts capture → Apple Notes.
 /// Lightweight, floating, auto-centered or mouse-adjacent, rebuilt on open.
 public final class FleetingCaptureWindowController: NSObject, NSWindowDelegate {
@@ -90,7 +85,7 @@ public final class FleetingCaptureWindowController: NSObject, NSWindowDelegate {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = FleetingCaptureKeyPanel(
+        let p = EscDismissablePanel(
             contentRect: frame,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,

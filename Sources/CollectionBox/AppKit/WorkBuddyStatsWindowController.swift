@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class WorkBuddyStatsKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
 final class WorkBuddyStatsWindowController: NSObject {
     private var panel: NSPanel?
     private(set) var isShowing = false
@@ -44,7 +39,7 @@ final class WorkBuddyStatsWindowController: NSObject {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = WorkBuddyStatsKeyPanel(contentRect: frame,
+        let p = EscDismissablePanel(contentRect: frame,
                                        styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                                        backing: .buffered, defer: true)
         p.level = .floating

@@ -1,32 +1,6 @@
 import AppKit
 import SwiftUI
 
-private final class ProcessManagerKeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func cancelOperation(_ sender: Any?) {
-        close()
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Esc
-            close()
-            return
-        }
-        super.keyDown(with: event)
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.keyCode == 53 { // Esc
-            close()
-            return true
-        }
-        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
-        return super.performKeyEquivalent(with: event)
-    }
-}
-
 @MainActor
 public final class ProcessManagerWindowController: NSObject, NSWindowDelegate {
     public static let shared = ProcessManagerWindowController()
@@ -71,7 +45,7 @@ public final class ProcessManagerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func showPanel(in frame: NSRect) {
-        let p = ProcessManagerKeyPanel(
+        let p = EscDismissablePanel(
             contentRect: frame,
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -82,7 +56,7 @@ public final class ProcessManagerWindowController: NSObject, NSWindowDelegate {
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
-        p.title = "进程管理"
+        p.title = "进程"
         p.titlebarAppearsTransparent = true
         p.titleVisibility = .hidden
         p.standardWindowButton(.closeButton)?.isHidden = true
