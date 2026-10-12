@@ -273,6 +273,15 @@ public struct SettingsView: View {
                     set: { moduleManager.setEnabled(.processManager, to: $0) }
                 )
             )
+        case .traffic:
+            moduleRow(
+                module: module,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.traffic) },
+                    set: { moduleManager.setEnabled(.traffic, to: $0) }
+                )
+            )
         }
     }
 
@@ -606,6 +615,14 @@ public struct SettingsView: View {
                             getCombo: { MenuBarController.shared?.processManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordProcessManagerHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearProcessManagerHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
+                            title: "流量统计",
+                            icon: "arrow.up.arrow.down.circle",
+                            getCombo: { MenuBarController.shared?.trafficHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordTrafficHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearTrafficHotkey(); hotkeyRefreshID = UUID() }
                         )
                     }
                 }

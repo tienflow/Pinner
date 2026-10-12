@@ -131,11 +131,12 @@ final class DshStatsService {
     /// opening together both miss the cache and both decompress every `.zstd`.
     private static let scanGate = ScanGate()
 
-    func collectRecords(sinceMs: Int64) -> [PublicRecord] {
+    func collectRecords(sinceMs: Int64, force: Bool = false) -> [PublicRecord] {
         Self.cacheLock.lock()
+        if force { Self.scanCache = nil }
         let cached = Self.scanCache
         Self.cacheLock.unlock()
-        if let cached = cached, cached.sinceMs <= sinceMs,
+        if !force, let cached = cached, cached.sinceMs <= sinceMs,
            Date().timeIntervalSince(cached.at) < 120 {
             return cached.records.filter { $0.tsMs >= sinceMs }.map(\.asPublic)
         }

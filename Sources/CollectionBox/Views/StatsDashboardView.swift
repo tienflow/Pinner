@@ -109,7 +109,6 @@ struct StatsDashboardView: View {
     @State private var allSkillRecords: [SkillRecord] = []
     @State private var installedSkills: Set<String> = []
     @State private var loadedAgents: Set<StatsAgent> = []
-    @State private var scannedAgents: Set<StatsAgent> = []
     @State private var lastUpdated: Date?
     @State private var detailTab: Int = 0
     @State private var dailySortKey: String = "date"
@@ -159,6 +158,21 @@ struct StatsDashboardView: View {
             return .ignored
         }
         .onAppear { reload() }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PinnerDashboardDidShow"))) { _ in
+            reload()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
+            if let w = notif.object as? NSWindow, w.title == "Agent 总览" {
+                if let last = lastUpdated, Date().timeIntervalSince(last) > 15 {
+                    reload()
+                }
+            }
+        }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            if DashboardWindowController.shared.isVisible {
+                reload()
+            }
+        }
         .onChange(of: range) { _, _ in updateSnapshot() }
         .onChange(of: customStart) { _, _ in if range == .custom { updateSnapshot() } }
         .onChange(of: customEnd) { _, _ in if range == .custom { updateSnapshot() } }
@@ -194,7 +208,7 @@ struct StatsDashboardView: View {
         case .custom:
             return Int64((customEnd.timeIntervalSince1970 + 86400) * 1000) // inclusive end day
         default:
-            return Int64(now.timeIntervalSince1970 * 1000)
+            return Int64.max
         }
     }
 
@@ -1392,52 +1406,48 @@ struct StatsDashboardView: View {
     // MARK: - Loading
 
     private func reload(force: Bool = false) {
-        if force { scannedAgents = [] }
-        // Agents already scanned count as loaded immediately — otherwise any
-        // selection/range change clears the set and the "scanning" banner
-        // spins forever over data that is already on screen.
-        loadedAgents = Set(visibleAgents.filter { scannedAgents.contains($0) })
-        // One all-time scan feeds the sidebar AND every range slice (records
-        // carry timestamps; range windows filter in memory). Agents already
-        // scanned this session keep their records — selection toggles don't
-        // rescan the expensive sources (DSH zstd decompression).
-        let missing = visibleAgents.filter { !scannedAgents.contains($0) }
         let keep = Set(visibleAgents)
         allRecords.removeAll { !keep.contains($0.agent) }
 
-        if !missing.isEmpty {
-            Task.detached(priority: .userInitiated) {
-                var collected: [(StatsAgent, [UnifiedUsageRecord])] = []
-                for agent in missing {
-                    let agentRecords = service.collect(agent: agent, sinceMs: 0)
-                    collected.append((agent, agentRecords))
-                }
-                let (skills, installed) = SkillStatsService.shared.collectAll(force: force)
-                await MainActor.run {
-                    for (agent, recs) in collected {
-                        allRecords.removeAll { $0.agent == agent }
-                        allRecords.append(contentsOf: recs)
-                        scannedAgents.insert(agent)
-                        loadedAgents.insert(agent)
+        let agentsToScan = visibleAgents
+        let service = self.service
+
+        guard !agentsToScan.isEmpty else {
+            loadedAgents = Set(visibleAgents)
+            return
+        }
+
+        if force {
+            loadedAgents = []
+        }
+
+        Task.detached(priority: .userInitiated) {
+            async let skillsTask = SkillStatsService.shared.collectAll(force: force)
+            var collected: [(StatsAgent, [UnifiedUsageRecord])] = []
+            await withTaskGroup(of: (StatsAgent, [UnifiedUsageRecord]).self) { group in
+                for agent in agentsToScan {
+                    group.addTask {
+                        let agentRecords = service.collect(agent: agent, sinceMs: 0, force: force)
+                        return (agent, agentRecords)
                     }
-                    self.allSkillRecords = skills
-                    self.installedSkills = installed
-                    lastUpdated = Date()
-                    updateSnapshot()
+                }
+                for await item in group {
+                    collected.append(item)
                 }
             }
-        } else {
-            Task.detached(priority: .userInitiated) {
-                let (skills, installed) = SkillStatsService.shared.collectAll(force: force)
-                await MainActor.run {
-                    self.allSkillRecords = skills
-                    self.installedSkills = installed
-                    lastUpdated = Date()
-                    updateSnapshot()
+            let (skills, installed) = await skillsTask
+            await MainActor.run {
+                for (agent, recs) in collected {
+                    allRecords.removeAll { $0.agent == agent }
+                    allRecords.append(contentsOf: recs)
+                    loadedAgents.insert(agent)
                 }
+                self.allSkillRecords = skills
+                self.installedSkills = installed
+                lastUpdated = Date()
+                updateSnapshot()
             }
         }
-        updateSnapshot()
     }
 
     private func updateSnapshot() {
@@ -1493,11 +1503,34 @@ struct StatsDashboardView: View {
         let enabledRecords = records.filter { enabledAgents.contains($0.agent) }
         let now = Date()
         let cal = Calendar.current
+        let tzOffset = Int64(TimeZone.current.secondsFromGMT())
+        let dfDate = DateFormatter(); dfDate.dateFormat = "yyyy-MM-dd"
+
+        var dayDateCache: [Int64: Date] = [:]
+        var dayStringCache: [Int64: String] = [:]
+
+        func localDayDate(for tsMs: Int64) -> Date {
+            let dayKey = (tsMs / 1000 + tzOffset) / 86400
+            if let d = dayDateCache[dayKey] { return d }
+            let midDay = TimeInterval(dayKey * 86400 - tzOffset + 43200)
+            let d = cal.startOfDay(for: Date(timeIntervalSince1970: midDay))
+            dayDateCache[dayKey] = d
+            return d
+        }
+
+        func localDayString(for tsMs: Int64) -> String {
+            let dayKey = (tsMs / 1000 + tzOffset) / 86400
+            if let s = dayStringCache[dayKey] { return s }
+            let d = localDayDate(for: tsMs)
+            let s = dfDate.string(from: d)
+            dayStringCache[dayKey] = s
+            return s
+        }
 
         // 1. Sidebar all-time stats
         let d7Tokens = enabledRecords.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
         let d30Tokens = enabledRecords.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 30 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
-        let activeDays = Set(enabledRecords.map { cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.tsMs) / 1000)) })
+        let activeDays = Set(enabledRecords.map { localDayDate(for: $0.tsMs) })
         let activeDaysCount = activeDays.count
         let dailyAvgTokens = activeDaysCount > 0 ? enabledRecords.reduce(0) { $0 + $1.tokens } / activeDaysCount : 0
         let allSessionsCount = Set(enabledRecords.map { "\($0.agent):\($0.sessionId)" }).count
@@ -1509,8 +1542,7 @@ struct StatsDashboardView: View {
                                    share: totalAll > 0 ? Double(g.tokens) / Double(totalAll) * 100 : 0) }
 
         let firstTs = enabledRecords.map(\.tsMs).min()
-        let dfDate = DateFormatter(); dfDate.dateFormat = "yyyy-MM-dd"
-        let startedText = firstTs.map { dfDate.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? "—"
+        let startedText = firstTs.map { localDayString(for: $0) } ?? "—"
 
         let maxWeeks = 26
         let today = cal.startOfDay(for: now)
@@ -1521,7 +1553,7 @@ struct StatsDashboardView: View {
 
         var heatmapDaily: [Date: Int] = [:]
         for r in enabledRecords {
-            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000))
+            let day = localDayDate(for: r.tsMs)
             heatmapDaily[day, default: 0] += r.tokens
         }
         let heatmapMaxDay = heatmapDaily.values.max() ?? 0
@@ -1573,9 +1605,8 @@ struct StatsDashboardView: View {
         let totalDurInRange = validInRange.reduce(0) { $0 + ($1.durationMs ?? 0) }
         let avgTPS: Double? = totalDurInRange > 0 ? (Double(totalOutInRange) / (Double(totalDurInRange) / 1000.0)) : nil
 
-        let groupedDays = Dictionary(grouping: current) { rec -> String in
-            let day = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(rec.tsMs) / 1000))
-            return dfDate.string(from: day)
+        let groupedDays = Dictionary(grouping: current) { rec in
+            localDayString(for: rec.tsMs)
         }
         let dayRows: [DayRow] = groupedDays.map { date, recs in
             let b = recs.filter(\.hasBreakdown)
@@ -1736,9 +1767,10 @@ struct StatsDashboardView: View {
         var hourlyFresh = Array(repeating: 0, count: 24)
         var hourlyOutput = Array(repeating: 0, count: 24)
 
+        let tzSeconds = Int64(TimeZone.current.secondsFromGMT())
         for r in records {
-            let d = Date(timeIntervalSince1970: TimeInterval(r.tsMs) / 1000)
-            let hour = calendar.component(.hour, from: d)
+            let sec = r.tsMs / 1000 + tzSeconds
+            let hour = Int(((sec % 86400) + 86400) % 86400 / 3600)
             if hour >= 0 && hour < 24 {
                 hourlyTokens[hour] += r.tokens
                 hourlyTurns[hour] += 1

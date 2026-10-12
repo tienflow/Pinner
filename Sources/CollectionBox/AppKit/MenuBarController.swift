@@ -33,6 +33,7 @@ public final class MenuBarController: NSObject {
     private let inputStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.inputStatsHotkey", eventID: 11)
     private let portManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.portManagerHotkey", eventID: 12)
     private let processManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.processManagerHotkey", eventID: 13)
+    private let trafficHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.trafficHotkey", eventID: 14)
     private let zcodeStatsController = AgentStatsWindowController(agent: .zcode)
     private let dshStatsController = AgentStatsWindowController(agent: .dsh)
     private let zcodeStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.zcodeStatsHotkey", eventID: 6)
@@ -131,6 +132,10 @@ public final class MenuBarController: NSObject {
             guard ModuleManager.shared.isEnabled(.processManager) else { return }
             self?.showProcessManager()
         }
+        trafficHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.traffic) else { return }
+            self?.showTraffic()
+        }
         dashboardHotkeyManager.register()
         zcodeStatsHotkeyManager.register()
         dshStatsHotkeyManager.register()
@@ -139,10 +144,14 @@ public final class MenuBarController: NSObject {
         inputStatsHotkeyManager.register()
         portManagerHotkeyManager.register()
         processManagerHotkeyManager.register()
+        trafficHotkeyManager.register()
 
         Task { @MainActor in
             if ModuleManager.shared.isEnabled(.inputStats) {
                 InputStatsService.shared.startMonitoring()
+            }
+            if ModuleManager.shared.isEnabled(.traffic) {
+                TrafficMonitorService.shared.startMonitoring()
             }
         }
 
@@ -226,6 +235,7 @@ public final class MenuBarController: NSObject {
         case .inputStats: return #selector(showInputStats)
         case .portManager: return #selector(showPortManager)
         case .processManager: return #selector(showProcessManager)
+        case .traffic: return #selector(showTraffic)
         }
     }
 
@@ -338,6 +348,21 @@ public final class MenuBarController: NSObject {
 
     public func clearProcessManagerHotkey() {
         processManagerHotkeyManager.clear()
+    }
+
+    public func trafficHotkeyString() -> String {
+        trafficHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordTrafficHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置流量统计快捷键") { [weak self] combo in
+            self?.trafficHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearTrafficHotkey() {
+        trafficHotkeyManager.clear()
     }
 
     public func collectionHotkeyString() -> String {
@@ -576,6 +601,17 @@ public final class MenuBarController: NSObject {
         }
     }
 
+    @objc public func showTraffic() {
+        Task { @MainActor in
+            if let btn = self.statusItem?.button {
+                let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+                TrafficWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
+            } else {
+                TrafficWindowController.shared.showAtMouse()
+            }
+        }
+    }
+
     private func showCodexStats() {
         if let btn = statusItem?.button {
             let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
@@ -623,7 +659,11 @@ public final class MenuBarController: NSObject {
     }
 
     @objc private func hidePanel() { edgeController?.collapse() }
-    @objc private func quitApp() { NSApp.terminate(nil) }
+    @MainActor
+    @objc private func quitApp() {
+        TrafficMonitorService.shared.stopMonitoring()
+        NSApp.terminate(nil)
+    }
     private func applyTheme() {
         let t = AppTheme(rawValue: UserDefaults.standard.integer(forKey: "CollectionBox.theme")) ?? .auto
         NSApp.appearance = t.appearance

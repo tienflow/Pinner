@@ -347,7 +347,15 @@ final class GeminiStatsService: Sendable {
     }
 
     /// Per-step usage records for the dashboard.
-    func collectRecords(sinceUnix: Int) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?, durationMs: Int?)] {
+    func collectRecords(sinceUnix: Int, force: Bool = false) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?, durationMs: Int?)] {
+        if force {
+            titleLock.lock()
+            titleMapCache = nil
+            titleLock.unlock()
+            Self.cacheLock.lock()
+            Self.persistentCache = nil
+            Self.cacheLock.unlock()
+        }
         let titles = conversationTitleMap()
         let conversationSteps = collectSteps(sinceUnix: sinceUnix)
         var records: [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?, durationMs: Int?)] = []
@@ -560,14 +568,23 @@ final class GeminiStatsService: Sendable {
             let cid = file.deletingPathExtension().lastPathComponent
             let values = try? file.resourceValues(forKeys: keys)
             let mdate = values?.contentModificationDate
-            let mtime = mdate?.timeIntervalSince1970 ?? 0
-            let size = Int64(values?.fileSize ?? 0)
+            var mtime = mdate?.timeIntervalSince1970 ?? 0
+            var size = Int64(values?.fileSize ?? 0)
 
-            if let mdate = mdate {
-                if mdate >= minDate {
-                    results.append(DbFileMeta(cid: cid, url: file, path: file.path, mtime: mtime, size: size))
+            let walPath = file.path + "-wal"
+            if let walAttrs = try? FileManager.default.attributesOfItem(atPath: walPath) {
+                if let walDate = walAttrs[.modificationDate] as? Date {
+                    let walTime = walDate.timeIntervalSince1970
+                    if walTime > mtime {
+                        mtime = walTime
+                    }
                 }
-            } else {
+                if let walSize = walAttrs[.size] as? NSNumber {
+                    size += walSize.int64Value
+                }
+            }
+
+            if mtime >= Double(minUnix) {
                 results.append(DbFileMeta(cid: cid, url: file, path: file.path, mtime: mtime, size: size))
             }
         }

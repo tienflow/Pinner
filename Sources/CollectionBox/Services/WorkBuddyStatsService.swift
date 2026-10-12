@@ -149,11 +149,12 @@ final class WorkBuddyStatsService: Sendable {
     /// files. The follower waits and reuses the leader's records.
     private static let scanGate = ScanGate()
 
-    private func cachedCollect(sinceMs: Int64) -> [UsageRecord] {
+    private func cachedCollect(sinceMs: Int64, force: Bool = false) -> [UsageRecord] {
         Self.cacheLock.lock()
+        if force { Self.scanCache = nil }
         let cached = Self.scanCache
         Self.cacheLock.unlock()
-        if let cached = cached, cached.sinceMs <= sinceMs,
+        if !force, let cached = cached, cached.sinceMs <= sinceMs,
            Date().timeIntervalSince(cached.at) < 120 {
             return cached.records.filter { $0.tsMs >= sinceMs }
         }
@@ -297,8 +298,8 @@ final class WorkBuddyStatsService: Sendable {
     /// Per-turn usage records for the dashboard, with the turn's session
     /// model and title resolved from the sessions table.
     /// `freshInput` = input − cache_read (input includes cached reads here).
-    func collectRecords(sinceMs: Int64) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
-        let records = cachedCollect(sinceMs: sinceMs)
+    func collectRecords(sinceMs: Int64, force: Bool = false) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
+        let records = cachedCollect(sinceMs: sinceMs, force: force)
         let info = sessionInfoMap()
         return records.map { r in
             let cached = r.cacheRead

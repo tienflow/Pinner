@@ -75,7 +75,7 @@ final class StatsDashboardService {
     private let zcode = ZCodeStatsService()
     private let dsh = DshStatsService()
 
-    func collect(agent: StatsAgent, sinceMs: Int64) -> [UnifiedUsageRecord] {
+    func collect(agent: StatsAgent, sinceMs: Int64, force: Bool = false) -> [UnifiedUsageRecord] {
         switch agent {
         case .codex:
             return codex.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
@@ -84,14 +84,14 @@ final class StatsDashboardService {
                                    hasBreakdown: false, sessionId: $0.sessionId, durationMs: nil)
             }
         case .gemini:
-            return gemini.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
+            return gemini.collectRecords(sinceUnix: Int(sinceMs / 1000), force: force).map {
                 UnifiedUsageRecord(agent: .gemini, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
                                    output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,
                                    durationMs: $0.durationMs)
             }
         case .workbuddy:
-            return workbuddy.collectRecords(sinceMs: sinceMs).map {
+            return workbuddy.collectRecords(sinceMs: sinceMs, force: force).map {
                 UnifiedUsageRecord(agent: .workbuddy, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
                                    output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,
@@ -105,7 +105,7 @@ final class StatsDashboardService {
                                    durationMs: $0.durationMs)
             }
         case .dsh:
-            return dsh.collectRecords(sinceMs: sinceMs).map {
+            return dsh.collectRecords(sinceMs: sinceMs, force: force).map {
                 UnifiedUsageRecord(agent: .dsh, model: $0.model, title: $0.title, tsMs: $0.tsMs,
                                    tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
                                    output: $0.output, hasBreakdown: true, sessionId: $0.sessionId,

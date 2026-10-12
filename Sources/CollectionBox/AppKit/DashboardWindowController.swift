@@ -7,7 +7,7 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
     static let shared = DashboardWindowController()
     private var window: NSWindow?
 
-    var isVisible: Bool { window != nil }
+    var isVisible: Bool { window?.isVisible == true }
 
     func show() {
         if window == nil {
@@ -35,15 +35,21 @@ final class DashboardWindowController: NSObject, NSWindowDelegate {
         AppActivationManager.updateActivationPolicy()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(name: NSNotification.Name("PinnerDashboardDidShow"), object: nil)
     }
 
     func close() {
-        window?.close()
+        window?.orderOut(nil)
+        AppActivationManager.updateActivationPolicy()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        AppActivationManager.updateActivationPolicy()
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {
-        // contentView holds @State; releasing the hosting view resets state so
-        // the next open starts a fresh scan.
         window?.contentView = nil
         window = nil
         AppActivationManager.updateActivationPolicy()

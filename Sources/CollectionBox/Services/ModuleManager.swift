@@ -37,6 +37,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
     case fleeting = "fleeting"
     case agentStats = "agentStats"
     case inputStats = "inputStats"
+    case traffic = "traffic"
     case portManager = "portManager"
     case processManager = "processManager"
     case otp = "otp"
@@ -53,6 +54,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .otp: return "验证码"
         case .agentStats: return "Agent 总览"
         case .inputStats: return "键鼠统计"
+        case .traffic: return "流量统计"
         case .portManager: return "端口"
         case .processManager: return "进程"
         }
@@ -72,6 +74,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
             return "跨 IDE 汇总 Codex、Antigravity、WorkBuddy 等各 Agent 的消耗与节律"
         case .inputStats:
             return "全局按键、鼠标点击、滚轮与移动距离统计，支持心流节律分析"
+        case .traffic:
+            return "整机实时上下行速率、Wi-Fi 与有线分流统计、流量走势图与进程流量排行"
         case .portManager:
             return "监控本地监听端口与开发服务，支持进程详情穿透与一键释放"
         case .processManager:
@@ -87,6 +91,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .otp: return "lock.shield"
         case .agentStats: return "chart.bar.xaxis"
         case .inputStats: return "keyboard"
+        case .traffic: return "arrow.up.arrow.down.circle"
         case .portManager: return "network"
         case .processManager: return "speedometer"
         }
@@ -101,7 +106,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         switch self {
         case .collection, .todo, .fleeting:
             return .capture
-        case .agentStats, .inputStats:
+        case .agentStats, .inputStats, .traffic:
             return .observation
         case .portManager, .processManager, .otp:
             return .tools

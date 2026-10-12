@@ -307,13 +307,16 @@ public struct InputStatsView: View {
                                 let rawH: CGFloat = ratio * chartHeight
                                 let barH: CGFloat = total > 0 ? max(4.0, rawH) : 2.0
                                 let isHovered = hoveredHour == b.hour
+                                let isPeak = peakTotal > 0 && peakBucket?.hour == b.hour && total > 0
+
+                                let barColor: Color = {
+                                    if total == 0 { return Color.secondary.opacity(0.10) }
+                                    if isPeak { return isHovered ? Color.orange.opacity(0.85) : Color.orange }
+                                    return isHovered ? Color.accentColor : Color.accentColor.opacity(0.75)
+                                }()
 
                                 RoundedRectangle(cornerRadius: 1.5)
-                                    .fill(
-                                        total > 0
-                                            ? (isHovered ? Color.accentColor : Color.accentColor.opacity(0.75))
-                                            : Color.secondary.opacity(0.10)
-                                    )
+                                    .fill(barColor)
                                     .frame(width: barWidth, height: barH)
                                     .onHover { over in
                                         hoveredHour = over ? b.hour : nil

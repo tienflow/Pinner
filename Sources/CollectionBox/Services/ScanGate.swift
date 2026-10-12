@@ -16,42 +16,56 @@ import Foundation
 ///
 /// Everything runs on a background thread — the services scan off the main actor
 /// — so waiting here introduces no main-thread stall.
-final class ScanGate {
-    private let condition = NSCondition()
-    private var inFlightKey: String?
-    private var completed: [String: Any] = [:]
+final class ScanGate: @unchecked Sendable {
+    private final class Call {
+        let condition = NSCondition()
+        var isDone = false
+        var value: Any?
+    }
+
+    private let lock = NSLock()
+    private var inFlight: [String: Call] = [:]
 
     /// Runs `scan` unless an equivalent call is already in flight, in which case
-    /// it waits and reuses that call's value. `scan` must be safe to call on a
-    /// background thread.
+    /// it waits and reuses that call's value. Once the leader finishes and
+    /// distributes the result to concurrent waiters, the key is removed so
+    /// subsequent calls perform a fresh scan.
     func run<T>(key: String, _ scan: () -> T) -> T {
-        condition.lock()
-        while inFlightKey == key {
-            condition.wait()
+        lock.lock()
+        if let call = inFlight[key] {
+            lock.unlock()
+            call.condition.lock()
+            while !call.isDone {
+                call.condition.wait()
+            }
+            let result = call.value as! T
+            call.condition.unlock()
+            return result
         }
-        if let memo = completed[key] as? T {
-            condition.unlock()
-            return memo
-        }
-        inFlightKey = key
-        condition.unlock()
 
-        // Scan outside the lock: CPU/IO heavy, must not serialize other windows.
+        let call = Call()
+        inFlight[key] = call
+        lock.unlock()
+
         let value = scan()
 
-        condition.lock()
-        completed[key] = value
-        inFlightKey = nil
-        condition.broadcast()
-        condition.unlock()
+        call.condition.lock()
+        call.value = value
+        call.isDone = true
+        call.condition.broadcast()
+        call.condition.unlock()
+
+        lock.lock()
+        inFlight.removeValue(forKey: key)
+        lock.unlock()
+
         return value
     }
 
-    /// Drops memoized results so the next `run` actually rescans. Used by force
-    /// refresh paths and by tests.
+    /// Drops any active in-flight calls state. Used by tests or reset paths.
     func reset() {
-        condition.lock()
-        completed.removeAll()
-        condition.unlock()
+        lock.lock()
+        inFlight.removeAll()
+        lock.unlock()
     }
 }
