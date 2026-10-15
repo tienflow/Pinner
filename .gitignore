@@ -16,5 +16,6 @@ build/
 Pinner.app/
 *.dmg
 
-# Session handoff artifact (kept locally, not in repo)
+# Agent instruction & session handoff artifacts (kept locally, not in repo)
+AGENTS.md
 HANDOFF.md
