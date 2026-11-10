@@ -47,13 +47,15 @@ public final class MenuBarController: NSObject {
     }
 
     public func activate() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let b = statusItem?.button else { return }
         if let sym = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "Pinner") {
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+            let config = NSImage.SymbolConfiguration(pointSize: 15.0, weight: .medium)
             let img = sym.withSymbolConfiguration(config) ?? sym
             img.isTemplate = true
             b.image = img
+            b.imagePosition = .imageOnly
+            b.imageScaling = .scaleProportionallyDown
         }
         b.sendAction(on: [.leftMouseUp, .rightMouseUp])
         b.action = #selector(handleClick(_:))
@@ -184,13 +186,12 @@ public final class MenuBarController: NSObject {
     ) -> NSMenu {
         let m = NSMenu()
 
-        // The collection drawer is the core entry; it is pinned above the
-        // clusters instead of sitting under a "录入" header with two siblings.
-        addItem(for: .collection, to: m)
-
+        // Cluster order is ModuleCluster.allCases (观测 → 录入 → 工具) and each
+        // cluster's member order comes from PinnerModule.ordered(in:), which
+        // keeps the drawer third in tools — below 进程, above 验证码.
         for cluster in ModuleCluster.allCases {
-            let members = PinnerModule.allCases.filter {
-                $0 != .collection && $0.cluster == cluster && modules.isEnabled($0)
+            let members = PinnerModule.ordered(in: cluster).filter {
+                modules.isEnabled($0)
             }
             guard !members.isEmpty else { continue }
 

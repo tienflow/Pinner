@@ -4,6 +4,7 @@ import AppKit
 struct AddOTPView: View {
     @Binding var isPresented: Bool
     var onAdd: (OTPAccount) -> Void
+    var embedded: Bool = false
 
     @State private var uriInput = ""
     @State private var errorMessage = ""
@@ -12,15 +13,32 @@ struct AddOTPView: View {
     enum AddMode { case uri, scanner }
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text("添加 OTP 账户").font(.headline)
-                Spacer()
-                Picker("", selection: $mode) {
-                    Text("粘贴 URI").tag(AddMode.uri)
-                    Text("扫描二维码").tag(AddMode.scanner)
-                }.pickerStyle(.segmented).frame(width: 180)
+        Group {
+            if embedded {
+                content
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+            } else {
+                content
+                    .padding(20)
+                    .liquidGlassBackground()
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var content: some View {
+        VStack(spacing: 14) {
+            if !embedded {
+                standaloneHeader
+            }
+
+            Picker("", selection: $mode) {
+                Text("粘贴 URI").tag(AddMode.uri)
+                Text("扫描二维码").tag(AddMode.scanner)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: .infinity)
 
             if mode == .uri {
                 uriInputView
@@ -28,29 +46,45 @@ struct AddOTPView: View {
                 QRScannerView { uri in handleScannedURI(uri) }
             }
 
-            HStack {
-                Button("取消") { isPresented = false }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                if mode == .uri {
-                    Button("添加") { addAccount() }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(uriInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+            Spacer(minLength: 0)
+
+            footer
+        }
+    }
+
+    private var standaloneHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "key.2")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.accentColor)
+            Text("添加 OTP 账户").font(.system(size: 14, weight: .bold))
+            Spacer()
+            PanelCloseButton(helpText: "关闭窗口 (⎋)") { isPresented = false }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Button("取消") { isPresented = false }
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            if mode == .uri {
+                Button("添加") { addAccount() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(uriInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(20)
-        .frame(width: 420, height: mode == .scanner ? 280 : 160)
     }
 
     private var uriInputView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("粘贴 otpauth:// URI").font(.caption).foregroundStyle(.secondary)
-            NativeTextField(text: $uriInput, placeholder: "otpauth://totp/...", autoFocus: true)
-                .frame(height: 24)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2)))
+            Text("粘贴 otpauth:// URI").font(.system(size: Design.caption)).foregroundStyle(.secondary)
+            NativeTextField(text: $uriInput, placeholder: "otpauth://totp/...", autoFocus: true, onSubmit: { addAccount() })
+                .frame(height: 26)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
             if !errorMessage.isEmpty {
-                Text(errorMessage).font(.caption).foregroundStyle(.red)
+                Text(errorMessage).font(.system(size: Design.caption)).foregroundStyle(.red)
             }
         }
     }

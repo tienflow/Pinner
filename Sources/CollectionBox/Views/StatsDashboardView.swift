@@ -44,6 +44,7 @@ struct StatsDashboardView: View {
     struct ModelRankRow: Identifiable, Sendable {
         let id: String
         let name: String
+        let provider: String?
         let agents: String
         let tokens: Int
         let sessions: Int
@@ -51,6 +52,26 @@ struct StatsDashboardView: View {
         /// Raw model names folded into this row by an alias or a built-in
         /// suffix rule. Empty when the row maps 1:1 — drives the merge badge.
         let mergedFrom: [String]
+
+        init(
+            id: String,
+            name: String,
+            provider: String? = nil,
+            agents: String,
+            tokens: Int,
+            sessions: Int,
+            tps: Double?,
+            mergedFrom: [String]
+        ) {
+            self.id = id
+            self.name = name
+            self.provider = provider
+            self.agents = agents
+            self.tokens = tokens
+            self.sessions = sessions
+            self.tps = tps
+            self.mergedFrom = mergedFrom
+        }
     }
 
     struct HourlyBucket: Identifiable, Sendable {
@@ -110,7 +131,17 @@ struct StatsDashboardView: View {
     @State private var installedSkills: Set<String> = []
     @State private var loadedAgents: Set<StatsAgent> = []
     @State private var lastUpdated: Date?
+    @State private var isRefreshing = false
+    @State private var refreshProgress = 0
+    @State private var refreshTotal = 0
+    @State private var refreshingAgents: Set<StatsAgent> = []
+    @State private var refreshToken = 0
+    @State private var pendingPublishToken: Int?
+    @State private var dimStaleData = false
+    @State private var staleDimTask: Task<Void, Never>?
     @State private var detailTab: Int = 0
+    @State private var listSearchText: String = ""
+    @FocusState private var isSearchFocused: Bool
     @State private var dailySortKey: String = "date"
     @State private var dailySortAsc: Bool = false
     @State private var sessionSortKey: String = "tokens"
@@ -127,6 +158,15 @@ struct StatsDashboardView: View {
     @State private var snapshot: DashboardSnapshot?
     @State private var snapshotTask: Task<Void, Never>?
     @State private var selectedAgentFilter: StatsAgent? = nil
+    @State private var lockedDay: Date? = nil
+    @State private var copiedModelName: String? = nil
+
+    @State private var showingWeeklyInsight: Bool = false
+    @State private var weeklyInsight: AgentWeeklyInsight? = nil
+    @State private var weeklyInsightSnapshot: DashboardSnapshot? = nil
+    @State private var isGeneratingInsight: Bool = false
+    @State private var weeklyInsightError: String? = nil
+
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     @ObservedObject private var aliasService = ModelAliasService.shared
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
@@ -147,19 +187,40 @@ struct StatsDashboardView: View {
             Divider().opacity(0.35)
             mainArea
         }
-        .frame(minWidth: 960, idealWidth: 1120, minHeight: 640, idealHeight: 760)
+        .frame(minWidth: 1080, idealWidth: 1180, maxWidth: .infinity, minHeight: 680, idealHeight: 780, maxHeight: .infinity)
         .liquidGlassBackground(cornerRadius: 16)
         .ignoresSafeArea()
         .onKeyPress(phases: .down) { press in
             if press.key == .escape {
+                if isSearchFocused {
+                    isSearchFocused = false
+                    DispatchQueue.main.async {
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                    }
+                    return .handled
+                }
+                if lockedDay != nil {
+                    lockedDay = nil
+                    return .handled
+                }
                 DashboardWindowController.shared.close()
                 return .handled
             }
             return .ignored
         }
-        .onAppear { reload() }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PinnerDashboardDidShow"))) { _ in
+        .onAppear {
+            isSearchFocused = false
             reload()
+            DispatchQueue.main.async {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PinnerDashboardDidShow"))) { _ in
+            isSearchFocused = false
+            reload()
+            DispatchQueue.main.async {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
             if let w = notif.object as? NSWindow, w.title == "Agent 总览" {
@@ -173,19 +234,48 @@ struct StatsDashboardView: View {
                 reload()
             }
         }
-        .onChange(of: range) { _, _ in updateSnapshot() }
+        .onChange(of: range) { _, _ in
+            if lockedDay != nil {
+                lockedDay = nil
+            }
+            updateSnapshot()
+        }
+        .onChange(of: lockedDay) { _, _ in updateSnapshot() }
         .onChange(of: customStart) { _, _ in if range == .custom { updateSnapshot() } }
         .onChange(of: customEnd) { _, _ in if range == .custom { updateSnapshot() } }
-        .onChange(of: enabledAgents) { _, _ in reload() }
+        .onChange(of: enabledAgents) { _, _ in reload(supersede: true) }
         // Alias edits reshape the model rows without touching the raw records.
         .onChange(of: aliasService.aliases) { _, _ in updateSnapshot() }
         .onChange(of: aliasService.loadFailed) { _, _ in updateSnapshot() }
+        .sheet(isPresented: $showingWeeklyInsight) {
+            AgentWeeklyInsightSheet(
+                insight: weeklyInsight,
+                snapshot: weeklyInsightSnapshot ?? snapshot,
+                isLoading: isGeneratingInsight,
+                errorMessage: weeklyInsightError,
+                onRegenerate: {
+                    generateWeeklyInsight(forceRefresh: true)
+                },
+                onClose: {
+                    showingWeeklyInsight = false
+                }
+            )
+        }
     }
 
     // MARK: - Range Window
 
+    private func formatLockedDay(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        return df.string(from: date)
+    }
+
     private var effectiveSinceMs: Int64 {
         let cal = Calendar.current
+        if let locked = lockedDay {
+            return Int64(cal.startOfDay(for: locked).timeIntervalSince1970 * 1000)
+        }
         let now = Date()
         switch range {
         case .today: return Int64(cal.startOfDay(for: now).timeIntervalSince1970 * 1000)
@@ -201,6 +291,11 @@ struct StatsDashboardView: View {
 
     private var effectiveUntilMs: Int64 {
         let cal = Calendar.current
+        if let locked = lockedDay {
+            let start = cal.startOfDay(for: locked)
+            let nextDay = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400)
+            return Int64(nextDay.timeIntervalSince1970 * 1000) - 1
+        }
         let now = Date()
         switch range {
         case .yesterday:
@@ -230,8 +325,14 @@ struct StatsDashboardView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 14)
             .padding(.top, 14)
+            .opacity(staleDataOpacity)
+            .animation(.easeInOut(duration: 0.25), value: dimStaleData)
         }
     }
+
+    /// Dimmed while a slow refresh is running, so the numbers on screen read
+    /// as "previous run" rather than "current".
+    private var staleDataOpacity: Double { dimStaleData ? 0.68 : 1 }
 
     private var quickStats: some View {
         HStack(spacing: 6) {
@@ -257,7 +358,7 @@ struct StatsDashboardView: View {
         let rows = snapshot?.topModels ?? []
         return VStack(alignment: .leading, spacing: 7) {
             if rows.isEmpty {
-                placeholder(loadedAgents.count < visibleAgents.count ? "正在扫描…" : "暂无数据")
+                placeholder(isRefreshing && lastUpdated == nil ? "正在扫描…" : "暂无数据")
             } else {
                 ForEach(rows) { row in
                     HStack(spacing: 6) {
@@ -269,6 +370,7 @@ struct StatsDashboardView: View {
                             .font(.system(size: Design.caption))
                             .lineLimit(1).truncationMode(.middle)
                             .help("\(row.name)：\(WorkBuddyStats.formatTokens(row.tokens)) tokens（\(String(format: "%.1f", row.share))%）")
+                        copyButton(for: row.name)
                         Spacer()
                         Text(WorkBuddyStats.formatTokens(row.tokens))
                             .font(.system(size: Design.caption, weight: .medium))
@@ -295,21 +397,39 @@ struct StatsDashboardView: View {
 
     /// Half-year contribution grid, Sun-first rows, green scale — all-time.
     private var sidebarHeatmapCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        let dfLocked = DateFormatter(); dfLocked.dateFormat = "M/d"
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
                 Text("活动热力图").font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1)
+                Spacer(minLength: 4)
                 if let heatHoverText {
                     Text(heatHoverText).font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.primary)
+                        .lineLimit(1)
+                } else if let locked = lockedDay {
+                    Button {
+                        Haptics.light()
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            lockedDay = nil
+                        }
+                    } label: {
+                        Text("已锁定 \(dfLocked.string(from: locked)) · 取消")
+                            .font(.system(size: Design.micro, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
                 } else {
                     Text(timeZoneLabel).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
             }
             if snapshot?.heatmapColumns.isEmpty ?? true {
-                placeholder(loadedAgents.count < visibleAgents.count ? "正在扫描…" : "暂无数据")
+                placeholder(isRefreshing && lastUpdated == nil ? "正在扫描…" : "暂无数据")
             } else {
                 contributionGrid
                 HStack(spacing: 3) {
+                    Text("点击方格下钻单日").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                     Spacer()
                     Text("少").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                     ForEach([0.08, 0.25, 0.45, 0.65, 0.9], id: \.self) { a in
@@ -376,17 +496,38 @@ struct StatsDashboardView: View {
                                     if ri < columns[ci].count {
                                         let day = columns[ci][ri]
                                         let tokens = daily[day] ?? 0
+                                        let isLocked = lockedDay.map { cal.isDate($0, inSameDayAs: day) } ?? false
+                                        let dayPrefix = "\(dayFormatter.string(from: day))："
                                         let hoverText = tokens > 0
-                                            ? "\(dayFormatter.string(from: day))：\(WorkBuddyStats.formatTokens(tokens)) tokens"
-                                            : "\(dayFormatter.string(from: day))：无用量"
+                                            ? "\(dayPrefix)\(WorkBuddyStats.formatTokens(tokens)) tokens\(isLocked ? " (已锁定)" : "")"
+                                            : "\(dayPrefix)无用量\(isLocked ? " (已锁定)" : "")"
                                         RoundedRectangle(cornerRadius: 2)
-                                            .fill(heatColor(tokens: tokens, maxDay: maxDay))
+                                            .fill(isLocked ? Color.accentColor.opacity(0.85) : heatColor(tokens: tokens, maxDay: maxDay))
                                             .frame(width: cell, height: cell)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .strokeBorder(isLocked ? Color.primary : Color.clear, lineWidth: isLocked ? 1.2 : 0)
+                                            )
+                                            .scaleEffect(isLocked ? 1.15 : 1.0)
                                             .contentShape(Rectangle())
-                                            .help(hoverText)
+                                            .help(isLocked ? "点击取消锁定 \(dayFormatter.string(from: day))" : "\(hoverText) · 点击锁定下钻该日")
                                             .onHover { hovering in
-                                                if hovering { heatHoverText = hoverText }
-                                                else if heatHoverText == hoverText { heatHoverText = nil }
+                                                if hovering {
+                                                    heatHoverText = hoverText
+                                                } else if heatHoverText?.hasPrefix(dayPrefix) == true {
+                                                    heatHoverText = nil
+                                                }
+                                            }
+                                            .onTapGesture {
+                                                Haptics.light()
+                                                heatHoverText = nil
+                                                withAnimation(.easeInOut(duration: 0.15)) {
+                                                    if isLocked {
+                                                        lockedDay = nil
+                                                    } else {
+                                                        lockedDay = day
+                                                    }
+                                                }
                                             }
                                     }
                                 }
@@ -412,39 +553,90 @@ struct StatsDashboardView: View {
 
     /// Daily bar chart over the last 30 days (all-time daily totals), green.
     private var sidebarTrendCard: some View {
+        let cal = Calendar.current
         let days = snapshot?.trendDays ?? []
         let values = snapshot?.trendValues ?? []
         let maxV = snapshot?.trendMax ?? 0
+        let hasLocked = lockedDay != nil
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let dfShort = DateFormatter(); dfShort.dateFormat = "M/d"
 
         return VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 4) {
                 Text("用量趋势").font(.system(size: Design.ui, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1)
+                Spacer(minLength: 4)
                 if let trendHoverText {
                     Text(trendHoverText).font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.primary)
+                        .lineLimit(1)
+                } else if let locked = lockedDay {
+                    Button {
+                        Haptics.light()
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            lockedDay = nil
+                        }
+                    } label: {
+                        Text("已锁定 \(dfShort.string(from: locked)) · 取消")
+                            .font(.system(size: Design.micro, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             if values.isEmpty {
-                placeholder(loadedAgents.count < visibleAgents.count ? "正在扫描…" : "暂无数据")
+                placeholder(isRefreshing && lastUpdated == nil ? "正在扫描…" : "暂无数据")
             } else {
                 HStack(alignment: .bottom, spacing: 2) {
                     ForEach(values.indices, id: \.self) { i in
-                        let h: CGFloat = maxV > 0 ? CGFloat(CGFloat(values[i]) / CGFloat(maxV)) * 72 : 0
-                        let hoverText = "\(df.string(from: days[i]))：\(WorkBuddyStats.formatTokens(values[i])) tokens"
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.green.opacity(values[i] > 0 ? 0.85 : 0.15))
-                            .frame(height: max(3, h))
-                            .help(hoverText)
-                            .onHover { hovering in
-                                if hovering { trendHoverText = hoverText }
-                                else if trendHoverText == hoverText { trendHoverText = nil }
+                        let day = days[i]
+                        let isLocked = lockedDay.map { cal.isDate($0, inSameDayAs: day) } ?? false
+                        let h: CGFloat = maxV > 0 ? CGFloat(CGFloat(values[i]) / CGFloat(maxV)) * 70 : 0
+                        let dayPrefix = "\(df.string(from: day))："
+                        let hoverText = "\(dayPrefix)\(WorkBuddyStats.formatTokens(values[i])) tokens\(isLocked ? " (已锁定)" : "")"
+
+                        ZStack(alignment: .bottom) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(isLocked ? Color.accentColor.opacity(0.16) : Color.clear)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .strokeBorder(isLocked ? Color.accentColor.opacity(0.45) : Color.clear, lineWidth: isLocked ? 0.8 : 0)
+                                )
+                                .frame(height: 74)
+
+                            RoundedRectangle(cornerRadius: 1.5)
+                                .fill(isLocked ? Color.accentColor : Color.green.opacity(values[i] > 0 ? 0.85 : 0.15))
+                                .frame(height: max(3, h))
+                                .opacity(hasLocked && !isLocked ? 0.42 : 1.0)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .bottom)
+                        .contentShape(Rectangle())
+                        .help(isLocked ? "点击取消锁定 \(df.string(from: day))" : "\(hoverText) · 点击锁定下钻该日")
+                        .onHover { hovering in
+                            if hovering {
+                                trendHoverText = hoverText
+                            } else if trendHoverText?.hasPrefix(dayPrefix) == true {
+                                trendHoverText = nil
                             }
+                        }
+                        .onTapGesture {
+                            Haptics.light()
+                            trendHoverText = nil
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                if isLocked {
+                                    lockedDay = nil
+                                } else {
+                                    lockedDay = day
+                                }
+                            }
+                        }
                     }
                 }
                 .frame(height: 74)
                 HStack {
                     Text(df.string(from: days.first ?? Date())).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
+                    Spacer()
+                    Text("点击柱条下钻").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                     Spacer()
                     Text(df.string(from: days.last ?? Date())).font(.system(size: Design.micro)).foregroundStyle(.tertiary)
                 }
@@ -462,43 +654,99 @@ struct StatsDashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 rangeTabs
-                totalTokenHeader
-                stackedShareBar
-                agentCards
-                hourlyFlowCard
-                detailTabs
+                VStack(alignment: .leading, spacing: 16) {
+                    totalTokenHeader
+                    stackedShareBar
+                    agentCards
+                    hourlyFlowCard
+                    detailTabs
+                }
+                .opacity(staleDataOpacity)
+                .animation(.easeInOut(duration: 0.25), value: dimStaleData)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
             .padding(.top, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var rangeTabs: some View {
-        HStack(spacing: 12) {
-            Picker("时间范围", selection: $range) {
-                ForEach(DashRange.allCases) { r in Text(r.label).tag(r) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            if range == .custom {
-                DatePicker("从", selection: $customStart, displayedComponents: .date)
-                    .font(.system(size: Design.caption))
-                DatePicker("到", selection: $customEnd, in: customStart...Date(), displayedComponents: .date)
-                    .font(.system(size: Design.caption))
-            }
-            Spacer()
-            agentVisibilityMenu
-            if let last = lastUpdated {
-                Text("刷新于 \(last, style: .time)").font(.system(size: Design.micro)).foregroundStyle(.tertiary)
-            }
-            PanelRefreshButton(isLoading: loadedAgents.count < visibleAgents.count, helpText: "刷新总览 (⌘R)") {
-                reload(force: true)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Picker(
+                    "时间范围",
+                    selection: Binding<DashRange?>(
+                        get: { lockedDay == nil ? range : nil },
+                        set: { newRange in
+                            if let newRange {
+                                if lockedDay != nil {
+                                    lockedDay = nil
+                                }
+                                if range != newRange {
+                                    range = newRange
+                                } else {
+                                    updateSnapshot()
+                                }
+                            }
+                        }
+                    )
+                ) {
+                    ForEach(DashRange.allCases) { r in Text(r.label).tag(Optional(r)) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+
+                Spacer(minLength: 4)
+                agentVisibilityMenu
+                RefreshStatusChip(
+                    isRefreshing: isRefreshing,
+                    progress: refreshProgress,
+                    total: refreshTotal,
+                    showingCache: snapshot != nil,
+                    lastUpdated: lastUpdated
+                )
+
+                Button {
+                    Haptics.levelChange()
+                    openWeeklyInsight()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("AI 周度洞察")
+                            .font(.system(size: Design.caption, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.purple.opacity(0.12))
+                    .foregroundColor(.purple)
+                    .cornerRadius(Design.radiusS)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(.plain)
+                .help("基于当前多 Agent 账本与心流节律生成周度智能复盘报告")
+
+                PanelRefreshButton(isLoading: isRefreshing, helpText: "刷新总览 (⌘R)") {
+                    reload(force: true)
+                }
+
+                PanelCloseButton(helpText: "关闭总览 (⎋ / ⌘W)") {
+                    DashboardWindowController.shared.close()
+                }
             }
 
-            PanelCloseButton(helpText: "关闭总览 (⎋ / ⌘W)") {
-                DashboardWindowController.shared.close()
+            if range == .custom && lockedDay == nil {
+                HStack(spacing: 12) {
+                    DatePicker("从", selection: $customStart, displayedComponents: .date)
+                        .font(.system(size: Design.caption))
+                    DatePicker("到", selection: $customEnd, in: customStart...Date(), displayedComponents: .date)
+                        .font(.system(size: Design.caption))
+                    Spacer()
+                }
             }
         }
     }
@@ -513,10 +761,11 @@ struct StatsDashboardView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 11, weight: .medium))
-                Text("Agent").font(.system(size: Design.caption, weight: .medium))
+                Text("Agent").font(.system(size: Design.caption, weight: .medium)).lineLimit(1)
             }
             .foregroundStyle(.secondary)
-            .frame(width: 76, height: 22)
+            .padding(.horizontal, 6)
+            .frame(height: 22)
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
@@ -543,8 +792,37 @@ struct StatsDashboardView: View {
         let hasNotice = snapshot?.hasCodexNotice ?? false
 
         return VStack(spacing: 8) {
-            Text("TOKEN 总量").font(.system(size: Design.caption, weight: .medium)).foregroundStyle(.secondary)
-                .tracking(2)
+            if let locked = lockedDay {
+                Button {
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        lockedDay = nil
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("单日锁定：\(formatLockedDay(locked)) · 点击取消")
+                            .font(.system(size: Design.caption, weight: .semibold))
+                            .lineLimit(1)
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.accentColor.opacity(0.85))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+                    .overlay(
+                        Capsule().strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.8)
+                    )
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help("点击取消单日锁定，恢复时间范围筛选 (⎋)")
+            } else {
+                Text("TOKEN 总量").font(.system(size: Design.caption, weight: .medium)).foregroundStyle(.secondary)
+                    .tracking(2)
+            }
             Text(intervalString(total))
                 .font(.system(size: 48, weight: .heavy, design: .rounded))
                 .contentTransition(.numericText())
@@ -608,8 +886,8 @@ struct StatsDashboardView: View {
                 Text("注：Codex 本地库仅记录总量，净输入/输出/缓存由其他 Agent 聚合")
                     .font(.system(size: Design.micro)).foregroundStyle(.tertiary)
             }
-            if loadedAgents.count < visibleAgents.count {
-                Text("正在扫描 \(visibleAgents.count - loadedAgents.count) 个 Agent…")
+            if !refreshingAgents.isEmpty {
+                Text("正在扫描 \(refreshingAgents.count) 个 Agent…")
                     .font(.system(size: Design.caption)).foregroundStyle(.orange)
             }
         }
@@ -666,7 +944,7 @@ struct StatsDashboardView: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 10))
                                 .foregroundStyle(agentColor[agent] ?? Color.accentColor)
-                        } else if !loadedAgents.contains(agent) {
+                        } else if !loadedAgents.contains(agent) || refreshingAgents.contains(agent) {
                             ProgressView().controlSize(.mini)
                         }
                     }
@@ -887,6 +1165,30 @@ struct StatsDashboardView: View {
                 .labelsHidden()
                 .frame(width: 360)
 
+                if let locked = lockedDay {
+                    Button {
+                        Haptics.light()
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            lockedDay = nil
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar.badge.clock")
+                                .font(.system(size: 9))
+                            Text("单日：\(formatLockedDay(locked))")
+                                .font(.system(size: Design.caption, weight: .medium))
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .help("点击取消单日锁定")
+                }
+
                 if let filter = selectedAgentFilter {
                     Button {
                         Haptics.light()
@@ -914,6 +1216,35 @@ struct StatsDashboardView: View {
 
                 Spacer()
 
+                // 搜索框（支持实时按关键词过滤）
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    TextField(listSearchPlaceholder, text: $listSearchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: Design.caption))
+                        .focused($isSearchFocused)
+                    if !listSearchText.isEmpty {
+                        Button {
+                            listSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3.5)
+                .frame(width: 175)
+                .background(Color.secondary.opacity(Design.slotAlpha), in: RoundedRectangle(cornerRadius: Design.radiusS))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Design.radiusS)
+                        .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 0.5)
+                )
+
                 if detailTab == 0 || detailTab == 3 {
                     Button {
                         if detailTab == 3 {
@@ -928,6 +1259,16 @@ struct StatsDashboardView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .help(detailTab == 3 ? "将 Skill 排行导出为 CSV" : "将每日明细导出为 CSV")
+                } else if detailTab == 2 {
+                    Button {
+                        SettingsWindowController.shared.show(tab: .modules, targetAnchor: "modelAliasEditor")
+                    } label: {
+                        Label("模型别名", systemImage: "arrow.triangle.merge")
+                            .font(.system(size: Design.caption, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("直达偏好设置中的模型别名与合并规则")
                 }
             }
 
@@ -945,16 +1286,36 @@ struct StatsDashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(Design.slotAlpha))
         .cornerRadius(Design.radiusM)
+        .onChange(of: detailTab) { _ in
+            listSearchText = ""
+            isSearchFocused = false
+            DispatchQueue.main.async {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    private var listSearchPlaceholder: String {
+        switch detailTab {
+        case 1: return "搜索会话或 Agent..."
+        case 2: return "搜索模型、供应商或 Agent..."
+        case 3: return "搜索技能或 Agent..."
+        default: return "搜索日期..."
+        }
     }
 
     private var dailyBreakdownTable: some View {
-        let rows = (snapshot?.dayRows ?? []).sorted(by: dailySort(key: dailySortKey, ascending: dailySortAsc))
+        var rows = (snapshot?.dayRows ?? []).sorted(by: dailySort(key: dailySortKey, ascending: dailySortAsc))
+        let query = listSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !query.isEmpty {
+            rows = rows.filter { $0.date.lowercased().contains(query) }
+        }
 
         return VStack(spacing: 0) {
             headerRow
             Divider()
             if rows.isEmpty {
-                placeholder("所选范围内没有数据").padding(.vertical, 16)
+                placeholder(query.isEmpty ? "所选范围内没有数据" : "未找到与「\(listSearchText)」匹配的日期").padding(.vertical, 16)
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -995,7 +1356,15 @@ struct StatsDashboardView: View {
         }
     }
 
-    private func sortHeader(_ title: String, key: String, current: String, ascending: Bool, width: CGFloat? = nil, action: @escaping () -> Void) -> some View {
+    private func sortHeader(
+        _ title: String,
+        key: String,
+        current: String,
+        ascending: Bool,
+        width: CGFloat? = nil,
+        alignment: Alignment = .trailing,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 2) {
                 Text(title)
@@ -1008,7 +1377,7 @@ struct StatsDashboardView: View {
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
-        .frame(width: width, alignment: .trailing)
+        .frame(width: width, alignment: alignment)
         .contentShape(Rectangle())
     }
 
@@ -1041,7 +1410,14 @@ struct StatsDashboardView: View {
     }
 
     private var sessionRankTable: some View {
-        let rows = snapshot?.sessionRows ?? []
+        var rows = snapshot?.sessionRows ?? []
+        let query = listSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !query.isEmpty {
+            rows = rows.filter {
+                $0.title.lowercased().contains(query) ||
+                $0.agent.label.lowercased().contains(query)
+            }
+        }
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -1056,7 +1432,7 @@ struct StatsDashboardView: View {
             .padding(.vertical, 4)
             Divider()
             if rows.isEmpty {
-                placeholder("所选范围内没有数据").padding(.vertical, 16)
+                placeholder(query.isEmpty ? "所选范围内没有数据" : "未找到与「\(listSearchText)」匹配的会话").padding(.vertical, 16)
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -1085,7 +1461,18 @@ struct StatsDashboardView: View {
     func modelSort(key: String, ascending: Bool) -> (ModelRankRow, ModelRankRow) -> Bool {
         { a, b in
             switch key {
-            case "name": return ascending ? a.name < b.name : a.name > b.name
+            case "name":
+                if a.name != b.name {
+                    return ascending ? a.name < b.name : a.name > b.name
+                }
+                return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
+            case "provider":
+                let pA = a.provider ?? ""
+                let pB = b.provider ?? ""
+                if pA != pB {
+                    return ascending ? pA < pB : pA > pB
+                }
+                return ascending ? a.tokens < b.tokens : a.tokens > b.tokens
             case "sessions": return ascending ? a.sessions < b.sessions : a.sessions > b.sessions
             case "tps":
                 let tpsA = a.tps ?? -1
@@ -1154,27 +1541,36 @@ struct StatsDashboardView: View {
     /// Cross-agent model ranking: merged by display name, share bar, tokens,
     /// sessions and percentage.
     private var modelRankTable: some View {
-        let rows: [ModelRankRow] = (snapshot?.modelRankRows ?? [])
+        var rows: [ModelRankRow] = (snapshot?.modelRankRows ?? [])
             .sorted(by: modelSort(key: modelSortKey, ascending: modelSortAsc))
+        let query = listSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !query.isEmpty {
+            rows = rows.filter {
+                $0.name.lowercased().contains(query) ||
+                $0.agents.lowercased().contains(query) ||
+                ($0.provider?.lowercased().contains(query) ?? false)
+            }
+        }
         let maxTokens = rows.map(\.tokens).max() ?? 0
         let grand = snapshot?.inRangeTotalTokens ?? 0
 
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
-                sortHeader("模型", key: "name", current: modelSortKey, ascending: modelSortAsc, action: { toggleModelSort("name") })
+                sortHeader("模型", key: "name", current: modelSortKey, ascending: modelSortAsc, alignment: .leading, action: { toggleModelSort("name") })
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 95, alignment: .leading)
-                Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 120, alignment: .leading)
-                sortHeader("Tokens", key: "tokens", current: modelSortKey, ascending: modelSortAsc, width: 105, action: { toggleModelSort("tokens") })
+                sortHeader("供应商", key: "provider", current: modelSortKey, ascending: modelSortAsc, width: 120, alignment: .leading, action: { toggleModelSort("provider") })
+                Text("Agent").font(.system(size: Design.caption, weight: .semibold)).frame(width: 85, alignment: .leading)
+                Text("份额").font(.system(size: Design.caption, weight: .semibold)).frame(width: 105, alignment: .leading)
+                sortHeader("Tokens", key: "tokens", current: modelSortKey, ascending: modelSortAsc, width: 100, action: { toggleModelSort("tokens") })
                 sortHeader("会话", key: "sessions", current: modelSortKey, ascending: modelSortAsc, width: 55, action: { toggleModelSort("sessions") })
-                sortHeader("TPS", key: "tps", current: modelSortKey, ascending: modelSortAsc, width: 75, action: { toggleModelSort("tps") })
+                sortHeader("TPS", key: "tps", current: modelSortKey, ascending: modelSortAsc, width: 70, action: { toggleModelSort("tps") })
                     .help("该模型的平均输出速度 (Tokens Per Second)")
-                Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 55, alignment: .trailing)
+                Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 50, alignment: .trailing)
             }
             .padding(.vertical, 4)
             Divider()
             if rows.isEmpty {
-                placeholder("所选范围内没有数据").padding(.vertical, 16)
+                placeholder(query.isEmpty ? "所选范围内没有数据" : "未找到与「\(listSearchText)」匹配的模型").padding(.vertical, 16)
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -1189,10 +1585,18 @@ struct StatsDashboardView: View {
                                         .foregroundStyle(.tertiary)
                                         .help("已合并 \(row.mergedFrom.count) 个原始 ID：\(row.mergedFrom.joined(separator: "、"))")
                                 }
+                                copyButton(for: row.name)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.provider ?? "—")
+                                .font(.system(size: Design.caption))
+                                .foregroundStyle(row.provider != nil ? .primary : .secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(width: 120, alignment: .leading)
+                                .help(row.provider ?? "未指定供应商")
                             Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                                .frame(width: 95, alignment: .leading)
+                                .frame(width: 85, alignment: .leading)
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
                                     RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(Design.slotAlpha))
@@ -1201,22 +1605,53 @@ struct StatsDashboardView: View {
                                         .frame(width: maxTokens > 0 ? geo.size.width * CGFloat(row.tokens) / CGFloat(maxTokens) : 0)
                                 }
                             }
-                            .frame(width: 120, height: 12)
+                            .frame(width: 105, height: 12)
                             Text(intervalString(row.tokens)).font(.system(size: Design.caption, weight: .semibold))
-                                .frame(width: 105, alignment: .trailing)
+                                .frame(width: 100, alignment: .trailing)
                             Text("\(row.sessions)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
                                 .frame(width: 55, alignment: .trailing)
                             Text(row.tps.map { String(format: "%.1f", $0) } ?? "—")
                                 .font(.system(size: Design.caption))
                                 .foregroundStyle(row.tps != nil ? .primary : .secondary)
-                                .frame(width: 75, alignment: .trailing)
+                                .frame(width: 70, alignment: .trailing)
                             Text("\(grand > 0 ? Int(Double(row.tokens) / Double(grand) * 100) : 0)%")
                                 .font(.system(size: Design.caption)).foregroundStyle(.secondary)
-                                .frame(width: 55, alignment: .trailing)
+                                .frame(width: 50, alignment: .trailing)
                         }
                         .padding(.vertical, 4)
                         Divider().opacity(0.5)
                     }
+                }
+            }
+        }
+    }
+
+    private func copyButton(for name: String) -> some View {
+        let isCopied = copiedModelName == name
+        return Button {
+            copyModelName(name)
+        } label: {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: Design.micro))
+                .foregroundStyle(isCopied ? Color.green : Color.secondary.opacity(0.65))
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isCopied ? "已复制" : "复制模型名称「\(name)」")
+    }
+
+    private func copyModelName(_ name: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(name, forType: .string)
+        Haptics.light()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copiedModelName = name
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if copiedModelName == name {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    copiedModelName = nil
                 }
             }
         }
@@ -1261,8 +1696,15 @@ struct StatsDashboardView: View {
     }
 
     private var skillRankTable: some View {
-        let rows: [SkillRankRow] = (snapshot?.skillRows ?? [])
+        var rows: [SkillRankRow] = (snapshot?.skillRows ?? [])
             .sorted(by: skillSort(key: skillSortKey, ascending: skillSortAsc))
+        let query = listSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !query.isEmpty {
+            rows = rows.filter {
+                $0.name.lowercased().contains(query) ||
+                $0.agents.contains(where: { $0.label.lowercased().contains(query) })
+            }
+        }
         let maxCalls = rows.map(\.count).max() ?? 0
         let totalCalls = snapshot?.totalSkillCalls ?? 0
         let dormant = snapshot?.dormantSkills ?? []
@@ -1281,7 +1723,7 @@ struct StatsDashboardView: View {
                         Text("沉睡技能预警")
                             .font(.system(size: Design.caption, weight: .semibold))
                             .foregroundStyle(.orange)
-                        Text("(\(dormant.count) 个本地技能在所选时间内 0 次调用)")
+                        Text("(\(dormant.count) 个本地技能连续 30 天 0 次调用)")
                             .font(.system(size: Design.micro))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -1341,7 +1783,7 @@ struct StatsDashboardView: View {
             Divider()
 
             if rows.isEmpty {
-                placeholder("所选范围内没有 Skill 调用记录").padding(.vertical, 16)
+                placeholder(query.isEmpty ? "所选范围内没有 Skill 调用记录" : "未找到与「\(listSearchText)」匹配的技能").padding(.vertical, 16)
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -1405,21 +1847,34 @@ struct StatsDashboardView: View {
 
     // MARK: - Loading
 
-    private func reload(force: Bool = false) {
-        let keep = Set(visibleAgents)
-        allRecords.removeAll { !keep.contains($0.agent) }
-
+    private func reload(force: Bool = false, supersede: Bool = false) {
         let agentsToScan = visibleAgents
-        let service = self.service
-
         guard !agentsToScan.isEmpty else {
             loadedAgents = Set(visibleAgents)
             return
         }
 
+        // A scan is already running: a second pass would only duplicate work,
+        // and whichever finishes last wins — a cached result could land on top
+        // of a fresh one.
+        if isRefreshing && !force && !supersede { return }
+
         if force {
             loadedAgents = []
         }
+
+        refreshToken &+= 1
+        let token = refreshToken
+        isRefreshing = true
+        refreshProgress = 0
+        refreshTotal = agentsToScan.count
+        refreshingAgents = Set(agentsToScan)
+        scheduleStaleDim()
+
+        let keep = Set(agentsToScan)
+        allRecords.removeAll { !keep.contains($0.agent) }
+
+        let service = self.service
 
         Task.detached(priority: .userInitiated) {
             async let skillsTask = SkillStatsService.shared.collectAll(force: force)
@@ -1433,10 +1888,18 @@ struct StatsDashboardView: View {
                 }
                 for await item in group {
                     collected.append(item)
+                    await MainActor.run {
+                        // A superseded scan must not touch the shared progress state.
+                        guard token == refreshToken else { return }
+                        refreshingAgents.remove(item.0)
+                        refreshProgress += 1
+                    }
                 }
             }
             let (skills, installed) = await skillsTask
             await MainActor.run {
+                // A newer refresh superseded this one; its result is the current truth.
+                guard token == refreshToken else { return }
                 for (agent, recs) in collected {
                     allRecords.removeAll { $0.agent == agent }
                     allRecords.append(contentsOf: recs)
@@ -1444,10 +1907,27 @@ struct StatsDashboardView: View {
                 }
                 self.allSkillRecords = skills
                 self.installedSkills = installed
-                lastUpdated = Date()
+                pendingPublishToken = token
                 updateSnapshot()
             }
         }
+    }
+
+    /// Fast refreshes (cache hits) finish in milliseconds; dimming the data
+    /// area for that long would just flicker every auto-refresh tick.
+    private func scheduleStaleDim() {
+        staleDimTask?.cancel()
+        staleDimTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            dimStaleData = true
+        }
+    }
+
+    private func cancelStaleDim() {
+        staleDimTask?.cancel()
+        staleDimTask = nil
+        dimStaleData = false
     }
 
     private func updateSnapshot() {
@@ -1460,6 +1940,7 @@ struct StatsDashboardView: View {
         let selectedFilter = selectedAgentFilter
         let sinceMs = effectiveSinceMs
         let untilMs = effectiveUntilMs
+        let dayLocked = lockedDay != nil
         let sessionKey = sessionSortKey
         let sessionAsc = sessionSortAsc
         // Snapshot the alias rules on the main actor: the detached task below
@@ -1476,6 +1957,7 @@ struct StatsDashboardView: View {
                 selectedAgentFilter: selectedFilter,
                 effectiveSinceMs: sinceMs,
                 effectiveUntilMs: untilMs,
+                isDayLocked: dayLocked,
                 sessionSortKey: sessionKey,
                 sessionSortAsc: sessionAsc,
                 aliasTable: table
@@ -1483,6 +1965,16 @@ struct StatsDashboardView: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self.snapshot = snap
+                // The refresh is only "done" once the new numbers are on screen:
+                // the snapshot build is asynchronous, so announcing it earlier
+                // would claim fresh data while the old one is still showing.
+                guard let pending = self.pendingPublishToken, pending == self.refreshToken else { return }
+                self.pendingPublishToken = nil
+                self.lastUpdated = Date()
+                self.isRefreshing = false
+                self.refreshingAgents = []
+                self.refreshProgress = self.refreshTotal
+                self.cancelStaleDim()
             }
         }
     }
@@ -1496,6 +1988,7 @@ struct StatsDashboardView: View {
         selectedAgentFilter: StatsAgent?,
         effectiveSinceMs: Int64,
         effectiveUntilMs: Int64,
+        isDayLocked: Bool = false,
         sessionSortKey: String,
         sessionSortAsc: Bool,
         aliasTable: ModelAliasTable = ModelAliasTable()
@@ -1528,18 +2021,14 @@ struct StatsDashboardView: View {
         }
 
         // 1. Sidebar all-time stats
-        let d7Tokens = enabledRecords.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
-        let d30Tokens = enabledRecords.filter { $0.tsMs >= Int64((now.timeIntervalSince1970 - 30 * 86400) * 1000) }.reduce(0) { $0 + $1.tokens }
+        let d7SinceMs = Int64((now.timeIntervalSince1970 - 7 * 86400) * 1000)
+        let d30SinceMs = Int64((now.timeIntervalSince1970 - 30 * 86400) * 1000)
+        let d7Tokens = enabledRecords.filter { $0.tsMs >= d7SinceMs }.reduce(0) { $0 + $1.tokens }
+        let d30Tokens = enabledRecords.filter { $0.tsMs >= d30SinceMs }.reduce(0) { $0 + $1.tokens }
         let activeDays = Set(enabledRecords.map { localDayDate(for: $0.tsMs) })
         let activeDaysCount = activeDays.count
         let dailyAvgTokens = activeDaysCount > 0 ? enabledRecords.reduce(0) { $0 + $1.tokens } / activeDaysCount : 0
         let allSessionsCount = Set(enabledRecords.map { "\($0.agent):\($0.sessionId)" }).count
-
-        let totalAll = enabledRecords.reduce(0) { $0 + $1.tokens }
-        let topModels = mergedModelGroups(enabledRecords, aliases: aliasTable)
-            .prefix(5).enumerated()
-            .map { i, g in RankRow(idx: i + 1, name: g.name, tokens: g.tokens,
-                                   share: totalAll > 0 ? Double(g.tokens) / Double(totalAll) * 100 : 0) }
 
         let firstTs = enabledRecords.map(\.tsMs).min()
         let startedText = firstTs.map { localDayString(for: $0) } ?? "—"
@@ -1586,11 +2075,19 @@ struct StatsDashboardView: View {
         for agent in visibleAgents {
             let recs = rawInRange.filter { $0.agent == agent }
             agentTokens[agent] = recs.reduce(0) { $0 + $1.tokens }
-            agentModelCounts[agent] = Set(recs.map { $0.model ?? "unknown" }).count
+            agentModelCounts[agent] = Set(recs.map { ModelAliasService.parseModelAndProvider($0.model).model ?? "unknown" }).count
         }
 
         let current = rawInRange.filter { selectedAgentFilter == nil || $0.agent == selectedAgentFilter }
         let inRangeTotalTokens = current.reduce(0) { $0 + $1.tokens }
+
+        let topModelSource = isDayLocked ? current : enabledRecords
+        let topModelTotal = isDayLocked ? inRangeTotalTokens : enabledRecords.reduce(0) { $0 + $1.tokens }
+        let topModels = mergedModelGroups(topModelSource, aliases: aliasTable)
+            .prefix(5).enumerated()
+            .map { i, g in RankRow(idx: i + 1, name: g.name, tokens: g.tokens,
+                                   share: topModelTotal > 0 ? Double(g.tokens) / Double(topModelTotal) * 100 : 0) }
+
         let breakdown = current.filter(\.hasBreakdown)
         let freshInput = breakdown.reduce(0) { $0 + $1.freshInput }
         let cachedInput = breakdown.reduce(0) { $0 + $1.cached }
@@ -1651,6 +2148,7 @@ struct StatsDashboardView: View {
             ModelRankRow(
                 id: g.name.lowercased(),
                 name: g.name,
+                provider: g.provider,
                 agents: g.agents.map(\.label).joined(separator: " / "),
                 tokens: g.tokens,
                 sessions: g.sessions,
@@ -1659,7 +2157,7 @@ struct StatsDashboardView: View {
             )
         }
 
-        // 3. Skill ranking and dormant detection in range
+        // 3. Skill ranking in range, and dormant detection fixed to rolling 30-day window
         let skillFiltered = skillRecords.filter { rec in
             enabledAgents.contains(rec.agent) &&
             rec.tsMs >= effectiveSinceMs &&
@@ -1702,8 +2200,15 @@ struct StatsDashboardView: View {
                 SkillRankRow(rank: i + 1, name: r.name, count: r.count, agents: r.agents, lastUsedMs: r.lastUsedMs, share: r.share)
             }
 
-        let activeKeys = Set(skillGroups.keys)
-        let dormantSkills = installedSkills.filter { !activeKeys.contains($0.lowercased()) }.sorted()
+        let activeKeys30d = Set(
+            skillRecords.lazy
+                .filter { rec in
+                    enabledAgents.contains(rec.agent) &&
+                    rec.tsMs >= d30SinceMs
+                }
+                .map { $0.skillName.lowercased() }
+        )
+        let dormantSkills = installedSkills.filter { !activeKeys30d.contains($0.lowercased()) }.sorted()
 
         // 4. Hourly Flow Rhythm
         let hourly = Self.computeHourlyMetrics(records: current, calendar: cal)
@@ -1835,11 +2340,12 @@ struct StatsDashboardView: View {
     static func mergedModelGroups(
         _ records: [UnifiedUsageRecord],
         aliases: ModelAliasTable = ModelAliasTable()
-    ) -> [(name: String, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?, mergedFrom: [String])] {
+    ) -> [(name: String, provider: String?, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?, mergedFrom: [String])] {
         struct Group {
             var tokens = 0
             var sessions = Set<String>()
             var agents = Set<StatsAgent>()
+            var providers = Set<String>()
             var casings: [String: Int] = [:]
             var validOutput = 0
             var validDurationMs = 0
@@ -1847,16 +2353,27 @@ struct StatsDashboardView: View {
         }
         var groups: [String: Group] = [:]
         for r in records {
-            // A nil model keeps the per-agent "unknown" bucket; an alias never
-            // promotes an unnamed record into a named one.
-            let display = aliases.canonicalName(for: r.model) ?? "未知（\(r.agent.label)）"
+            let (provider, parsedModel) = ModelAliasService.parseModelAndProvider(r.model)
+            let display: String
+            if let raw = r.model, let fullHit = aliases.index[raw.lowercased()] {
+                display = fullHit
+            } else if let modelName = parsedModel {
+                display = aliases.canonicalName(for: modelName) ?? modelName
+            } else {
+                display = "未知（\(r.agent.label)）"
+            }
             let key = display.lowercased()
             var g = groups[key] ?? Group()
             g.tokens += r.tokens
             g.sessions.insert("\(r.agent):\(r.sessionId)")
             g.agents.insert(r.agent)
+            if let p = provider {
+                g.providers.insert(p)
+            }
             g.casings[display, default: 0] += 1
-            if let raw = r.model { g.raws.insert(raw) }
+            if let rawM = parsedModel {
+                g.raws.insert(rawM)
+            }
             if let d = r.durationMs, d >= 100, r.output > 0 {
                 g.validOutput += r.output
                 g.validDurationMs += d
@@ -1867,10 +2384,11 @@ struct StatsDashboardView: View {
             .map { key, g in
                 let name = g.casings.max { $0.value < $1.value }?.key ?? key
                 let tps = g.validDurationMs > 0 ? Double(g.validOutput) / (Double(g.validDurationMs) / 1000.0) : nil
+                let providerStr = g.providers.isEmpty ? nil : g.providers.sorted().joined(separator: " / ")
                 // Only report sources that actually differ from the shown
                 // name, so an un-aliased model shows no badge at all.
                 let others = g.raws.filter { $0.caseInsensitiveCompare(name) != .orderedSame }.sorted()
-                return (name: name, tokens: g.tokens, sessions: g.sessions.count,
+                return (name: name, provider: providerStr, tokens: g.tokens, sessions: g.sessions.count,
                         agents: g.agents.sorted { $0.rawValue < $1.rawValue },
                         tps: tps, mergedFrom: others)
             }
@@ -1882,4 +2400,221 @@ struct StatsDashboardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
     }
+
+    // MARK: - AI Weekly Insight Runner
+
+    private func buildWeeklyInsightSnapshot() -> DashboardSnapshot? {
+        if range == .week && lockedDay == nil && selectedAgentFilter == nil, let snap = snapshot {
+            return snap
+        }
+        guard !allRecords.isEmpty || snapshot != nil else { return nil }
+        let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
+        return Self.buildSnapshot(
+            records: allRecords,
+            skillRecords: allSkillRecords,
+            installedSkills: installedSkills,
+            enabledAgents: enabledAgents,
+            visibleAgents: visibleAgents,
+            selectedAgentFilter: nil,
+            effectiveSinceMs: d7SinceMs,
+            effectiveUntilMs: Int64.max,
+            isDayLocked: false,
+            sessionSortKey: "tokens",
+            sessionSortAsc: false,
+            aliasTable: aliasService.table
+        )
+    }
+
+    private func openWeeklyInsight() {
+        let isFirstOpenInSession = (weeklyInsight == nil)
+        weeklyInsightError = nil
+        if isFirstOpenInSession {
+            isGeneratingInsight = true
+        }
+        showingWeeklyInsight = true
+
+        if let cached = AgentWeeklyInsightService.shared.getCachedInsight(),
+           Date().timeIntervalSince(cached.createdAt) < 1800 {
+            if isFirstOpenInSession {
+                let records = allRecords
+                let skillRecords = allSkillRecords
+                let installed = installedSkills
+                let enabled = enabledAgents
+                let visible = visibleAgents
+                let table = aliasService.table
+                let fallbackSnap = snapshot
+                Task {
+                    let built = await Task.detached(priority: .userInitiated) { () -> DashboardSnapshot? in
+                        guard !records.isEmpty else { return nil }
+                        let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
+                        return Self.buildSnapshot(
+                            records: records,
+                            skillRecords: skillRecords,
+                            installedSkills: installed,
+                            enabledAgents: enabled,
+                            visibleAgents: visible,
+                            selectedAgentFilter: nil,
+                            effectiveSinceMs: d7SinceMs,
+                            effectiveUntilMs: Int64.max,
+                            isDayLocked: false,
+                            sessionSortKey: "tokens",
+                            sessionSortAsc: false,
+                            aliasTable: table
+                        )
+                    }.value
+                    try? await Task.sleep(nanoseconds: 1_100_000_000)
+                    await MainActor.run {
+                        self.weeklyInsightSnapshot = built ?? fallbackSnap
+                        self.weeklyInsight = cached
+                        self.isGeneratingInsight = false
+                    }
+                }
+            } else {
+                if weeklyInsightSnapshot == nil {
+                    weeklyInsightSnapshot = buildWeeklyInsightSnapshot() ?? snapshot
+                }
+                weeklyInsight = cached
+                isGeneratingInsight = false
+            }
+        } else {
+            generateWeeklyInsight(forceRefresh: true)
+        }
+    }
+
+    private func generateWeeklyInsight(forceRefresh: Bool) {
+        if forceRefresh {
+            weeklyInsight = nil
+        }
+        isGeneratingInsight = true
+        weeklyInsightError = nil
+
+        let records = allRecords
+        let skillRecords = allSkillRecords
+        let installed = installedSkills
+        let enabled = enabledAgents
+        let visible = visibleAgents
+        let table = aliasService.table
+        let fallbackSnap = snapshot
+
+        Task {
+            let startTime = Date()
+            let builtSnap = await Task.detached(priority: .userInitiated) { () -> DashboardSnapshot? in
+                guard !records.isEmpty else { return nil }
+                let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
+                return Self.buildSnapshot(
+                    records: records,
+                    skillRecords: skillRecords,
+                    installedSkills: installed,
+                    enabledAgents: enabled,
+                    visibleAgents: visible,
+                    selectedAgentFilter: nil,
+                    effectiveSinceMs: d7SinceMs,
+                    effectiveUntilMs: Int64.max,
+                    isDayLocked: false,
+                    sessionSortKey: "tokens",
+                    sessionSortAsc: false,
+                    aliasTable: table
+                )
+            }.value
+
+            guard let snap = builtSnap ?? fallbackSnap else {
+                await MainActor.run {
+                    self.weeklyInsightError = "账本数据正在加载中，请稍后重试"
+                    self.isGeneratingInsight = false
+                }
+                return
+            }
+
+            await MainActor.run {
+                self.weeklyInsightSnapshot = snap
+            }
+
+            do {
+                let insight = try await AgentWeeklyInsightService.shared.generateInsight(
+                    snapshot: snap,
+                    forceRefresh: forceRefresh
+                )
+                let elapsed = Date().timeIntervalSince(startTime)
+                if elapsed < 1.1 {
+                    let remainNs = UInt64((1.1 - elapsed) * 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: remainNs)
+                }
+                await MainActor.run {
+                    self.weeklyInsight = insight
+                    self.isGeneratingInsight = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.weeklyInsightError = error.localizedDescription
+                    self.isGeneratingInsight = false
+                }
+            }
+        }
+    }
 }
+
+/// Header chip that tells where the numbers on screen came from: a cached
+/// snapshot while a scan is in flight, scan progress, or a fresh result.
+private struct RefreshStatusChip: View {
+    let isRefreshing: Bool
+    let progress: Int
+    let total: Int
+    let showingCache: Bool
+    let lastUpdated: Date?
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isRefreshing ? Color.accentColor : Color.secondary.opacity(0.7))
+                .frame(width: 5, height: 5)
+            if isRefreshing {
+                Text("更新中 \(progress)/\(total)")
+                    .foregroundStyle(Color.accentColor)
+                if showingCache {
+                    Text("· 缓存").foregroundStyle(.tertiary)
+                }
+            } else if let lastUpdated {
+                TimelineView(.periodic(from: .now, by: 10)) { context in
+                    Text(label(for: lastUpdated, now: context.date))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("缓存").foregroundStyle(.tertiary)
+            }
+        }
+        .font(.system(size: Design.micro))
+        .lineLimit(1)
+        .fixedSize()
+        .help(helpText)
+    }
+
+    private func label(for date: Date, now: Date) -> String {
+        let elapsed = now.timeIntervalSince(date)
+        if elapsed < 60 { return "已更新 刚刚" }
+        if elapsed < 3600 { return "已更新 \(Int(elapsed / 60)) 分钟前" }
+        return "已更新 \(Self.clock.string(from: date))"
+    }
+
+    private var helpText: String {
+        if isRefreshing {
+            return showingCache
+                ? "正在重新扫描各 Agent 数据，当前显示的是上次扫描结果"
+                : "正在扫描各 Agent 数据"
+        }
+        guard let lastUpdated else { return "尚未完成首次扫描" }
+        return "最后更新于 \(Self.stamp.string(from: lastUpdated))"
+    }
+}
+

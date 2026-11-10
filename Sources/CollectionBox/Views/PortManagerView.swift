@@ -343,6 +343,11 @@ public struct PortManagerView: View {
             // Match Path
             if proc.fullPath.lowercased().contains(cleanQuery) { return true }
 
+            // Match Working Directory / Project Folder
+            if let cwd = proc.validWorkingDirectory, cwd.lowercased().contains(cleanQuery) {
+                return true
+            }
+
             return false
         }
     }
@@ -419,7 +424,7 @@ public struct PortManagerView: View {
             Text("操作")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
-                .frame(width: 60, alignment: .center)
+                .frame(width: 84, alignment: .center)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -467,7 +472,7 @@ public struct PortManagerView: View {
 
     private func processRow(_ proc: PortProcessInfo) -> some View {
         HStack(spacing: 8) {
-            // 1. Process Icon + Name + User/Root badge
+            // 1. Process Icon + Name + User/Root badge + Project Folder
             HStack(spacing: 6) {
                 appIcon(for: proc)
                     .frame(width: 18, height: 18)
@@ -489,10 +494,32 @@ public struct PortManagerView: View {
                         }
                     }
 
-                    Text(proc.category == .docker ? (proc.containerImage ?? "docker") : (proc.user.isEmpty ? "system" : proc.user))
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(proc.category == .docker ? (proc.containerImage ?? "docker") : (proc.user.isEmpty ? "system" : proc.user))
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+
+                        if let cwd = proc.validWorkingDirectory, let folder = proc.projectFolderName {
+                            Text("·")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary.opacity(0.6))
+                            Button {
+                                service.openProjectDirectory(path: cwd)
+                            } label: {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "folder")
+                                        .font(.system(size: 8))
+                                    Text(folder)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .lineLimit(1)
+                                }
+                                .foregroundColor(.accentColor.opacity(0.9))
+                            }
+                            .buttonStyle(.plain)
+                            .help("打开项目目录: \(cwd)")
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -505,9 +532,21 @@ public struct PortManagerView: View {
 
             // 3. Ports & Network Exposure Badge
             HStack(spacing: 4) {
-                Text(proc.ports.first.map(String.init) ?? "--")
-                    .font(.system(size: Design.ui, weight: .bold, design: .monospaced))
-                    .foregroundColor(proc.category == .devServer ? .blue : .primary)
+                if let firstPort = proc.ports.first {
+                    Button {
+                        service.openInBrowser(port: firstPort)
+                    } label: {
+                        Text("\(firstPort)")
+                            .font(.system(size: Design.ui, weight: .bold, design: .monospaced))
+                            .foregroundColor(proc.category == .devServer ? .blue : .primary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("在浏览器打开 http://localhost:\(firstPort)")
+                } else {
+                    Text("--")
+                        .font(.system(size: Design.ui, weight: .bold, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
 
                 Text(proc.protocolType)
                     .font(.system(size: 8, weight: .medium))
@@ -581,8 +620,24 @@ public struct PortManagerView: View {
                 .foregroundColor(.secondary)
                 .frame(width: 65, alignment: .trailing)
 
-            // 7. Actions: Detail (Waveform) + Terminate (Power)
-            HStack(spacing: 8) {
+            // 7. Actions: Open in Browser (Safari) + Detail (Waveform) + Terminate (Power)
+            HStack(spacing: 6) {
+                // Open in Browser Button
+                if let firstPort = proc.ports.first {
+                    Button {
+                        service.openInBrowser(port: firstPort)
+                    } label: {
+                        Image(systemName: "safari")
+                            .font(.system(size: 11))
+                            .foregroundColor(.blue)
+                            .frame(width: 22, height: 22)
+                            .background(Color.blue.opacity(0.10))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("在浏览器打开 http://localhost:\(firstPort)")
+                }
+
                 // Detail Button
                 Button {
                     selectedProcessForDetail = proc
@@ -611,7 +666,7 @@ public struct PortManagerView: View {
                 .buttonStyle(.plain)
                 .help("终止此进程")
             }
-            .frame(width: 60, alignment: .center)
+            .frame(width: 84, alignment: .center)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -639,13 +694,7 @@ public struct PortManagerView: View {
             )
         }
 
-        let path = proc.fullPath
-        let icon: NSImage
-        if !path.isEmpty && FileManager.default.fileExists(atPath: path) {
-            icon = NSWorkspace.shared.icon(forFile: path)
-        } else {
-            icon = NSImage(systemSymbolName: "network", accessibilityDescription: nil) ?? NSImage()
-        }
+        let icon = PortManagerService.resolveProcessIcon(for: proc)
         return AnyView(
             Image(nsImage: icon)
                 .resizable()

@@ -71,18 +71,27 @@ public struct TrafficDayRecord: Codable, Sendable {
     public var hourlyProcesses: [Int: [String: TrafficBytes]] = [:]
     public var monitoredSeconds: Double = 0
 
+    /// 经本地代理（127.0.0.1:port）转发、按回环计量回填到真实客户端应用名下的流量。
+    /// 仅在检测到系统代理时采集；历史数据缺省为空。
+    public var proxiedClients: [String: TrafficBytes] = [:]
+    public var hourlyProxiedClients: [Int: [String: TrafficBytes]] = [:]
+
     public init(
         physical: TrafficBytes = TrafficBytes(),
         processes: [String: TrafficBytes] = [:],
         hourly: [Int: TrafficBytes] = [:],
         hourlyProcesses: [Int: [String: TrafficBytes]] = [:],
-        monitoredSeconds: Double = 0
+        monitoredSeconds: Double = 0,
+        proxiedClients: [String: TrafficBytes] = [:],
+        hourlyProxiedClients: [Int: [String: TrafficBytes]] = [:]
     ) {
         self.physical = physical
         self.processes = processes
         self.hourly = hourly
         self.hourlyProcesses = hourlyProcesses
         self.monitoredSeconds = monitoredSeconds
+        self.proxiedClients = proxiedClients
+        self.hourlyProxiedClients = hourlyProxiedClients
     }
 
     enum CodingKeys: String, CodingKey {
@@ -91,6 +100,8 @@ public struct TrafficDayRecord: Codable, Sendable {
         case hourly
         case hourlyProcesses
         case monitoredSeconds
+        case proxiedClients
+        case hourlyProxiedClients
     }
 
     public init(from decoder: Decoder) throws {
@@ -100,6 +111,14 @@ public struct TrafficDayRecord: Codable, Sendable {
         self.hourly = try container.decodeIfPresent([Int: TrafficBytes].self, forKey: .hourly) ?? [:]
         self.hourlyProcesses = try container.decodeIfPresent([Int: [String: TrafficBytes]].self, forKey: .hourlyProcesses) ?? [:]
         self.monitoredSeconds = try container.decodeIfPresent(Double.self, forKey: .monitoredSeconds) ?? 0
+        self.proxiedClients = try container.decodeIfPresent([String: TrafficBytes].self, forKey: .proxiedClients) ?? [:]
+        self.hourlyProxiedClients = try container.decodeIfPresent([Int: [String: TrafficBytes]].self, forKey: .hourlyProxiedClients) ?? [:]
+    }
+
+    /// 当前记录中经代理转发并已归属到具体应用的字节总量。
+    public func attributedProxiedTotal(hour: Int? = nil) -> UInt64 {
+        let source = hour.flatMap { hourlyProxiedClients[$0] } ?? proxiedClients
+        return source.values.reduce(0) { $0 + $1.total }
     }
 }
 
@@ -196,7 +215,8 @@ public struct TrafficLedger: Codable, Sendable {
         physical: TrafficBytes,
         processes: [String: TrafficBytes],
         seconds: Double,
-        network: TrafficNetworkContext = .all
+        network: TrafficNetworkContext = .all,
+        proxiedClients: [String: TrafficBytes] = [:]
     ) {
         if network.key == "__all__" {
             var record = days[day] ?? TrafficDayRecord()
@@ -218,6 +238,20 @@ public struct TrafficLedger: Codable, Sendable {
                 hourProcs[name] = hb
             }
             record.hourlyProcesses[hour] = hourProcs
+
+            if !proxiedClients.isEmpty {
+                var hourProxied = record.hourlyProxiedClients[hour] ?? [:]
+                for (name, value) in proxiedClients {
+                    var b = record.proxiedClients[name] ?? TrafficBytes()
+                    b.add(value)
+                    record.proxiedClients[name] = b
+
+                    var hb = hourProxied[name] ?? TrafficBytes()
+                    hb.add(value)
+                    hourProxied[name] = hb
+                }
+                record.hourlyProxiedClients[hour] = hourProxied
+            }
             days[day] = record
             return
         }
@@ -282,6 +316,20 @@ public struct TrafficLedger: Codable, Sendable {
                     }
                     result.hourlyProcesses[h] = curProcs
                 }
+                for (name, bytes) in day.proxiedClients {
+                    var value = result.proxiedClients[name] ?? TrafficBytes()
+                    value.add(bytes)
+                    result.proxiedClients[name] = value
+                }
+                for (h, hp) in day.hourlyProxiedClients {
+                    var curProcs = result.hourlyProxiedClients[h] ?? [:]
+                    for (name, bytes) in hp {
+                        var curVal = curProcs[name] ?? TrafficBytes()
+                        curVal.add(bytes)
+                        curProcs[name] = curVal
+                    }
+                    result.hourlyProxiedClients[h] = curProcs
+                }
             }
         }
         return result
@@ -322,8 +370,13 @@ public struct TrafficProcessItem: Identifiable, Equatable, Sendable {
     public var displayName: String
     public var pid: pid_t
     public var appBundlePath: String?
+    /// 展示用流量：客户端行 = 直连 external + 经代理回填；代理行 = 未归属余量。
     public var bytes: TrafficBytes
     public var isRelay: Bool
+    /// 经本地代理转发并归属到该应用的字节（客户端行）或已归属出去的合计（代理行）。
+    public var proxied: TrafficBytes
+    /// 仅代理行：该进程在物理网卡上实际转发的总量（未扣减归归属前）。
+    public var relayRawTotal: TrafficBytes
 
     public init(
         name: String,
@@ -331,7 +384,9 @@ public struct TrafficProcessItem: Identifiable, Equatable, Sendable {
         pid: pid_t = 0,
         appBundlePath: String? = nil,
         bytes: TrafficBytes,
-        isRelay: Bool = false
+        isRelay: Bool = false,
+        proxied: TrafficBytes = TrafficBytes(),
+        relayRawTotal: TrafficBytes = TrafficBytes()
     ) {
         self.name = name
         self.displayName = displayName
@@ -339,6 +394,8 @@ public struct TrafficProcessItem: Identifiable, Equatable, Sendable {
         self.appBundlePath = appBundlePath
         self.bytes = bytes
         self.isRelay = isRelay
+        self.proxied = proxied
+        self.relayRawTotal = relayRawTotal
     }
 }
 

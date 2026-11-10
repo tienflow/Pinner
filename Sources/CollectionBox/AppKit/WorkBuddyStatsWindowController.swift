@@ -13,7 +13,7 @@ final class WorkBuddyStatsWindowController: NSObject {
     func showAtMenuBar(buttonFrame: NSRect) {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 360, h: CGFloat = 336
+        let w: CGFloat = 360, h: CGFloat = 380
         let x = buttonFrame.maxX - w
         let y = buttonFrame.origin.y - h - 2
         let frame = NSRect(x: x, y: y, width: w, height: h)
@@ -24,7 +24,7 @@ final class WorkBuddyStatsWindowController: NSObject {
     func showAtMouse() {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 360, h: CGFloat = 336
+        let w: CGFloat = 360, h: CGFloat = 380
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
         let x: CGFloat

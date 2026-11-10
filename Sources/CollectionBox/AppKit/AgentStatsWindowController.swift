@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+/// Frame height that fits the title bar, range picker, metric cards, breakdown
+/// capsule, trend chart and bottom bar.
+private let agentPanelHeight: CGFloat = 380
+
 /// Compact stats panel for an agent, mirroring WorkBuddyStatsWindowController.
 final class AgentStatsWindowController: NSObject {
     private let agent: StatsAgent
@@ -20,7 +24,7 @@ final class AgentStatsWindowController: NSObject {
     func showAtMenuBar(buttonFrame: NSRect) {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 360, h: CGFloat = 336
+        let w: CGFloat = 360, h: CGFloat = agentPanelHeight
         let x = buttonFrame.maxX - w
         let y = buttonFrame.origin.y - h - 2
         let frame = NSRect(x: x, y: y, width: w, height: h)
@@ -39,7 +43,7 @@ final class AgentStatsWindowController: NSObject {
     func showAtMouse() {
         if isShowing { hide(); return }
 
-        let w: CGFloat = 360, h: CGFloat = 336
+        let w: CGFloat = 360, h: CGFloat = agentPanelHeight
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
         let x: CGFloat
@@ -51,6 +55,15 @@ final class AgentStatsWindowController: NSObject {
         let frame = NSRect(x: x, y: y, width: w, height: h)
 
         showPanel(in: frame)
+        // Autosave may restore a height other than the one used to centre the
+        // panel on the cursor; re-centre and re-clamp to the screen.
+        if let p = panel, p.frame.height != h {
+            var f = p.frame
+            f.origin.y = mouse.y - f.height / 2
+            if f.origin.y < screen.frame.minY { f.origin.y = screen.frame.minY + 4 }
+            else if f.origin.y + f.height > screen.frame.maxY { f.origin.y = screen.frame.maxY - f.height - 4 }
+            p.setFrame(f, display: true)
+        }
     }
 
     private func showPanel(in frame: NSRect) {
@@ -73,6 +86,17 @@ final class AgentStatsWindowController: NSObject {
         p.isReleasedWhenClosed = false
         // Remember user-resized size; anchor stays at the menu bar / cursor.
         p.setFrameAutosaveName("PinnerAgentStatsPanel.\(agent.rawValue)")
+        // A frame saved before the title bar existed is too short for the
+        // content. contentMinSize only bounds future resizes — it does not
+        // re-grow an already restored frame — so lift the height explicitly as
+        // well. The origin stays put, so the panel grows upward and
+        // showAtMenuBar can re-pin y underneath the menu bar icon.
+        p.contentMinSize = NSSize(width: 320, height: agentPanelHeight)
+        if p.frame.height < agentPanelHeight {
+            var f = p.frame
+            f.size.height = agentPanelHeight
+            p.setFrame(f, display: false)
+        }
 
         let hv = NSHostingView(rootView: AgentStatsView(agent: agent, onClose: { [weak self] in
             self?.hide()

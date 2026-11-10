@@ -7,10 +7,12 @@ public struct PortProcessDetailView: View {
     var onClose: () -> Void
 
     @State private var commandLine: String = ""
+    @State private var workingDirectory: String? = nil
     @State private var isLoadingCommandLine: Bool = true
     @State private var isTerminating: Bool = false
     @State private var errorMessage: String? = nil
     @State private var copiedPathToast: Bool = false
+    @State private var copiedCwdToast: Bool = false
 
     public init(
         process: PortProcessInfo,
@@ -22,16 +24,28 @@ public struct PortProcessDetailView: View {
         self.onClose = onClose
     }
 
+    private var effectiveWorkingDirectory: String? {
+        if let dir = workingDirectory ?? process.validWorkingDirectory {
+            let trimmed = dir.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && trimmed != "/" {
+                return trimmed
+            }
+        }
+        return nil
+    }
+
     public var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             // Header
             headerSection
 
             // 3-Metric Cards Grid (Port, Memory, CPU)
             metricsGrid
 
-            // Path & Command Line
-            detailsCard
+            // Path, Working Directory & Command Line
+            ScrollView(.vertical, showsIndicators: false) {
+                detailsCard
+            }
 
             if let error = errorMessage {
                 HStack(spacing: 6) {
@@ -53,11 +67,19 @@ public struct PortProcessDetailView: View {
             bottomActionsBar
         }
         .padding(20)
-        .frame(width: 480, height: 420)
+        .frame(width: 500, height: 460)
         .liquidGlassBackground(cornerRadius: Design.radiusL)
         .task {
             isLoadingCommandLine = true
-            commandLine = await service.fetchCommandLine(for: process.pid)
+            workingDirectory = process.validWorkingDirectory
+            async let cmdTask = service.fetchCommandLine(for: process.pid)
+            async let cwdTask: String? = (process.validWorkingDirectory == nil)
+                ? service.fetchWorkingDirectory(for: process.pid)
+                : process.validWorkingDirectory
+            commandLine = await cmdTask
+            if let resolvedCwd = await cwdTask {
+                workingDirectory = resolvedCwd
+            }
             isLoadingCommandLine = false
         }
     }
@@ -180,13 +202,7 @@ public struct PortProcessDetailView: View {
             )
         }
 
-        let path = process.fullPath
-        let icon: NSImage
-        if !path.isEmpty && FileManager.default.fileExists(atPath: path) {
-            icon = NSWorkspace.shared.icon(forFile: path)
-        } else {
-            icon = NSImage(systemSymbolName: "network", accessibilityDescription: nil) ?? NSImage()
-        }
+        let icon = PortManagerService.resolveProcessIcon(for: process)
 
         return AnyView(
             Image(nsImage: icon)
@@ -202,7 +218,7 @@ public struct PortProcessDetailView: View {
         HStack(spacing: 10) {
             // Port Card
             metricCard(title: process.ports.count > 1 ? "监听端口 (\(process.ports.count))" : "监听端口") {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .center, spacing: 4) {
                     Text(":\(process.ports.first.map(String.init) ?? "--")")
                         .font(.system(size: 19, weight: .bold, design: .monospaced))
                         .foregroundColor(.blue)
@@ -226,6 +242,23 @@ public struct PortProcessDetailView: View {
                             .background(Color.primary.opacity(Design.slotAlpha))
                             .cornerRadius(3)
                             .help("全部端口: \(process.portsDisplayString)")
+                    }
+
+                    Spacer(minLength: 2)
+
+                    if let firstPort = process.ports.first {
+                        Button {
+                            service.openInBrowser(port: firstPort)
+                        } label: {
+                            Image(systemName: "safari")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.blue)
+                                .frame(width: 22, height: 22)
+                                .background(Color.blue.opacity(0.12))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("在浏览器打开 (http://localhost:\(firstPort))")
                     }
                 }
             }
@@ -264,10 +297,153 @@ public struct PortProcessDetailView: View {
         .cornerRadius(Design.radiusM)
     }
 
-    // MARK: - Path and Command Line Card
+    // MARK: - Path, Working Directory and Command Line Card
 
     private var detailsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Quick Browser Launch Strip for Listening Ports
+            if let firstPort = process.ports.first {
+                HStack(spacing: 8) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 11))
+                        .foregroundColor(.blue)
+                    Text("本地服务直达")
+                        .font(.system(size: Design.caption, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+
+                    Button {
+                        service.openInBrowser(port: firstPort)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "safari")
+                                .font(.system(size: 10))
+                            Text("在浏览器打开 (http://localhost:\(firstPort))")
+                                .font(.system(size: Design.micro, weight: .medium, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.10))
+                        .cornerRadius(Design.radiusS)
+                    }
+                    .buttonStyle(.plain)
+                    .help("在默认浏览器中打开 http://localhost:\(firstPort)")
+
+                    ForEach(Array(process.ports.dropFirst().prefix(2)), id: \.self) { port in
+                        Button {
+                            service.openInBrowser(port: port)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "safari")
+                                    .font(.system(size: 9))
+                                Text(":\(port)")
+                                    .font(.system(size: Design.micro, weight: .semibold, design: .monospaced))
+                                    .lineLimit(1)
+                            }
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.10))
+                            .cornerRadius(Design.radiusS)
+                        }
+                        .buttonStyle(.plain)
+                        .help("在默认浏览器中打开 http://localhost:\(port)")
+                    }
+                }
+            }
+
+            // Working Directory / Project Path (when available and != "/")
+            if let cwd = effectiveWorkingDirectory {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.badge.gearshape")
+                            .font(.system(size: 10))
+                            .foregroundColor(.accentColor)
+                        Text("工作目录 / 项目路径")
+                            .font(.system(size: Design.caption, weight: .medium))
+                            .foregroundColor(.secondary)
+
+                        if let folderName = (cwd as NSString).lastPathComponent as String?, !folderName.isEmpty {
+                            Text(folderName)
+                                .font(.system(size: Design.micro, weight: .semibold))
+                                .foregroundColor(.accentColor)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.12))
+                                .cornerRadius(3)
+                        }
+
+                        Spacer()
+
+                        if copiedCwdToast {
+                            Text("已拷贝")
+                                .font(.system(size: Design.micro, weight: .medium))
+                                .foregroundColor(.green)
+                        }
+
+                        Button {
+                            service.openProjectDirectory(path: cwd)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 9))
+                                Text("打开项目目录")
+                                    .font(.system(size: Design.micro, weight: .medium))
+                            }
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2.5)
+                            .background(Color.primary.opacity(Design.hoverAlpha))
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("在 Finder 中打开该进程所在工作目录")
+
+                        Button {
+                            service.openInTerminal(path: cwd)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "terminal")
+                                    .font(.system(size: 9))
+                                Text("在终端打开")
+                                    .font(.system(size: Design.micro, weight: .medium))
+                            }
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2.5)
+                            .background(Color.primary.opacity(Design.hoverAlpha))
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("在终端中打开此工作目录")
+                    }
+
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(cwd, forType: .string)
+                        Haptics.light()
+                        copiedCwdToast = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            copiedCwdToast = false
+                        }
+                    } label: {
+                        Text(cwd)
+                            .font(.system(size: Design.ui, design: .monospaced))
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color.primary.opacity(Design.slotAlpha))
+                            .cornerRadius(Design.radiusS)
+                    }
+                    .buttonStyle(.plain)
+                    .help("点击拷贝工作目录路径")
+                }
+            }
+
             // All Ports if multiple
             if process.ports.count > 1 {
                 VStack(alignment: .leading, spacing: 4) {
@@ -362,13 +538,13 @@ public struct PortProcessDetailView: View {
     // MARK: - Bottom Actions
 
     private var bottomActionsBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             // Open file location button
             Button {
                 service.revealInFinder(path: process.fullPath)
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "folder")
+                    Image(systemName: "doc.viewfinder")
                         .font(.system(size: 11))
                     Text("打开文件位置")
                         .font(.system(size: Design.ui, weight: .medium))
@@ -380,6 +556,24 @@ public struct PortProcessDetailView: View {
             }
             .buttonStyle(.plain)
             .disabled(process.fullPath.isEmpty)
+
+            if let cwd = effectiveWorkingDirectory {
+                Button {
+                    service.openProjectDirectory(path: cwd)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                        Text("打开项目目录")
+                            .font(.system(size: Design.ui, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.primary.opacity(Design.hoverAlpha))
+                    .cornerRadius(Design.radiusS)
+                }
+                .buttonStyle(.plain)
+            }
 
             Spacer()
 

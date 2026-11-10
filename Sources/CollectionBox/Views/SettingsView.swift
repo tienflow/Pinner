@@ -31,12 +31,11 @@ public struct SettingsView: View {
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var currentTheme: Int = UserDefaults.standard.integer(forKey: "CollectionBox.theme")
     @State private var hotkeyRefreshID = UUID()
+    @State private var targetAnchor: String?
 
-    @AppStorage("CollectionBox.shelfTrashOriginalOnDragOut")
-    private var shelfTrashOriginalOnDragOut: Bool = false
-
-    public init(initialTab: SettingsTab = .general) {
+    public init(initialTab: SettingsTab = .general, targetAnchor: String? = nil) {
         _selectedTab = State(initialValue: initialTab)
+        _targetAnchor = State(initialValue: targetAnchor)
     }
 
     public var body: some View {
@@ -57,7 +56,7 @@ public struct SettingsView: View {
                 .frame(width: 32, alignment: .trailing)
             }
             .frame(height: 52)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
 
             Divider().opacity(0.35)
 
@@ -133,23 +132,6 @@ public struct SettingsView: View {
                     }
                 }
 
-                // Section: Drop Shelf Physical Move
-                sectionCard(title: "临时中转架", icon: "shippingbox") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("拖出后将源文件移至废纸篓（物理剪切）")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("从暂存架拖出文件后，自动将源文件移入废纸篓并移出暂存架，实现物理剪切；可在废纸篓中随时放回")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $shelfTrashOriginalOnDragOut)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                    }
-                }
-
                 // Section: Appearance
                 sectionCard(title: "外观主题", icon: "paintpalette") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -184,15 +166,26 @@ public struct SettingsView: View {
     // MARK: - Tab 2: Feature Modules
 
     private var modulesTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Sections are driven by ModuleCluster so the menu and this
-                // settings pane can never drift apart.
-                ForEach(ModuleCluster.allCases, id: \.rawValue) { cluster in
-                    clusterCard(cluster)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Sections are driven by ModuleCluster so the menu and this
+                    // settings pane can never drift apart.
+                    ForEach(ModuleCluster.allCases, id: \.rawValue) { cluster in
+                        clusterCard(cluster)
+                    }
+                }
+                .padding(20)
+            }
+            .onAppear {
+                if let anchor = targetAnchor {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(anchor, anchor: .top)
+                        }
+                    }
                 }
             }
-            .padding(20)
         }
     }
 
@@ -212,7 +205,7 @@ public struct SettingsView: View {
     }
 
     private func modulesIn(cluster: ModuleCluster) -> [PinnerModule] {
-        PinnerModule.allCases.filter { $0.cluster == cluster }
+        PinnerModule.ordered(in: cluster)
     }
 
     @ViewBuilder
@@ -330,6 +323,7 @@ public struct SettingsView: View {
                 Divider().padding(.leading, 30).padding(.vertical, 4)
 
                 modelAliasEditor
+                    .id("modelAliasEditor")
                     .padding(.leading, 30)
             }
         }

@@ -1,12 +1,22 @@
 import AppKit
 import SwiftUI
 
+private final class OTPEscDismissablePanel: EscDismissablePanel {
+    var onEscape: (() -> Bool)?
+
+    override func handleEscape() {
+        if onEscape?() == true { return }
+        super.handleEscape()
+    }
+}
+
 /// NSPanel subclass that can become key window (needed for text input in floating panels).
 final class OTPWindowController: NSObject {
     private let store: OTPStore
-    private var panel: NSPanel?
+    private var panel: OTPEscDismissablePanel?
     private var addPanel: NSWindow?
     private(set) var isShowing = false
+    private var isAdding = false
     private var mouseMonitor: Any?
 
     init(store: OTPStore) {
@@ -49,7 +59,7 @@ final class OTPWindowController: NSObject {
     }
 
     private func showPanel(in frame: NSRect, autoCopy: Bool) {
-        let p = EscDismissablePanel(contentRect: frame,
+        let p = OTPEscDismissablePanel(contentRect: frame,
                         styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                         backing: .buffered, defer: true)
         p.level = .floating
@@ -67,11 +77,16 @@ final class OTPWindowController: NSObject {
         p.delegate = self
         p.isReleasedWhenClosed = false
 
-        let hv = NSHostingView(rootView: OTPView(store: store, autoCopyOnAppear: autoCopy, onAddRequested: { [weak self] in
-            self?.showAddWindow()
-        }, onClose: { [weak self] in
-            self?.hide()
-        }))
+        let hv = NSHostingView(rootView: OTPView(
+            store: store,
+            autoCopyOnAppear: autoCopy,
+            onClose: { [weak self] in
+                self?.hide()
+            },
+            onAddingStateChanged: { [weak self] adding in
+                self?.isAdding = adding
+            }
+        ))
         hv.frame = p.contentView!.bounds
         hv.autoresizingMask = [.width, .height]
         p.contentView?.addSubview(hv)
@@ -80,10 +95,13 @@ final class OTPWindowController: NSObject {
         p.makeKeyAndOrderFront(nil)
         self.panel = p
         self.isShowing = true
+        self.isAdding = false
 
         // Dismiss when clicking outside the app (e.g. on a browser window)
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            self?.hide()
+            guard let self = self else { return }
+            if self.isAdding || self.addPanel != nil { return }
+            self.hide()
         }
     }
 
@@ -99,11 +117,12 @@ final class OTPWindowController: NSObject {
         panel?.orderOut(nil)
         panel = nil
         isShowing = false
+        isAdding = false
     }
 
     // MARK: - Add Account Window
 
-    private func showAddWindow() {
+    public func showAddWindow() {
         // Close existing add window if any
         addPanel?.close()
         addPanel = nil
@@ -114,27 +133,43 @@ final class OTPWindowController: NSObject {
         let y = mainFrame.midY + mainFrame.height / 2 - h / 2
         let frame = NSRect(x: x, y: y, width: w, height: h)
 
-        // Use AgentKeyWindow (an NSWindow, not NSPanel) so Edit menu shortcuts
-        // (Cmd+V etc.) work even though the app has no menu bar as an
-        // `.accessory` agent.
-        let w2 = AgentKeyWindow(contentRect: frame,
-                          styleMask: [.titled, .closable, .resizable],
+        // EscDismissableWindow is the shared floating-window class: it forwards
+        // ⌘V/⌘A to the main menu (which the paste field needs under
+        // `.accessory`) and adds the Esc dismissal every other panel has.
+        let w2 = EscDismissableWindow(contentRect: frame,
+                          styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: true)
         w2.title = "添加 OTP 账户"
         w2.isReleasedWhenClosed = false
         w2.level = .floating
-        w2.backgroundColor = .windowBackgroundColor
+        w2.isOpaque = false
+        w2.backgroundColor = .clear
         w2.hasShadow = true
+        w2.titlebarAppearsTransparent = true
+        w2.titleVisibility = .hidden
+        w2.standardWindowButton(.closeButton)?.isHidden = true
+        w2.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        w2.standardWindowButton(.zoomButton)?.isHidden = true
+        w2.hidesOnDeactivate = false
+        w2.isMovableByWindowBackground = true
         w2.center()
 
         let addView = AddOTPView(isPresented: Binding(
             get: { self.addPanel != nil },
-            set: { if !$0 { self.addPanel?.close(); self.addPanel = nil } }
+            set: { [weak self] isPres in
+                if !isPres {
+                    self?.addPanel?.close()
+                    self?.addPanel = nil
+                    self?.ensurePanelVisibleAndKey()
+                }
+            }
         )) { [weak self] account in
-            self?.store.addAccount(account)
+            guard let self = self else { return }
+            self.store.addAccount(account)
             DispatchQueue.main.async {
-                self?.addPanel?.close()
-                self?.addPanel = nil
+                self.addPanel?.close()
+                self.addPanel = nil
+                self.ensurePanelVisibleAndKey()
             }
         }
 
@@ -146,6 +181,16 @@ final class OTPWindowController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         w2.makeKeyAndOrderFront(nil)
         self.addPanel = w2
+    }
+
+    private func ensurePanelVisibleAndKey() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let panel = self.panel {
+            panel.makeKeyAndOrderFront(nil)
+            self.isShowing = true
+        } else {
+            self.showAtMouse(autoCopy: false)
+        }
     }
 }
 
@@ -163,8 +208,8 @@ extension OTPWindowController: NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self = self else { return }
             guard self.isShowing else { return }
-            // Don't hide if the add window just took focus
-            if self.addPanel != nil, NSApp.keyWindow === self.addPanel { return }
+            // Don't hide if adding an account or if add window is open
+            if self.isAdding || self.addPanel != nil { return }
             // Hide if no window is key (clicked outside) or another unrelated window became key
             self.hide()
         }

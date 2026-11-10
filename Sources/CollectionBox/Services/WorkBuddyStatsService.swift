@@ -54,7 +54,10 @@ struct WorkBuddyStats {
 /// Authoritative source per the workbuddy-usage-stats skill:
 /// `~/.workbuddy/projects/**/*.jsonl` (including `subagents/`), where each
 /// assistant message carries
-/// `message.usage = {input_tokens, output_tokens, total_tokens, cache_read_input_tokens}`.
+/// `message.usage = {input_tokens, output_tokens, total_tokens, cache_read_input_tokens}`
+/// and `providerData.model` names the model that served the turn (a session
+/// can switch models mid-stream; the turn-level name wins over the
+/// session-level one in `workbuddy.db`).
 /// `input_tokens` already contains `cache_read_input_tokens`; timestamps are
 /// UTC milliseconds; records are de-duplicated by message id.
 final class WorkBuddyStatsService: Sendable {
@@ -72,6 +75,11 @@ final class WorkBuddyStatsService: Sendable {
         let output: Int
         let cacheRead: Int
         let messageId: String?
+        /// Per-turn model from `providerData.model`; nil when the line does
+        /// not carry it. Model attribution used to come from the sessions
+        /// table (one value per session), which mis-attributed every turn of
+        /// a model-switching session to a single model.
+        let model: String?
     }
 
     private struct DiskFileCacheEntry: Codable, Sendable {
@@ -95,7 +103,9 @@ final class WorkBuddyStatsService: Sendable {
     /// Parse-rule version. Part of the cache filename so a bump starts a fresh
     /// file: mtime/size alone cannot detect a change in how lines are matched,
     /// and a stale hit would silently serve the old interpretation forever.
-    static let scannerVersion = 2
+    /// v3: UsageRecord gains a per-turn `model` — v2 caches carry none and
+    /// would silently bucket every turn as unknown-model.
+    static let scannerVersion = 3
 
     static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
@@ -295,8 +305,11 @@ final class WorkBuddyStatsService: Sendable {
         return points
     }
 
-    /// Per-turn usage records for the dashboard, with the turn's session
-    /// model and title resolved from the sessions table.
+    /// Per-turn usage records for the dashboard, with the turn's own model
+    /// (`providerData.model`, so a session that switches models attributes
+    /// each turn correctly) falling back to the session-level model from the
+    /// sessions table when the turn does not carry one. Title always comes
+    /// from the sessions table.
     /// `freshInput` = input − cache_read (input includes cached reads here).
     func collectRecords(sinceMs: Int64, force: Bool = false) -> [(tsMs: Int64, tokens: Int, freshInput: Int, cached: Int, output: Int, sessionId: String, model: String?, title: String?)] {
         let records = cachedCollect(sinceMs: sinceMs, force: force)
@@ -305,7 +318,8 @@ final class WorkBuddyStatsService: Sendable {
             let cached = r.cacheRead
             return (tsMs: r.tsMs, tokens: r.input + r.output,
                     freshInput: max(0, r.input - cached), cached: cached, output: r.output,
-                    sessionId: r.sessionId, model: info[r.sessionId]?.model, title: info[r.sessionId]?.title)
+                    sessionId: r.sessionId, model: r.model ?? info[r.sessionId]?.model,
+                    title: info[r.sessionId]?.title)
         }
     }
 
@@ -454,13 +468,16 @@ final class WorkBuddyStatsService: Sendable {
             }
 
             let sessionId = (d["sessionId"] as? String) ?? project
+            let model = ((d["providerData"] as? [String: Any])?["model"] as? String)
+                .flatMap { $0.isEmpty ? nil : $0 }
             records.append(UsageRecord(
                 tsMs: tsMs,
                 sessionId: sessionId,
                 input: (usage["input_tokens"] as? NSNumber)?.intValue ?? 0,
                 output: (usage["output_tokens"] as? NSNumber)?.intValue ?? 0,
                 cacheRead: (usage["cache_read_input_tokens"] as? NSNumber)?.intValue ?? 0,
-                messageId: messageId
+                messageId: messageId,
+                model: model
             ))
         }
         return records

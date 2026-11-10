@@ -232,6 +232,48 @@ public final class PortManagerService: ObservableObject {
         NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
     }
 
+    public func openProjectDirectory(path: String) {
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
+    }
+
+    public func openInBrowser(port: Int) {
+        guard port > 0, let url = URL(string: "http://localhost:\(port)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    public func openInTerminal(path: String) {
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
+        let folderURL = URL(fileURLWithPath: path, isDirectory: true)
+        let preferredTerminals = [
+            "com.googlecode.iterm2",
+            "com.mitchellh.ghostty",
+            "dev.warp.Warp-Stable",
+            "com.apple.Terminal"
+        ]
+        let runningBundleID = NSWorkspace.shared.runningApplications.first { app in
+            guard let bid = app.bundleIdentifier else { return false }
+            return preferredTerminals.contains(bid)
+        }?.bundleIdentifier ?? "com.apple.Terminal"
+
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: runningBundleID) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.open([folderURL], withApplicationAt: appURL, configuration: config, completionHandler: nil)
+        } else {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            proc.arguments = ["-a", "Terminal", path]
+            try? proc.run()
+        }
+    }
+
+    public func fetchWorkingDirectory(for pid: pid_t) async -> String? {
+        return await Task.detached(priority: .utility) {
+            return Self.getProcessWorkingDirectory(pid: pid)
+        }.value
+    }
+
     public func fetchCommandLine(for pid: pid_t) async -> String {
         return await Task.detached(priority: .utility) {
             let pipe = Pipe()
@@ -451,6 +493,7 @@ public final class PortManagerService: ObservableObject {
             totalMemory += memory
 
             let fullPath = getProcessFullPath(pid: pid)
+            let workingDir = isRoot ? getProcessWorkingDirectoryFast(pid: pid) : getProcessWorkingDirectory(pid: pid)
             let cmdLower = raw.command.lowercased()
             let isDockerDaemon = cmdLower.contains("orbstack") || cmdLower.contains("docker") || cmdLower.contains("vpnkit")
 
@@ -490,7 +533,8 @@ public final class PortManagerService: ObservableObject {
                     isExposed: !cExposedPorts.isEmpty,
                     exposedPorts: cExposedPorts,
                     containerName: containerTuple.info.containerName,
-                    containerImage: containerTuple.info.imageName
+                    containerImage: containerTuple.info.imageName,
+                    workingDirectory: workingDir
                 )
                 resultList.append(info)
             }
@@ -521,7 +565,8 @@ public final class PortManagerService: ObservableObject {
                     category: category,
                     isFavorite: false,
                     isExposed: !rExposedPorts.isEmpty,
-                    exposedPorts: rExposedPorts
+                    exposedPorts: rExposedPorts,
+                    workingDirectory: workingDir
                 )
                 resultList.append(info)
             }
@@ -545,7 +590,7 @@ public final class PortManagerService: ObservableObject {
         return (resultList, summary)
     }
 
-    // MARK: - Native C API for Executable Path
+    // MARK: - Native C API for Executable Path & Working Directory
 
     nonisolated public static func getProcessFullPath(pid: pid_t) -> String {
         var buffer = [CChar](repeating: 0, count: 4096)
@@ -554,6 +599,140 @@ public final class PortManagerService: ObservableObject {
             return String(cString: buffer)
         }
         return ""
+    }
+
+    /// Raw `proc_pidinfo(PROC_PIDVNODEPATHINFO)` lookup. Returns `nil` only when the kernel call fails;
+    /// returns `"/"` when the process working directory is the root directory.
+    nonisolated private static func readProcessWorkingDirectoryRaw(pid: pid_t) -> String? {
+        var vnodeInfo = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        let ret = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vnodeInfo, size)
+        guard ret == size else { return nil }
+        let path = withUnsafePointer(to: &vnodeInfo.pvi_cdir.vip_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { cStr in
+                String(cString: cStr)
+            }
+        }
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Fast, zero-subprocess working directory lookup using `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
+    nonisolated public static func getProcessWorkingDirectoryFast(pid: pid_t) -> String? {
+        guard let raw = readProcessWorkingDirectoryRaw(pid: pid), raw != "/" else {
+            return nil
+        }
+        return raw
+    }
+
+    /// Working directory lookup with `proc_pidinfo` fast path and `lsof -a -p <PID> -d cwd -Fn` fallback.
+    nonisolated public static func getProcessWorkingDirectory(pid: pid_t) -> String? {
+        if let raw = readProcessWorkingDirectoryRaw(pid: pid) {
+            return raw == "/" ? nil : raw
+        }
+        let pipe = Pipe()
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        proc.arguments = ["-a", "-p", "\(pid)", "-d", "cwd", "-Fn"]
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+        } catch {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        for line in output.split(whereSeparator: { $0.isNewline }) {
+            if line.hasPrefix("n") {
+                let dir = String(line.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !dir.isEmpty && dir != "/" {
+                    return dir
+                }
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Shared App Bundle Icon Resolution & Cache
+
+    nonisolated(unsafe) private static var iconCache: [String: NSImage] = [:]
+    private static let iconLock = NSLock()
+
+    /// Walk up the executable path to locate the outermost enclosing `.app` bundle (if any),
+    /// matching ProcessManagerView's icon resolution behavior.
+    nonisolated public static func findEnclosingAppPath(path: String) -> String? {
+        guard !path.isEmpty else { return nil }
+        var url = URL(fileURLWithPath: path)
+        var topAppURL: URL? = nil
+        while url.pathComponents.count > 1 {
+            if url.pathExtension == "app" {
+                topAppURL = url
+            }
+            url = url.deletingLastPathComponent()
+        }
+        return topAppURL?.path
+    }
+
+    /// Resolve and cache the process icon (preferring enclosing `.app` bundle icon over raw Mach-O icon).
+    nonisolated public static func resolveProcessIcon(for process: PortProcessInfo) -> NSImage {
+        var candidatePath: String? = nil
+        if !process.fullPath.isEmpty {
+            candidatePath = process.fullPath
+        } else if process.pid > 0,
+                  let app = NSRunningApplication(processIdentifier: process.pid),
+                  let bURL = app.bundleURL {
+            candidatePath = bURL.path
+        }
+
+        if let path = candidatePath, let enclosingApp = findEnclosingAppPath(path: path) {
+            iconLock.lock()
+            if let cached = iconCache[enclosingApp] {
+                iconLock.unlock()
+                return cached
+            }
+            iconLock.unlock()
+
+            if FileManager.default.fileExists(atPath: enclosingApp) {
+                let icon = NSWorkspace.shared.icon(forFile: enclosingApp)
+                if icon.isValid {
+                    iconLock.lock()
+                    if iconCache.count > 256 { iconCache.removeAll(keepingCapacity: true) }
+                    iconCache[enclosingApp] = icon
+                    iconLock.unlock()
+                    return icon
+                }
+            }
+        }
+
+        if let path = candidatePath, !path.isEmpty {
+            iconLock.lock()
+            if let cached = iconCache[path] {
+                iconLock.unlock()
+                return cached
+            }
+            iconLock.unlock()
+
+            if FileManager.default.fileExists(atPath: path) {
+                let icon = NSWorkspace.shared.icon(forFile: path)
+                if icon.isValid {
+                    iconLock.lock()
+                    if iconCache.count > 256 { iconCache.removeAll(keepingCapacity: true) }
+                    iconCache[path] = icon
+                    iconLock.unlock()
+                    return icon
+                }
+            }
+        }
+
+        if process.pid > 0, let runningIcon = NSRunningApplication(processIdentifier: process.pid)?.icon {
+            return runningIcon
+        }
+
+        return NSImage(systemSymbolName: "network", accessibilityDescription: nil) ?? NSImage()
     }
 
     // MARK: - Process Classifier

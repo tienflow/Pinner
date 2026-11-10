@@ -605,6 +605,26 @@ func testModelAliasResolution() {
                             sessionId: "s3", durationMs: nil)],
         aliases: ModelAliasTable())
     check(plain.first?.mergedFrom.isEmpty == true, "a 1:1 model reports no merge sources")
+
+    // Vendor / model parsing: "trae-cn/glm-5.3-flashx-max"
+    let (p1, m1) = ModelAliasService.parseModelAndProvider("trae-cn/glm-5.3-flashx-max")
+    check(p1 == "trae-cn" && m1 == "glm-5.3-flashx-max", "parseModelAndProvider splits vendor and model")
+    let (p2, m2) = ModelAliasService.parseModelAndProvider("glm-5.3-flashx-max")
+    check(p2 == nil && m2 == "glm-5.3-flashx-max", "parseModelAndProvider handles plain model")
+
+    let vendorRecords = [
+        UnifiedUsageRecord(agent: .zcode, model: "trae-cn/glm-5.3-flashx-max", title: nil, tsMs: 0,
+                           tokens: 100, freshInput: 0, cached: 0, output: 0,
+                           hasBreakdown: false, sessionId: "s1", durationMs: nil),
+        UnifiedUsageRecord(agent: .zcode, model: "glm-5.3-flashx-max", title: nil, tsMs: 0,
+                           tokens: 200, freshInput: 0, cached: 0, output: 0,
+                           hasBreakdown: false, sessionId: "s2", durationMs: nil)
+    ]
+    let vendorGrouped = StatsDashboardView.mergedModelGroups(vendorRecords, aliases: ModelAliasTable())
+    check(vendorGrouped.count == 1, "vendor/model collapses into bare model group")
+    check(vendorGrouped.first?.name == "glm-5.3-flashx-max", "group name is model name without vendor")
+    check(vendorGrouped.first?.provider == "trae-cn", "group provider is captured")
+    check(vendorGrouped.first?.tokens == 300, "tokens combined across vendor prefix")
 }
 
 /// Round-trips the table through a real file, including the corrupt-file

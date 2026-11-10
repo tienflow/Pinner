@@ -12,13 +12,14 @@ struct CodexStatsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            PanelTitleBar(symbolName: StatsAgent.codex.symbolName, title: StatsAgent.codex.label, onClose: onClose)
             rangePicker
             metricContent
             Divider().opacity(0.35)
             trendChart
             bottomBar
         }
-        .frame(minWidth: 360, idealWidth: 400, minHeight: 300)
+        .frame(minWidth: 360, idealWidth: 400, minHeight: 344)
         .liquidGlassBackground(cornerRadius: Design.radiusL)
         .ignoresSafeArea()
         .onAppear { refresh() }
@@ -27,17 +28,13 @@ struct CodexStatsView: View {
     // MARK: - Picker
 
     private var rangePicker: some View {
-        HStack(spacing: 8) {
+        HStack {
             Picker("时间范围", selection: $selectedRange) {
                 ForEach(StatsTimeRange.allCases) { range in
                     Text(range.title).tag(range)
                 }
             }
             .pickerStyle(.segmented)
-
-            if let onClose = onClose {
-                PanelCloseButton(helpText: "关闭面板 (⎋)", action: onClose)
-            }
         }
         .frame(height: 32)
         .padding(.horizontal, 12)

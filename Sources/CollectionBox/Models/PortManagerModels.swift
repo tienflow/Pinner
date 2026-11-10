@@ -70,6 +70,7 @@ public struct PortProcessInfo: Identifiable, Hashable, Sendable {
     public let exposedPorts: [Int]
     public let containerName: String?
     public let containerImage: String?
+    public let workingDirectory: String?
 
     public init(
         pid: pid_t,
@@ -87,7 +88,8 @@ public struct PortProcessInfo: Identifiable, Hashable, Sendable {
         isExposed: Bool = false,
         exposedPorts: [Int] = [],
         containerName: String? = nil,
-        containerImage: String? = nil
+        containerImage: String? = nil,
+        workingDirectory: String? = nil
     ) {
         self.pid = pid
         self.command = command
@@ -105,6 +107,24 @@ public struct PortProcessInfo: Identifiable, Hashable, Sendable {
         self.exposedPorts = exposedPorts
         self.containerName = containerName
         self.containerImage = containerImage
+        self.workingDirectory = workingDirectory
+    }
+
+    /// Valid working/project directory (non-empty and not root "/")
+    public var validWorkingDirectory: String? {
+        guard let cwd = workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !cwd.isEmpty,
+              cwd != "/" else {
+            return nil
+        }
+        return cwd
+    }
+
+    /// Last path component of the valid working directory for compact display
+    public var projectFolderName: String? {
+        guard let cwd = validWorkingDirectory else { return nil }
+        let name = (cwd as NSString).lastPathComponent
+        return name.isEmpty ? nil : name
     }
 
     /// Display title for the process (prefer container name, then command, then fullPath).

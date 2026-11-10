@@ -132,7 +132,7 @@ final class EdgeDockWindowController: NSObject {
         guard mainPanel != nil else { return }
         let ids = Set(entryIDs)
         Task { @MainActor in
-            let allEntries = store.tabs.flatMap(\.entries) + store.shelfEntries
+            let allEntries = store.tabs.flatMap(\.entries)
             let urls: [URL] = allEntries
                 .filter { ids.contains($0.id) }
                 .compactMap { BookmarkService.resolveURL($0.bookmarkData) }
@@ -150,7 +150,7 @@ final class EdgeDockWindowController: NSObject {
     private func updateQuickLookIfVisible(for entryIDs: [UUID]) {
         guard QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible else { return }
         let ids = Set(entryIDs)
-        let allEntries = store.tabs.flatMap(\.entries) + store.shelfEntries
+        let allEntries = store.tabs.flatMap(\.entries)
         let urls: [URL] = allEntries
             .filter { ids.contains($0.id) }
             .compactMap { BookmarkService.resolveURL($0.bookmarkData) }

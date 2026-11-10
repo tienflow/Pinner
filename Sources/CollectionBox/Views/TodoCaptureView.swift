@@ -118,8 +118,10 @@ struct TodoCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "checklist").font(.system(size: 13)).foregroundStyle(.secondary)
-            Text("待办").font(.system(size: 13, weight: .semibold))
+            Image(systemName: "checklist")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.accentColor)
+            Text("待办").font(.system(size: 14, weight: .bold))
 
             let completed = completedTodayItems.count
             let total = completed + items.count
@@ -152,8 +154,8 @@ struct TodoCaptureView: View {
                 onClose?()
             }
         }
-        .frame(height: 32)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Input

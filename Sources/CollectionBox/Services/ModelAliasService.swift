@@ -66,6 +66,10 @@ public struct ModelAliasTable: Sendable {
 
         return stripped
     }
+
+    public func parseModelAndProvider(_ raw: String?) -> (provider: String?, model: String?) {
+        ModelAliasService.parseModelAndProvider(raw)
+    }
 }
 
 /// Resolves the model name an agent reported into the name the dashboard
@@ -115,6 +119,25 @@ public final class ModelAliasService: ObservableObject {
     /// A value snapshot for off-main consumers.
     public var table: ModelAliasTable {
         ModelAliasTable(index: index, suffixes: Self.builtinSuffixes)
+    }
+
+    // MARK: - Vendor & Model Parsing
+
+    /// Splits an upstream model string like `trae-cn/glm-5.3-flashx-max` into
+    /// provider (`trae-cn`) and model name (`glm-5.3-flashx-max`).
+    /// If there is no slash or the format is invalid, returns nil provider and the model name.
+    public static func parseModelAndProvider(_ raw: String?) -> (provider: String?, model: String?) {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return (nil, nil)
+        }
+        if let slashIndex = raw.firstIndex(of: "/") {
+            let providerPart = String(raw[..<slashIndex]).trimmingCharacters(in: .whitespaces)
+            let modelPart = String(raw[raw.index(after: slashIndex)...]).trimmingCharacters(in: .whitespaces)
+            if !providerPart.isEmpty && !modelPart.isEmpty {
+                return (providerPart, modelPart)
+            }
+        }
+        return (nil, raw)
     }
 
     // MARK: - Resolution

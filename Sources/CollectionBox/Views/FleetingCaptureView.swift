@@ -96,7 +96,7 @@ public struct FleetingCaptureView: View {
                 .foregroundColor(.accentColor)
                 .font(.system(size: 14, weight: .semibold))
             Text("闪念投递")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.primary)
 
             Spacer()
@@ -105,8 +105,8 @@ public struct FleetingCaptureView: View {
                 onClose?()
             }
         }
-        .frame(height: 32)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Quick Pills Bar

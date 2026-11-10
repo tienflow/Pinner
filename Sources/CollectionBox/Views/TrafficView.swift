@@ -985,6 +985,12 @@ public struct TrafficView: View {
                         processRow(index: index + 1, item: item, maxTotal: maxTotal)
                         Divider().opacity(0.08)
                     }
+
+                    let residual = unattributedBytes(items: processList)
+                    if residual.total > 512 * 1024 {
+                        Divider().opacity(0.08)
+                        unattributedRow(residual: residual, maxTotal: maxTotal)
+                    }
                 }
             }
         }
@@ -1051,6 +1057,84 @@ public struct TrafficView: View {
         .buttonStyle(.plain)
     }
 
+    /// 整机口径与进程排行之间的差额：连接在两次采样之间关闭时，其字节只留在网卡计数里
+    private func unattributedBytes(items: [TrafficProcessItem]) -> TrafficBytes {
+        let physical: TrafficBytes
+        if let hour = service.selectedHour {
+            physical = record.hourly[hour] ?? TrafficBytes()
+        } else {
+            physical = record.physical
+        }
+        let received = items.reduce(UInt64(0)) { $0 + $1.bytes.received }
+        let sent = items.reduce(UInt64(0)) { $0 + $1.bytes.sent }
+        return TrafficBytes(
+            received: physical.received > received ? physical.received - received : 0,
+            sent: physical.sent > sent ? physical.sent - sent : 0
+        )
+    }
+
+    private func unattributedRow(residual: TrafficBytes, maxTotal: UInt64) -> some View {
+        HStack(spacing: 8) {
+            Text("—")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(.secondary.opacity(0.45))
+                .frame(width: 24, alignment: .center)
+
+            HStack(spacing: 8) {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .frame(width: 22, height: 22)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("未归属（采样缺口）")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+
+                    Text("连接在采样间隔内关闭，字节只计入整机总量")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.75))
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help("该部分流量已计入整机总量，但对应连接在两次采样之间关闭，无法归属到具体进程")
+
+            Text(TrafficBytes.format(residual.received))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(width: 95, alignment: .trailing)
+
+            Text(TrafficBytes.format(residual.sent))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(width: 95, alignment: .trailing)
+
+            Text(TrafficBytes.format(residual.total))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundColor(.secondary)
+                .frame(width: 105, alignment: .trailing)
+
+            GeometryReader { geo in
+                let ratio = Double(residual.total) / Double(maxTotal)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.06))
+                        .frame(height: 5)
+
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.35))
+                        .frame(width: max(3, geo.size.width * min(1, ratio)), height: 5)
+                }
+                .frame(maxHeight: .infinity, alignment: .center)
+            }
+            .frame(width: 110, height: 16)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.primary.opacity(0.025))
+    }
+
     private func processRow(index: Int, item: TrafficProcessItem, maxTotal: UInt64) -> some View {
         HStack(spacing: 8) {
             // Index Number
@@ -1073,14 +1157,25 @@ public struct TrafficView: View {
                             .truncationMode(.middle)
 
                         if item.isRelay {
-                            Text("转发")
+                            Text("代理")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundColor(.orange)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
                                 .background(Color.orange.opacity(0.12))
                                 .cornerRadius(Design.radiusS)
-                                .help("可能包含经由代理或 VPN 转发的其他流量")
+                                .help("该进程在转发其他应用的流量：已按回环计量回填到对应应用名下，这里仅显示未归属余量")
+                        }
+
+                        if !item.isRelay && item.proxied.total > 0 {
+                            Text("经代理")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.teal)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.teal.opacity(0.12))
+                                .cornerRadius(Design.radiusS)
+                                .help("其中 \(TrafficBytes.format(item.proxied.total)) 经本地代理转发，已按回环计量回填到本应用")
                         }
 
                         if service.isHotspotActive && item.bytes.total >= 30 * 1024 * 1024 {

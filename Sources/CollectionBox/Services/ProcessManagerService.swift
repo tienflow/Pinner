@@ -95,6 +95,41 @@ public final class ProcessManagerService: ObservableObject {
         }
     }
 
+    /// Finds an active process in `processes`, or builds a fallback entry if the process
+    /// fell below the sampling threshold or exited between diagnostic and user action.
+    public func resolveProcessEntry(pid: pid_t, fallbackName: String? = nil) -> ManagedProcessEntry? {
+        if let existing = processes.first(where: { $0.pid == pid }) {
+            return existing
+        }
+        guard pid > 0 else { return nil }
+
+        var nameBuffer = [CChar](repeating: 0, count: 256)
+        proc_name(pid, &nameBuffer, 256)
+        let rawName = String(cString: nameBuffer)
+        let trimmedFallback = fallbackName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let resolvedName = !rawName.isEmpty ? rawName : (!trimmedFallback.isEmpty ? trimmedFallback : "PID \(pid)")
+
+        var pathBuffer = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+        let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+        let fullPath = pathLen > 0 ? String(cString: pathBuffer) : ""
+
+        var bsdInfo = proc_bsdinfo()
+        let isSuspended: Bool
+        if proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsdInfo, Int32(MemoryLayout<proc_bsdinfo>.size)) == MemoryLayout<proc_bsdinfo>.size {
+            isSuspended = (bsdInfo.pbi_status == 3)
+        } else {
+            isSuspended = false
+        }
+
+        return ManagedProcessEntry(
+            pid: pid,
+            name: resolvedName,
+            fullPath: fullPath,
+            isSuspended: isSuspended,
+            category: Self.classifyProcess(name: resolvedName)
+        )
+    }
+
     @discardableResult
     public func terminateProcess(process: ManagedProcessEntry, force: Bool = true) async -> Result<Void, Error> {
         let sig = force ? SIGKILL : SIGTERM
@@ -104,6 +139,11 @@ public final class ProcessManagerService: ObservableObject {
         }
 
         let err = errno
+        if err == ESRCH {
+            // Process already exited
+            processes.removeAll { $0.pid == process.pid }
+            return .success(())
+        }
         if err == EPERM {
             // Permission denied -> attempt escalation via AppleScript
             return await escalateKill(pid: process.pid, force: force)

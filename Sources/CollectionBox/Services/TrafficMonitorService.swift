@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreWLAN
 import Network
+import SystemConfiguration
 
 @MainActor
 public final class TrafficMonitorService: ObservableObject {
@@ -38,12 +39,17 @@ public final class TrafficMonitorService: ObservableObject {
     @Published public private(set) var isExpensiveNetwork: Bool = false
     @Published public private(set) var isConstrainedNetwork: Bool = false
 
+    /// 本机系统代理端口（仅当代理指向回环地址时非空）
+    @Published public private(set) var localProxyPorts: [Int] = []
+    public var isLocalProxyActive: Bool { !localProxyPorts.isEmpty }
+
     // App icons cached by bundle path or app name
     @Published public private(set) var processIcons: [String: NSImage] = [:]
 
     private var timer: Timer?
     private var inFlight: Bool = false
     private var oldProcesses: [String: TrafficProcessCounter] = [:]
+    private var oldLoopback: [String: LoopbackSnapshot] = [:]
     private var oldInterfaces: [String: TrafficBytes] = [:]
     private var oldTime: Date?
     private var lastSaved: Date = .distantPast
@@ -85,8 +91,11 @@ public final class TrafficMonitorService: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.oldTime = nil
-            self?.sample()
+            guard let self else { return }
+            self.oldTime = nil
+            if self.timer != nil {
+                self.sample()
+            }
         }
     }
 
@@ -135,13 +144,33 @@ public final class TrafficMonitorService: ObservableObject {
         var items: [TrafficProcessItem] = []
 
         let procSource: [String: TrafficBytes]
+        let proxiedSource: [String: TrafficBytes]
         if let h = selectedHour {
             procSource = record.hourlyProcesses[h] ?? [:]
+            proxiedSource = record.hourlyProxiedClients[h] ?? [:]
         } else {
             procSource = record.processes
+            proxiedSource = record.proxiedClients
         }
 
+        // 归属已在写入账本时完成（客户端累加回填、代理行按窗口扣减），这里直接展示，避免按日累计相减导致行内数值倒退
+        // 归一化进程名（历史上曾因前导空格产生「 curl」与「curl」两行，合并展示）
+        var normalizedProcesses: [String: TrafficBytes] = [:]
         for (name, bytes) in procSource {
+            let key = name.trimmingCharacters(in: .whitespaces)
+            var current = normalizedProcesses[key] ?? TrafficBytes()
+            current.add(bytes)
+            normalizedProcesses[key] = current
+        }
+        var normalizedProxied: [String: TrafficBytes] = [:]
+        for (name, bytes) in proxiedSource {
+            let key = name.trimmingCharacters(in: .whitespaces)
+            var current = normalizedProxied[key] ?? TrafficBytes()
+            current.add(bytes)
+            normalizedProxied[key] = current
+        }
+
+        for (name, bytes) in normalizedProcesses {
             let path = appPaths[name]
             let displayName: String
 
@@ -153,6 +182,9 @@ public final class TrafficMonitorService: ObservableObject {
 
             let pid = activePIDs[name] ?? 0
             let isRelay = Self.checkIsRelay(name: name, displayName: displayName)
+            let proxied = normalizedProxied[name] ?? TrafficBytes()
+            let effectiveBytes = bytes
+            let relayRaw = TrafficBytes()
 
             items.append(
                 TrafficProcessItem(
@@ -160,8 +192,10 @@ public final class TrafficMonitorService: ObservableObject {
                     displayName: displayName,
                     pid: pid,
                     appBundlePath: path,
-                    bytes: bytes,
-                    isRelay: isRelay
+                    bytes: effectiveBytes,
+                    isRelay: isRelay,
+                    proxied: proxied,
+                    relayRawTotal: relayRaw
                 )
             )
         }
@@ -256,10 +290,15 @@ public final class TrafficMonitorService: ObservableObject {
 
     // MARK: - Monitoring Lifecycle
 
+    public var isMonitoring: Bool {
+        timer != nil
+    }
+
     public func startMonitoring() {
         guard timer == nil else { return }
         sample()
-        timer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+        // 3s 采样：nettop 单次仅 0.01–0.16s，缩短窗口可显著减少「连接在两次采样之间关闭」导致的漏计
+        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.sample()
         }
     }
@@ -267,12 +306,17 @@ public final class TrafficMonitorService: ObservableObject {
     public func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        oldTime = nil
+        oldLoopback.removeAll()
+        currentDownloadRate = 0
+        currentUploadRate = 0
         save()
     }
 
     public func togglePause() {
         isPaused.toggle()
         oldTime = nil
+        oldLoopback.removeAll()
         currentDownloadRate = 0
         currentUploadRate = 0
         statusMessage = isPaused ? "已暂停统计" : "采集中"
@@ -285,6 +329,7 @@ public final class TrafficMonitorService: ObservableObject {
         let todayKey = TrafficDateKeys.day(Date())
         ledger.clear(day: todayKey)
         oldProcesses.removeAll()
+        oldLoopback.removeAll()
         oldInterfaces.removeAll()
         oldTime = nil
         save()
@@ -293,6 +338,7 @@ public final class TrafficMonitorService: ObservableObject {
     public func clearAllData() {
         ledger.clearAll()
         oldProcesses.removeAll()
+        oldLoopback.removeAll()
         oldInterfaces.removeAll()
         oldTime = nil
         save()
@@ -322,8 +368,13 @@ public final class TrafficMonitorService: ObservableObject {
 
         sampleQueue.async { [weak self] in
             autoreleasepool {
+                let proxyPorts = Self.detectLocalProxyPorts()
                 // -t external: 严格排除 loopback 回环 (127.0.0.1/lo0)，只统计实际外部物理网卡流量 (Wi-Fi / Ethernet)
                 let procResult = Self.runCommand("/usr/bin/nettop", ["-t", "external", "-P", "-L", "1", "-n", "-J", "bytes_in,bytes_out"])
+                // -t loopback: 仅在检测到本机代理时采样。逐条 flow 可判定「该 socket 的对端是否为代理端口」，用于把经代理转发的流量回填到真实客户端应用名下
+                let loopResult = proxyPorts.isEmpty
+                    ? (text: "", success: false)
+                    : Self.runCommand("/usr/bin/nettop", ["-x", "-t", "loopback", "-l", "1"])
                 let netResult = Self.runCommand("/usr/sbin/netstat", ["-ibn"])
                 let psResult = Self.runCommand("/bin/ps", ["-axo", "pid=,comm="])
                 let now = Date()
@@ -331,22 +382,121 @@ public final class TrafficMonitorService: ObservableObject {
                 DispatchQueue.main.async {
                     self?.applySampleResults(
                         proc: procResult,
+                        loop: loopResult,
                         net: netResult,
                         psOutput: psResult.text,
                         now: now,
-                        network: samplingNetwork
+                        network: samplingNetwork,
+                        proxyPorts: proxyPorts
                     )
                 }
             }
         }
     }
 
+    /// 读取系统代理配置，仅当代理指向本机回环地址时返回端口集合。
+    private static func detectLocalProxyPorts() -> [Int] {
+        guard let proxies = SCDynamicStoreCopyProxies(nil) as? [String: Any] else { return [] }
+
+        var ports: [Int] = []
+        func collect(_ enableKey: String, _ hostKey: String, _ portKey: String) {
+            guard let enabled = proxies[enableKey] as? Bool, enabled,
+                  let host = proxies[hostKey] as? String,
+                  let port = proxies[portKey] as? Int, port > 0 else { return }
+            let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard normalized == "127.0.0.1" || normalized == "::1" || normalized == "localhost" else { return }
+            if !ports.contains(port) { ports.append(port) }
+        }
+
+        collect(kSCPropNetProxiesHTTPEnable as String, kSCPropNetProxiesHTTPProxy as String, kSCPropNetProxiesHTTPPort as String)
+        collect(kSCPropNetProxiesHTTPSEnable as String, kSCPropNetProxiesHTTPSProxy as String, kSCPropNetProxiesHTTPSPort as String)
+        collect(kSCPropNetProxiesSOCKSEnable as String, kSCPropNetProxiesSOCKSProxy as String, kSCPropNetProxiesSOCKSPort as String)
+        return ports
+    }
+
+    /// 单进程在回环接口上的快照：累计字节 + 全部 flow 字节量 + 其中对端为代理端口的 flow 字节量
+    private struct LoopbackSnapshot {
+        var name: String
+        var total: TrafficBytes
+        var flowTotal: UInt64 = 0
+        var flowProxied: UInt64 = 0
+    }
+
+    private static func parseLoopbackSnapshot(_ text: String, proxyPorts: Set<Int>) -> [String: LoopbackSnapshot] {
+        var result: [String: LoopbackSnapshot] = [:]
+        var currentPID: String?
+
+        for rawLine in text.split(separator: "\n") {
+            let line = String(rawLine)
+            guard line != "" else { continue }
+            guard let body = bodyAfterTimestamp(line) else { continue }
+            let trimmed = body.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+
+            // flow 行：tcp4 <local><-><remote>  <if>  <state>  <bytes_in>  <bytes_out>
+            if trimmed.hasPrefix("tcp4 ") || trimmed.hasPrefix("tcp6 ")
+                || trimmed.hasPrefix("udp4 ") || trimmed.hasPrefix("udp6 ") {
+                guard let pid = currentPID, var entry = result[pid] else { continue }
+                let fields = trimmed.split(whereSeparator: { $0 == " " }).map(String.init)
+                guard fields.count >= 6,
+                      let bytesIn = UInt64(fields[4]),
+                      let bytesOut = UInt64(fields[5]) else { continue }
+                let endpoints = fields[1].components(separatedBy: "<->")
+                guard endpoints.count == 2 else { continue }
+
+                // flow 级计数只用于「判定这条 socket 的对端是不是代理端口」并据此估算占比；
+                // 其数值不能当流量总量做差分（实测严重偏低/滞后），体量一律以进程累计计数为准。
+                let flowBytes = bytesIn + bytesOut
+                entry.flowTotal += flowBytes
+                if let remotePort = endpointPort(endpoints[1]), proxyPorts.contains(remotePort) {
+                    entry.flowProxied += flowBytes
+                }
+                result[pid] = entry
+                continue
+            }
+
+            // 进程汇总行：<name>.<pid>  <bytes_in>  <bytes_out> ...
+            guard let separator = body.range(of: "  ") else { continue }
+            let label = String(body[..<separator.lowerBound])
+            let tail = String(body[separator.lowerBound...])
+            guard let dot = label.lastIndex(of: "."), dot < label.endIndex,
+                  let pid = Int(label[label.index(after: dot)...]) else { continue }
+            let name = String(label[..<dot]).trimmingCharacters(in: .whitespaces)
+            let numbers = tail.split(whereSeparator: { $0 == " " }).compactMap { UInt64($0) }
+            let received = numbers.first ?? 0
+            let sent = numbers.count > 1 ? numbers[1] : 0
+
+            result[String(pid)] = LoopbackSnapshot(
+                name: name,
+                total: TrafficBytes(received: received, sent: sent)
+            )
+            currentPID = String(pid)
+        }
+        return result
+    }
+
+    /// 去掉行首时间戳列（`13:03:27.242309`），返回其后的内容；表头行返回 nil。
+    private static func bodyAfterTimestamp(_ line: String) -> String? {
+        guard let sep = line.firstIndex(where: { $0 == " " || $0 == "\t" }) else { return nil }
+        let head = line[line.startIndex..<sep]
+        guard head.contains(":"), head.contains(".") else { return nil }
+        return String(line[sep...])
+    }
+
+    /// 从 `127.0.0.1:7890` / `localhost:7890` / `::1.7890` 这类端点串里取出端口。
+    private static func endpointPort(_ endpoint: String) -> Int? {
+        guard let last = endpoint.lastIndex(where: { $0 == ":" || $0 == "." }) else { return nil }
+        return Int(endpoint[endpoint.index(after: last)...])
+    }
+
     private func applySampleResults(
         proc: (text: String, success: Bool),
+        loop: (text: String, success: Bool),
         net: (text: String, success: Bool),
         psOutput: String,
         now: Date,
-        network: TrafficNetworkContext
+        network: TrafficNetworkContext,
+        proxyPorts: [Int] = []
     ) {
         inFlight = false
         guard !isPaused else {
@@ -354,8 +504,13 @@ public final class TrafficMonitorService: ObservableObject {
             return
         }
 
+        localProxyPorts = proxyPorts
         let parsedProcesses = Self.parseProcesses(proc.text)
         let parsedInterfaces = Self.parseInterfaces(net.text)
+        let proxyPortSet = Set(proxyPorts)
+        let parsedLoopback = loop.success
+            ? Self.parseLoopbackSnapshot(loop.text, proxyPorts: proxyPortSet)
+            : [:]
 
         guard proc.success, !parsedProcesses.isEmpty, net.success, !parsedInterfaces.isEmpty else {
             statusMessage = "采集异常：无法获取网络计数器"
@@ -366,14 +521,19 @@ public final class TrafficMonitorService: ObservableObject {
         }
 
         let mapping = Self.parseProcessPaths(psOutput)
-        for (pidStr, item) in mapping {
-            pidMapping[pidStr] = item
-            if let pidNum = pid_t(pidStr) {
-                activePIDs[item.name] = pidNum
+        if !mapping.isEmpty {
+            pidMapping = mapping
+            var currentActivePIDs: [String: pid_t] = [:]
+            currentActivePIDs.reserveCapacity(mapping.count)
+            for (pidStr, item) in mapping {
+                if let pidNum = pid_t(pidStr) {
+                    currentActivePIDs[item.name] = pidNum
+                }
+                if item.path.contains(".app") {
+                    appPaths[item.name] = item.path
+                }
             }
-            if item.path.contains(".app") {
-                appPaths[item.name] = item.path
-            }
+            activePIDs = currentActivePIDs
         }
 
         if let previous = oldTime {
@@ -413,6 +573,91 @@ public final class TrafficMonitorService: ObservableObject {
                     processDeltas[mappedName] = existing
                 }
 
+                // 经本机代理转发、按回环归属回填到真实客户端应用名下的字节。
+                // 体量取「进程回环累计差分」（单调、可信），再乘以「对端为代理端口的 flow 占比」剥离本地 RPC。
+                var proxiedDeltas: [String: TrafficBytes] = [:]
+                let relayPresent = processDeltas.keys.contains { Self.checkIsRelay(name: $0, displayName: $0) }
+                if !proxyPortSet.isEmpty, relayPresent, !parsedLoopback.isEmpty {
+                    for (pid, snapshot) in parsedLoopback {
+                        guard snapshot.flowProxied > 0, snapshot.flowTotal > 0 else { continue }
+
+                        // 新出现的进程（或 PID 被复用）：其生命周期计数即为本窗口增量；老进程走差分
+                        let delta: TrafficBytes
+                        if let previous = oldLoopback[pid], previous.name == snapshot.name {
+                            delta = snapshot.total.difference(from: previous.total)
+                        } else {
+                            delta = snapshot.total
+                        }
+                        guard delta.total > 0 else { continue }
+
+                        let share = Double(snapshot.flowProxied) / Double(snapshot.flowTotal)
+                        let received = UInt64(Double(delta.received) * share)
+                        let sent = UInt64(Double(delta.sent) * share)
+                        guard received + sent > 0 else { continue }
+
+                        let mappedName = pidMapping[pid]?.name ?? snapshot.name
+                        // 代理进程自身不回填，避免自计数
+                        if Self.checkIsRelay(name: mappedName, displayName: mappedName) { continue }
+
+                        var existing = proxiedDeltas[mappedName] ?? TrafficBytes()
+                        existing.add(TrafficBytes(received: received, sent: sent))
+                        proxiedDeltas[mappedName] = existing
+                    }
+
+                    // 硬约束：回填总量不得超过代理进程本窗口的物理转发量（下载/上传分别裁剪），
+                    // 保证「进程排行上传/下载合计」永不大于整机口径
+                    var relayReceived: UInt64 = 0
+                    var relaySent: UInt64 = 0
+                    for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
+                        relayReceived += delta.received
+                        relaySent += delta.sent
+                    }
+                    let attributedReceived = proxiedDeltas.values.reduce(0) { $0 + $1.received }
+                    let attributedSent = proxiedDeltas.values.reduce(0) { $0 + $1.sent }
+                    let scaleReceived = attributedReceived > relayReceived
+                        ? Double(relayReceived) / Double(attributedReceived) : 1
+                    let scaleSent = attributedSent > relaySent
+                        ? Double(relaySent) / Double(attributedSent) : 1
+
+                    if scaleReceived < 1 || scaleSent < 1 {
+                        for (name, value) in proxiedDeltas {
+                            proxiedDeltas[name] = TrafficBytes(
+                                received: UInt64(Double(value.received) * scaleReceived),
+                                sent: UInt64(Double(value.sent) * scaleSent)
+                            )
+                        }
+                    }
+                }
+
+                // 归属就地写入进程增量：客户端行加上回填量，代理行扣掉已归属量（逐窗口扣减，保证累计单调不倒挂）
+                if !proxiedDeltas.isEmpty {
+                    let attributedReceived = proxiedDeltas.values.reduce(0) { $0 + $1.received }
+                    let attributedSent = proxiedDeltas.values.reduce(0) { $0 + $1.sent }
+                    var relayTotalReceived: UInt64 = 0
+                    var relayTotalSent: UInt64 = 0
+                    for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
+                        relayTotalReceived += delta.received
+                        relayTotalSent += delta.sent
+                    }
+
+                    for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
+                        let shareReceived = relayTotalReceived > 0 ? Double(delta.received) / Double(relayTotalReceived) : 0
+                        let shareSent = relayTotalSent > 0 ? Double(delta.sent) / Double(relayTotalSent) : 0
+                        let cutReceived = UInt64(Double(attributedReceived) * shareReceived)
+                        let cutSent = UInt64(Double(attributedSent) * shareSent)
+                        processDeltas[name] = TrafficBytes(
+                            received: delta.received > cutReceived ? delta.received - cutReceived : 0,
+                            sent: delta.sent > cutSent ? delta.sent - cutSent : 0
+                        )
+                    }
+
+                    for (name, value) in proxiedDeltas {
+                        var current = processDeltas[name] ?? TrafficBytes()
+                        current.add(value)
+                        processDeltas[name] = current
+                    }
+                }
+
                 let dayKey = TrafficDateKeys.day(now)
                 let currentHour = Calendar.current.component(.hour, from: now)
 
@@ -423,10 +668,12 @@ public final class TrafficMonitorService: ObservableObject {
                     physical: physical,
                     processes: processDeltas,
                     seconds: interval,
-                    network: .all
+                    network: .all,
+                    proxiedClients: proxiedDeltas
                 )
 
                 // 2. Wi-Fi network stream
+                let wifiDominant = wifiBytes.total >= ethernetBytes.total
                 if wifiBytes.total > 0 {
                     let wifiCtx = TrafficNetworkContext(
                         key: network.key.hasPrefix("wifi:") ? network.key : "wifi:Wi-Fi",
@@ -438,9 +685,10 @@ public final class TrafficMonitorService: ObservableObject {
                         day: dayKey,
                         hour: currentHour,
                         physical: wifiBytes,
-                        processes: wifiBytes.total >= ethernetBytes.total ? processDeltas : [:],
+                        processes: wifiDominant ? processDeltas : [:],
                         seconds: interval,
-                        network: wifiCtx
+                        network: wifiCtx,
+                        proxiedClients: wifiDominant ? proxiedDeltas : [:]
                     )
                 }
 
@@ -456,9 +704,10 @@ public final class TrafficMonitorService: ObservableObject {
                         day: dayKey,
                         hour: currentHour,
                         physical: ethernetBytes,
-                        processes: ethernetBytes.total > wifiBytes.total ? processDeltas : [:],
+                        processes: wifiDominant ? [:] : processDeltas,
                         seconds: interval,
-                        network: ethCtx
+                        network: ethCtx,
+                        proxiedClients: wifiDominant ? [:] : proxiedDeltas
                     )
                 }
 
@@ -476,6 +725,7 @@ public final class TrafficMonitorService: ObservableObject {
         }
 
         oldProcesses = parsedProcesses
+        oldLoopback = parsedLoopback
         oldInterfaces = parsedInterfaces
         oldTime = now
         oldNetwork = network
@@ -655,7 +905,7 @@ public final class TrafficMonitorService: ObservableObject {
         let relays = [
             "clash", "surge", "sing-box", "mihomo", "shadowrocket", "v2ray",
             "xray", "trojan", "quantumult", "tailscale", "wireguard", "openvpn",
-            "qv2ray", "nekoray", "dae", "snell"
+            "qv2ray", "nekoray", "dae", "snell", "kumiryo"
         ]
         let lowerName = name.lowercased()
         let lowerDisplay = displayName.lowercased()

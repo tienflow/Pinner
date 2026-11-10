@@ -10,6 +10,11 @@ public struct ProcessManagerView: View {
     @State private var isTerminating: Bool = false
     @State private var terminationErrorMessage: String? = nil
 
+    @State private var showingDiagnostic: Bool = false
+    @State private var diagnosticReport: SystemDiagnosticReport? = nil
+    @State private var isDiagnosing: Bool = false
+    @State private var diagnosticError: String? = nil
+
     public init(service: ProcessManagerService = .shared, onClose: @escaping () -> Void) {
         self.service = service
         self.onClose = onClose
@@ -119,6 +124,30 @@ public struct ProcessManagerView: View {
         } message: { proc in
             Text("确定要终止 \(proc.displayName) (PID: \(proc.pid)) 吗？\n如果该进程有未保存的工作，可能会丢失数据。")
         }
+        .sheet(isPresented: $showingDiagnostic) {
+            SystemDiagnosticSheet(
+                report: diagnosticReport,
+                isLoading: isDiagnosing,
+                errorMessage: diagnosticError,
+                onRetry: {
+                    runSystemDiagnostic()
+                },
+                onAction: { action, pid in
+                    guard let pid = pid,
+                          let proc = service.resolveProcessEntry(pid: pid, fallbackName: diagnosticReport?.primaryCulprit) else { return }
+                    if action == .suspend {
+                        _ = service.toggleSuspend(process: proc)
+                        showingDiagnostic = false
+                    } else if action == .terminate {
+                        showingDiagnostic = false
+                        processPendingTermination = proc
+                    }
+                },
+                onClose: {
+                    showingDiagnostic = false
+                }
+            )
+        }
     }
 
     // MARK: - Header Bar
@@ -144,6 +173,25 @@ public struct ProcessManagerView: View {
             }
 
             Spacer()
+
+            Button {
+                Haptics.levelChange()
+                runSystemDiagnostic()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "stethoscope")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("AI 诊断系统")
+                        .font(.system(size: Design.caption, weight: .medium))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.12))
+                .foregroundColor(.accentColor)
+                .cornerRadius(Design.radiusS)
+            }
+            .buttonStyle(.plain)
+            .help("利用 AI 诊断当前系统高负载与卡顿原因")
 
             PanelRefreshButton(isLoading: service.isLoading, helpText: "立即刷新系统诊断数据") {
                 Task {
@@ -492,8 +540,24 @@ public struct ProcessManagerView: View {
                 .foregroundColor(proc.energyImpact > 50 ? .red : (proc.energyImpact > 20 ? .orange : (proc.energyImpact > 5 ? .primary : .secondary)))
                 .frame(width: 58, alignment: .trailing)
 
-            // 6. Action Buttons (Pause / Terminate)
-            HStack(spacing: 6) {
+            // 6. Action Buttons (Diagnose / Pause / Terminate)
+            HStack(spacing: 5) {
+                // AI Diagnose Process
+                Button {
+                    Haptics.levelChange()
+                    runProcessDiagnostic(for: proc)
+                } label: {
+                    Image(systemName: "stethoscope")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 3.5)
+                        .background(Color.accentColor.opacity(0.12))
+                        .foregroundColor(.accentColor)
+                        .cornerRadius(Design.radiusS)
+                }
+                .buttonStyle(.plain)
+                .help("使用 AI 深度诊断该进程 (PID \(proc.pid))")
+
                 // Pause / Resume Toggle Button
                 Button {
                     Haptics.levelChange()
@@ -535,7 +599,7 @@ public struct ProcessManagerView: View {
                 .disabled(isTerminating)
                 .help(isTerminating ? "正在终止中…" : "终止此进程 (SIGKILL)")
             }
-            .frame(width: 125, alignment: .center)
+            .frame(width: 140, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -651,4 +715,62 @@ public struct ProcessManagerView: View {
                 .opacity(proc.isSuspended ? 0.45 : 1.0)
         }
     }
+
+    // MARK: - AI Diagnostic Runners
+
+    private func runSystemDiagnostic() {
+        showingDiagnostic = true
+        isDiagnosing = true
+        diagnosticError = nil
+        diagnosticReport = nil
+
+        let pressure = service.systemPressure
+        let topProcs = service.processes
+
+        Task {
+            do {
+                let report = try await AIProcessDoctorService.shared.diagnoseSystem(
+                    pressure: pressure,
+                    topProcesses: topProcs
+                )
+                await MainActor.run {
+                    self.diagnosticReport = report
+                    self.isDiagnosing = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.diagnosticError = error.localizedDescription
+                    self.isDiagnosing = false
+                }
+            }
+        }
+    }
+
+    private func runProcessDiagnostic(for proc: ManagedProcessEntry) {
+        showingDiagnostic = true
+        isDiagnosing = true
+        diagnosticError = nil
+        diagnosticReport = nil
+
+        let pressure = service.systemPressure
+
+        Task {
+            do {
+                let report = try await AIProcessDoctorService.shared.diagnoseProcess(
+                    process: proc,
+                    systemPressure: pressure
+                )
+                await MainActor.run {
+                    self.diagnosticReport = report
+                    self.isDiagnosing = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.diagnosticError = error.localizedDescription
+                    self.isDiagnosing = false
+                }
+            }
+        }
+    }
 }
+

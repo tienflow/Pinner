@@ -446,20 +446,30 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
         keyTimestamps.removeAll { now - $0 > 1.0 }
         clickTimestamps.removeAll { now - $0 > 1.0 }
 
-        currentKPS = Double(keyTimestamps.count)
-        currentCPS = Double(clickTimestamps.count)
+        let newKPS = Double(keyTimestamps.count)
+        let newCPS = Double(clickTimestamps.count)
 
-        if currentKPS > stats.peakKPS {
-            stats.peakKPS = currentKPS
+        if currentKPS != newKPS {
+            currentKPS = newKPS
+        }
+        if currentCPS != newCPS {
+            currentCPS = newCPS
+        }
+
+        if newKPS > stats.peakKPS {
+            stats.peakKPS = newKPS
             isDirty = true
         }
-        if currentCPS > stats.peakCPS {
-            stats.peakCPS = currentCPS
+        if newCPS > stats.peakCPS {
+            stats.peakCPS = newCPS
             isDirty = true
         }
 
         // APM = (keys + clicks) in 1-second window * 60
-        currentAPM = (currentKPS + currentCPS) * 60.0
+        let newAPM = (newKPS + newCPS) * 60.0
+        if currentAPM != newAPM {
+            currentAPM = newAPM
+        }
     }
 
     // MARK: - Key Names & Helpers

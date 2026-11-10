@@ -4,10 +4,12 @@ import Combine
 struct OTPView: View {
     @State var store: OTPStore
     var autoCopyOnAppear: Bool = false
-    var onAddRequested: (() -> Void)?
+    var onAddRequested: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
+    var onAddingStateChanged: ((Bool) -> Void)? = nil
     @State private var now = Date()
     @State private var copiedID: UUID?
+    @State private var isAddingAccount = false
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -15,7 +17,19 @@ struct OTPView: View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.35)
-            if store.accounts.isEmpty {
+            if isAddingAccount {
+                AddOTPView(
+                    isPresented: $isAddingAccount,
+                    onAdd: { account in
+                        store.addAccount(account)
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            isAddingAccount = false
+                        }
+                    },
+                    embedded: true
+                )
+                .transition(.opacity)
+            } else if store.accounts.isEmpty {
                 emptyState
             } else {
                 accountList
@@ -25,6 +39,9 @@ struct OTPView: View {
         .liquidGlassBackground(cornerRadius: Design.radiusL)
         .ignoresSafeArea()
         .onReceive(timer) { now = $0 }
+        .onChange(of: isAddingAccount) { _, newValue in
+            onAddingStateChanged?(newValue)
+        }
         .onAppear {
             if autoCopyOnAppear, let first = store.accounts.first,
                let code = store.code(for: first, at: Date()) {
@@ -37,26 +54,56 @@ struct OTPView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "key.2").font(.system(size: 13)).foregroundStyle(.secondary)
-            Text("OTP 验证码").font(.system(size: 13, weight: .semibold))
-            Spacer()
-            Button(action: { onAddRequested?() }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.primary.opacity(0.06))
-                    .clipShape(Circle())
+            if isAddingAccount {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isAddingAccount = false
+                    }
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("返回验证码列表")
             }
-            .buttonStyle(.plain)
-            .help("添加验证码")
+
+            Image(systemName: "key.2")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.accentColor)
+            Text(isAddingAccount ? "添加 OTP 账户" : "OTP 验证码").font(.system(size: 14, weight: .bold))
+            Spacer()
+
+            if !isAddingAccount {
+                Button(action: {
+                    if let onAddRequested = onAddRequested {
+                        onAddRequested()
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            isAddingAccount = true
+                        }
+                    }
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("添加验证码")
+            }
 
             PanelCloseButton(helpText: "关闭面板 (⎋)") {
                 onClose?()
             }
         }
-        .frame(height: 32)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Account List
@@ -131,10 +178,21 @@ struct OTPView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Spacer()
             Image(systemName: "key.2").font(.system(size: 32)).foregroundStyle(.tertiary)
-            Text("点击 + 添加 OTP 账户").font(.system(size: 13)).foregroundStyle(.secondary)
+            Text("暂无 OTP 账户").font(.system(size: 13)).foregroundStyle(.secondary)
+            Button("添加账户") {
+                if let onAddRequested = onAddRequested {
+                    onAddRequested()
+                } else {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isAddingAccount = true
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
             Spacer()
         }
     }

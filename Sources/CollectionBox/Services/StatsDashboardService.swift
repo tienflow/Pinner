@@ -78,10 +78,12 @@ final class StatsDashboardService {
     func collect(agent: StatsAgent, sinceMs: Int64, force: Bool = false) -> [UnifiedUsageRecord] {
         switch agent {
         case .codex:
-            return codex.collectRecords(sinceUnix: Int(sinceMs / 1000)).map {
-                UnifiedUsageRecord(agent: .codex, model: $0.model, title: $0.title, tsMs: $0.tsMs,
-                                   tokens: $0.tokens, freshInput: 0, cached: 0, output: 0,
-                                   hasBreakdown: false, sessionId: $0.sessionId, durationMs: nil)
+            return codex.collectRecords(sinceUnix: Int(sinceMs / 1000), force: force).map {
+                let hasBreakdown = ($0.freshInput > 0 || $0.cached > 0 || $0.output > 0)
+                return UnifiedUsageRecord(agent: .codex, model: $0.model, title: $0.title, tsMs: $0.tsMs,
+                                   tokens: $0.tokens, freshInput: $0.freshInput, cached: $0.cached,
+                                   output: $0.output, hasBreakdown: hasBreakdown, sessionId: $0.sessionId,
+                                   durationMs: nil)
             }
         case .gemini:
             return gemini.collectRecords(sinceUnix: Int(sinceMs / 1000), force: force).map {

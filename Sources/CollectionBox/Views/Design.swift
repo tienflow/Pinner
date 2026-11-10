@@ -102,75 +102,6 @@ struct GlassEffectBackground: NSViewRepresentable {
     }
 }
 
-/// Native macOS 26 Liquid Glass container powered by `NSGlassEffectContainerView`.
-/// Dynamically merges descendant glass views for fluid optical blending and high rendering performance.
-struct GlassEffectContainer<Content: View>: NSViewRepresentable {
-    var spacing: CGFloat
-    var content: () -> Content
-
-    init(spacing: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
-        self.spacing = spacing
-        self.content = content
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        if #available(macOS 26.0, *) {
-            let container = NSGlassEffectContainerView()
-            container.spacing = spacing
-            let hosting = NSHostingView(rootView: content())
-            container.contentView = hosting
-            return container
-        } else {
-            return NSHostingView(rootView: content())
-        }
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if #available(macOS 26.0, *), let container = nsView as? NSGlassEffectContainerView {
-            container.spacing = spacing
-            if let hosting = container.contentView as? NSHostingView<Content> {
-                hosting.rootView = content()
-            }
-        } else if let hosting = nsView as? NSHostingView<Content> {
-            hosting.rootView = content()
-        }
-    }
-}
-
-/// Native macOS system visual effect backdrop (calls NSVisualEffectView directly for legacy or specialized usages).
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .underWindowBackground
-    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
-    var state: NSVisualEffectView.State = .active
-    var cornerRadius: CGFloat = 0
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = state
-        view.wantsLayer = true
-        if cornerRadius > 0 {
-            view.layer?.cornerRadius = cornerRadius
-            view.layer?.masksToBounds = true
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.state = state
-        if cornerRadius > 0 {
-            nsView.layer?.cornerRadius = cornerRadius
-            nsView.layer?.masksToBounds = true
-        } else {
-            nsView.layer?.cornerRadius = 0
-            nsView.layer?.masksToBounds = false
-        }
-    }
-}
-
 /// Native macOS 26 Liquid Glass panel backdrop powered directly by `NSGlassEffectView`.
 struct LiquidGlassBackground: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
@@ -238,14 +169,6 @@ extension View {
         modifier(LiquidGlassBackground(cornerRadius: cornerRadius, style: style, tintColor: tintColor))
     }
 
-    /// Backward-compatible overload for legacy calls specifying NSVisualEffectView.Material
-    func liquidGlassBackground(
-        cornerRadius: CGFloat = Design.radiusL,
-        material: NSVisualEffectView.Material
-    ) -> some View {
-        modifier(LiquidGlassBackground(cornerRadius: cornerRadius, style: .regular))
-    }
-
     func liquidGlassCard(
         cornerRadius: CGFloat = Design.radiusM,
         style: LiquidGlassStyle = .clear,
@@ -278,6 +201,40 @@ public struct PanelCloseButton: View {
         }
         .buttonStyle(.plain)
         .help(helpText)
+    }
+}
+
+/// Compact identity strip pinned above the range picker of every agent stats
+/// panel. These panels are near-identical siblings opened by hotkey or from the
+/// menu-bar drill-down, so without a title there is no way to tell which agent
+/// a panel belongs to.
+public struct PanelTitleBar: View {
+    public var symbolName: String
+    public var title: String
+    public var onClose: (() -> Void)?
+
+    public init(symbolName: String, title: String, onClose: (() -> Void)? = nil) {
+        self.symbolName = symbolName
+        self.title = title
+        self.onClose = onClose
+    }
+
+    public var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbolName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.accentColor)
+            Text(title)
+                .font(.system(size: 14, weight: .bold))
+            Spacer(minLength: 0)
+            if let onClose {
+                PanelCloseButton(helpText: "关闭面板 (⎋)", action: onClose)
+            }
+        }
+        // Row height is driven by the 24pt close button, not the title text.
+        // Insets must match every hand-rolled panel header (h16/v10).
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 

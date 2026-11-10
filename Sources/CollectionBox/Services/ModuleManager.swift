@@ -2,9 +2,12 @@ import Foundation
 import Combine
 
 /// Mental model clusters for grouping Pinner capabilities.
+///
+/// Declaration order is the display order in both the status-bar menu and the
+/// Settings pane: observation first, capture second, tools last.
 public enum ModuleCluster: String, CaseIterable, Sendable {
-    case capture = "录入"
     case observation = "观测"
+    case capture = "录入"
     case tools = "工具"
 
     public var subtitle: String {
@@ -63,7 +66,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
     public var subtitle: String {
         switch self {
         case .collection:
-            return "屏幕边缘吸附抽屉、书签分类管理与临时文件暂存架（核心基础功能）"
+            return "屏幕边缘吸附抽屉、书签分类管理与最近访问（核心基础功能）"
         case .todo:
             return "快捷键调出智能录入框，由大模型理解自然语言并沉淀至系统提醒事项"
         case .fleeting:
@@ -104,12 +107,25 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
 
     public var cluster: ModuleCluster {
         switch self {
-        case .collection, .todo, .fleeting:
+        case .todo, .fleeting:
             return .capture
         case .agentStats, .inputStats, .traffic:
             return .observation
-        case .portManager, .processManager, .otp:
+        case .collection, .portManager, .processManager, .otp:
             return .tools
+        }
+    }
+
+    /// Canonical member order inside a cluster, shared by the status-bar menu
+    /// and the Settings pane so the two cannot drift apart. This is the only
+    /// place a cluster's order is written down — declaration order in
+    /// `allCases` is *not* a display order, so a new module must be added here
+    /// as well as to the enum.
+    public static func ordered(in cluster: ModuleCluster) -> [PinnerModule] {
+        switch cluster {
+        case .observation: return [.agentStats, .inputStats, .traffic]
+        case .capture: return [.todo, .fleeting]
+        case .tools: return [.portManager, .processManager, .collection, .otp]
         }
     }
 }
@@ -159,21 +175,49 @@ public final class ModuleManager: ObservableObject {
         if module.isCore { return } // Cannot disable core
         if on {
             enabledModules.insert(module)
-            if module == .inputStats {
-                Task { @MainActor in
-                    InputStatsService.shared.startMonitoring()
-                }
-            }
         } else {
             enabledModules.remove(module)
-            if module == .inputStats {
-                Task { @MainActor in
+        }
+        syncModuleRuntimeState(module, enabled: on)
+    }
+
+    private func syncModuleRuntimeState(_ module: PinnerModule, enabled on: Bool) {
+        let applyState: @MainActor () -> Void = {
+            if on {
+                switch module {
+                case .inputStats:
+                    InputStatsService.shared.startMonitoring()
+                case .traffic:
+                    TrafficMonitorService.shared.startMonitoring()
+                default:
+                    break
+                }
+            } else {
+                switch module {
+                case .inputStats:
                     InputStatsService.shared.stopMonitoring()
-                }
-            } else if module == .portManager {
-                Task { @MainActor in
+                    InputStatsWindowController.shared.hide()
+                case .traffic:
+                    TrafficMonitorService.shared.stopMonitoring()
+                    TrafficWindowController.shared.hide()
+                case .portManager:
+                    PortManagerService.shared.stopMonitoring()
                     PortManagerWindowController.shared.hide()
+                case .processManager:
+                    ProcessManagerService.shared.stopMonitoring()
+                    ProcessManagerWindowController.shared.hide()
+                default:
+                    break
                 }
+            }
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                applyState()
+            }
+        } else {
+            Task { @MainActor in
+                applyState()
             }
         }
     }
