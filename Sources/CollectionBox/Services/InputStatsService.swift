@@ -108,6 +108,8 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
     private var clickTimestamps: [TimeInterval] = []
 
     // Mouse movement sampling
+    private let nonisolatedMouseLock = NSLock()
+    nonisolated(unsafe) private var lastNonisolatedMouseTime: TimeInterval = 0
     private var lastMousePoint: CGPoint?
     private var lastMouseSampleTime: TimeInterval = 0
     private let mouseSampleInterval: TimeInterval = 1.0 / 30.0 // 30Hz
@@ -117,19 +119,27 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
     private var lastModifierFlags: CGEventFlags = []
     private var pendingModifierName: String? = nil
 
-    private let storageURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("com.tienyeung.Pinner", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("input_stats.json")
-    }()
+    private static func storageFileURL(named filename: String) -> URL {
+        let fm = FileManager.default
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("Pinner", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let target = dir.appendingPathComponent(filename)
+        if !fm.fileExists(atPath: target.path) {
+            let legacy = appSupport
+                .appendingPathComponent("com.tienyeung.Pinner", isDirectory: true)
+                .appendingPathComponent(filename)
+            if fm.fileExists(atPath: legacy.path) {
+                try? fm.copyItem(at: legacy, to: target)
+            }
+        }
+        return target
+    }
 
-    private let historyURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("com.tienyeung.Pinner", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("input_stats_history.json")
-    }()
+    private let storageURL: URL = InputStatsService.storageFileURL(named: "input_stats.json")
+
+    private let historyURL: URL = InputStatsService.storageFileURL(named: "input_stats_history.json")
 
     public init() {
         let today = DailyInputStats.todayDateString()
@@ -252,6 +262,16 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
     // MARK: - Event Handling
 
     nonisolated func handleEvent(type: CGEventType, event: CGEvent) {
+        if type == .mouseMoved || type == .leftMouseDragged || type == .rightMouseDragged {
+            let now = ProcessInfo.processInfo.systemUptime
+            nonisolatedMouseLock.lock()
+            let shouldSkip = (now - lastNonisolatedMouseTime) < (1.0 / 35.0)
+            if !shouldSkip {
+                lastNonisolatedMouseTime = now
+            }
+            nonisolatedMouseLock.unlock()
+            if shouldSkip { return }
+        }
         Task { @MainActor in
             self.processEvent(type: type, event: event)
         }

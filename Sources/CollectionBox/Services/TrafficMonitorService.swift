@@ -53,7 +53,7 @@ public final class TrafficMonitorService: ObservableObject {
     private var oldInterfaces: [String: TrafficBytes] = [:]
     private var oldTime: Date?
     private var lastSaved: Date = .distantPast
-    private var oldNetwork: TrafficNetworkContext?
+    private var lastPrunedDay: String?
     private var appPaths: [String: String] = [:]
     private var pidMapping: [String: (name: String, path: String)] = [:]
     private var activePIDs: [String: pid_t] = [:]
@@ -61,8 +61,8 @@ public final class TrafficMonitorService: ObservableObject {
     private let pathMonitor = NWPathMonitor()
     private let pathMonitorQueue = DispatchQueue(label: "com.tienyeung.pinner.traffic.pathmonitor", qos: .utility)
     private let sampleQueue = DispatchQueue(label: "com.tienyeung.pinner.traffic.sampling", qos: .utility)
+    private let saveQueue = DispatchQueue(label: "com.tienyeung.pinner.traffic.save", qos: .utility)
     private let ledgerFileURL: URL
-    private var storeWritable: Bool = true
 
     public init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -184,7 +184,6 @@ public final class TrafficMonitorService: ObservableObject {
             let isRelay = Self.checkIsRelay(name: name, displayName: displayName)
             let proxied = normalizedProxied[name] ?? TrafficBytes()
             let effectiveBytes = bytes
-            let relayRaw = TrafficBytes()
 
             items.append(
                 TrafficProcessItem(
@@ -194,8 +193,7 @@ public final class TrafficMonitorService: ObservableObject {
                     appBundlePath: path,
                     bytes: effectiveBytes,
                     isRelay: isRelay,
-                    proxied: proxied,
-                    relayRawTotal: relayRaw
+                    proxied: proxied
                 )
             )
         }
@@ -728,7 +726,6 @@ public final class TrafficMonitorService: ObservableObject {
         oldLoopback = parsedLoopback
         oldInterfaces = parsedInterfaces
         oldTime = now
-        oldNetwork = network
         lastSampleTime = now
         statusMessage = "采集中"
     }
@@ -790,18 +787,29 @@ public final class TrafficMonitorService: ObservableObject {
     // MARK: - Persistence
 
     public func save() {
-        guard storeWritable else { return }
-        do {
-            try FileManager.default.createDirectory(
-                at: ledgerFileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(ledger)
-            try data.write(to: ledgerFileURL, options: .atomic)
-        } catch {
-            statusMessage = "历史数据写入异常: \(error.localizedDescription)"
+        let today = TrafficDateKeys.day(Date())
+        if lastPrunedDay != today {
+            ledger.pruneOldDays(keepingDays: 90)
+            lastPrunedDay = today
+        }
+        let snapshot = ledger
+        let fileURL = ledgerFileURL
+        saveQueue.async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(
+                    at: fileURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let data = try encoder.encode(snapshot)
+                try data.write(to: fileURL, options: .atomic)
+            } catch {
+                let message = "历史数据写入异常: \(error.localizedDescription)"
+                Task { @MainActor [weak self] in
+                    self?.statusMessage = message
+                }
+            }
         }
     }
 

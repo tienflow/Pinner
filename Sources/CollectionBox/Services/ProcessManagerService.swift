@@ -17,6 +17,7 @@ public final class ProcessManagerService: ObservableObject {
     @Published public var searchText: String = ""
 
     private var refreshTimer: Timer?
+    private var isRefreshingInFlight = false
     private var lastCpuTicks: host_cpu_load_info_data_t? = nil
     private var lastProcessSamples: [pid_t: (cpuTimeNano: UInt64, wakeups: UInt64, timestamp: TimeInterval)] = [:]
 
@@ -46,8 +47,13 @@ public final class ProcessManagerService: ObservableObject {
     // MARK: - Data Refresh
 
     public func refresh() async {
+        guard !isRefreshingInFlight else { return }
+        isRefreshingInFlight = true
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            isRefreshingInFlight = false
+        }
 
         let previousTicks = self.lastCpuTicks
         let previousSamples = self.lastProcessSamples
@@ -193,10 +199,16 @@ public final class ProcessManagerService: ObservableObject {
         var totalCpuPercent: Double = 0.0
 
         if let cur = currentTicks, let prev = previousTicks {
-            let userDiff = Double(cur.cpu_ticks.0 - prev.cpu_ticks.0)
-            let sysDiff = Double(cur.cpu_ticks.1 - prev.cpu_ticks.1)
-            let idleDiff = Double(cur.cpu_ticks.2 - prev.cpu_ticks.2)
-            let niceDiff = Double(cur.cpu_ticks.3 - prev.cpu_ticks.3)
+            let deltaTicks: (UInt32, UInt32) -> Double = { curVal, prevVal in
+                if curVal >= prevVal {
+                    return Double(curVal - prevVal)
+                }
+                return Double(UInt32.max - prevVal) + Double(curVal) + 1.0
+            }
+            let userDiff = deltaTicks(cur.cpu_ticks.0, prev.cpu_ticks.0)
+            let sysDiff = deltaTicks(cur.cpu_ticks.1, prev.cpu_ticks.1)
+            let idleDiff = deltaTicks(cur.cpu_ticks.2, prev.cpu_ticks.2)
+            let niceDiff = deltaTicks(cur.cpu_ticks.3, prev.cpu_ticks.3)
             let totalDiff = userDiff + sysDiff + idleDiff + niceDiff
 
             if totalDiff > 0 {
@@ -335,11 +347,13 @@ public final class ProcessManagerService: ObservableObject {
     // MARK: - Mach & Darwin Helpers
 
     private nonisolated static func sampleCPUTicks() -> host_cpu_load_info_data_t? {
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
         var cpuLoad = host_cpu_load_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
         let kr = withUnsafeMutablePointer(to: &cpuLoad) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
         return kr == KERN_SUCCESS ? cpuLoad : nil
@@ -350,11 +364,13 @@ public final class ProcessManagerService: ObservableObject {
         var size = MemoryLayout<UInt64>.size
         sysctlbyname("hw.memsize", &totalBytes, &size, nil, 0)
 
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
         var vmStats = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let kr = withUnsafeMutablePointer(to: &vmStats) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
 
@@ -435,23 +451,23 @@ public final class ProcessManagerService: ObservableObject {
         while i < size && buffer[i] == 0 { i += 1 }
 
         var args: [String] = []
-        var currentArg = ""
+        var currentBytes: [UInt8] = []
         var argCount = 0
 
         while i < size && argCount < argc {
             if buffer[i] == 0 {
-                if !currentArg.isEmpty {
-                    args.append(currentArg)
-                    currentArg = ""
+                if !currentBytes.isEmpty {
+                    args.append(String(decoding: currentBytes, as: UTF8.self))
+                    currentBytes.removeAll(keepingCapacity: true)
                     argCount += 1
                 }
             } else {
-                currentArg.append(Character(UnicodeScalar(UInt8(bitPattern: buffer[i]))))
+                currentBytes.append(UInt8(bitPattern: buffer[i]))
             }
             i += 1
         }
-        if !currentArg.isEmpty && argCount < argc {
-            args.append(currentArg)
+        if !currentBytes.isEmpty && argCount < argc {
+            args.append(String(decoding: currentBytes, as: UTF8.self))
         }
 
         guard args.count > 1 else { return nil }

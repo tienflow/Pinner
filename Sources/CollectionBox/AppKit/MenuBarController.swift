@@ -1,5 +1,5 @@
 import AppKit
-import ServiceManagement
+import Carbon
 
 enum AppTheme: Int, CaseIterable, Identifiable {
     case auto = 0, light = 1, dark = 2
@@ -19,17 +19,39 @@ public final class MenuBarController: NSObject {
     private var hotkeyManager: HotkeyManager?
     private let otpStore = OTPStore()
     private var otpController: OTPWindowController?
-    private var otpHotkeyManager: OTPHotkeyManager?
-    private var codexStatsController: CodexStatsWindowController?
-    private var codexStatsHotkeyManager: CodexStatsHotkeyManager?
-    private var geminiStatsController: GeminiStatsWindowController?
-    private var geminiStatsHotkeyManager: GeminiStatsHotkeyManager?
-    private var workbuddyStatsController: WorkBuddyStatsWindowController?
-    private var workbuddyStatsHotkeyManager: WorkBuddyStatsHotkeyManager?
+    private let otpHotkeyManager = AgentStatsHotkeyManager(
+        keyPrefix: "CollectionBox.otpHotkey",
+        eventID: 2,
+        defaultCombo: HotkeyCombo(keyCode: UInt32(kVK_ANSI_O), modifiers: UInt32(cmdKey | shiftKey)),
+        label: "OTP"
+    )
+    private let codexStatsController = AgentStatsWindowController(agent: .codex)
+    private let geminiStatsController = AgentStatsWindowController(agent: .gemini)
+    private let workbuddyStatsController = AgentStatsWindowController(agent: .workbuddy)
+    private let codexStatsHotkeyManager = AgentStatsHotkeyManager(
+        keyPrefix: "CollectionBox.codexStatsHotkey",
+        eventID: 3,
+        defaultCombo: HotkeyCombo(keyCode: UInt32(kVK_ANSI_I), modifiers: UInt32(cmdKey | shiftKey)),
+        label: "Codex 统计"
+    )
+    private let geminiStatsHotkeyManager = AgentStatsHotkeyManager(
+        keyPrefix: "CollectionBox.geminiStatsHotkey",
+        eventID: 4,
+        defaultCombo: HotkeyCombo(keyCode: UInt32(kVK_ANSI_G), modifiers: UInt32(cmdKey | shiftKey)),
+        label: "Antigravity 统计"
+    )
+    private let workbuddyStatsHotkeyManager = AgentStatsHotkeyManager(
+        keyPrefix: "CollectionBox.workbuddyStatsHotkey",
+        eventID: 5,
+        defaultCombo: HotkeyCombo(keyCode: UInt32(kVK_ANSI_W), modifiers: UInt32(cmdKey | shiftKey)),
+        label: "WorkBuddy 统计"
+    )
     private var todoController: TodoCaptureWindowController?
     private let todoHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.todoHotkey", eventID: 9)
     private var fleetingController: FleetingCaptureWindowController?
     private let fleetingHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.fleetingHotkey", eventID: 10)
+    private let clipboardStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.clipboardStatsHotkey", eventID: 15)
+    private let browserStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.browserStatsHotkey", eventID: 16)
     private let inputStatsHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.inputStatsHotkey", eventID: 11)
     private let portManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.portManagerHotkey", eventID: 12)
     private let processManagerHotkeyManager = AgentStatsHotkeyManager(keyPrefix: "CollectionBox.processManagerHotkey", eventID: 13)
@@ -69,36 +91,29 @@ public final class MenuBarController: NSObject {
         hotkeyManager?.register()
 
         otpController = OTPWindowController(store: otpStore)
-        otpHotkeyManager = OTPHotkeyManager()
-        otpHotkeyManager?.onHotkeyTriggered = { [weak self] in
+        otpHotkeyManager.onHotkeyTriggered = { [weak self] in
             guard ModuleManager.shared.isEnabled(.otp) else { return }
             self?.otpController?.toggle(autoCopy: true)
         }
-        otpHotkeyManager?.register()
+        otpHotkeyManager.register()
 
-        codexStatsController = CodexStatsWindowController()
-        codexStatsHotkeyManager = CodexStatsHotkeyManager()
-        codexStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in
+        codexStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
             guard ModuleManager.shared.isEnabled(.agentStats) else { return }
-            self?.showCodexStats()
+            self?.showAgentPanel(.codex)
         }
-        codexStatsHotkeyManager?.register()
+        codexStatsHotkeyManager.register()
 
-        geminiStatsController = GeminiStatsWindowController()
-        geminiStatsHotkeyManager = GeminiStatsHotkeyManager()
-        geminiStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in
+        geminiStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
             guard ModuleManager.shared.isEnabled(.agentStats) else { return }
-            self?.showGeminiStats()
+            self?.showAgentPanel(.gemini)
         }
-        geminiStatsHotkeyManager?.register()
+        geminiStatsHotkeyManager.register()
 
-        workbuddyStatsController = WorkBuddyStatsWindowController()
-        workbuddyStatsHotkeyManager = WorkBuddyStatsHotkeyManager()
-        workbuddyStatsHotkeyManager?.onHotkeyTriggered = { [weak self] in
+        workbuddyStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
             guard ModuleManager.shared.isEnabled(.agentStats) else { return }
-            self?.showWorkBuddyStats()
+            self?.showAgentPanel(.workbuddy)
         }
-        workbuddyStatsHotkeyManager?.register()
+        workbuddyStatsHotkeyManager.register()
 
         todoController = todoCaptureController()
 
@@ -122,6 +137,14 @@ public final class MenuBarController: NSObject {
             guard ModuleManager.shared.isEnabled(.fleeting) else { return }
             self?.showFleeting()
         }
+        clipboardStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.clipboardStats) else { return }
+            self?.showClipboardStats()
+        }
+        browserStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
+            guard ModuleManager.shared.isEnabled(.browserStats) else { return }
+            self?.showBrowserStats()
+        }
         inputStatsHotkeyManager.onHotkeyTriggered = { [weak self] in
             guard ModuleManager.shared.isEnabled(.inputStats) else { return }
             self?.showInputStats()
@@ -143,6 +166,8 @@ public final class MenuBarController: NSObject {
         dshStatsHotkeyManager.register()
         todoHotkeyManager.register()
         fleetingHotkeyManager.register()
+        clipboardStatsHotkeyManager.register()
+        browserStatsHotkeyManager.register()
         inputStatsHotkeyManager.register()
         portManagerHotkeyManager.register()
         processManagerHotkeyManager.register()
@@ -233,6 +258,8 @@ public final class MenuBarController: NSObject {
         case .fleeting: return #selector(showFleeting)
         case .otp: return #selector(showOTP)
         case .agentStats: return #selector(openDashboard)
+        case .clipboardStats: return #selector(showClipboardStats)
+        case .browserStats: return #selector(showBrowserStats)
         case .inputStats: return #selector(showInputStats)
         case .portManager: return #selector(showPortManager)
         case .processManager: return #selector(showProcessManager)
@@ -304,6 +331,36 @@ public final class MenuBarController: NSObject {
 
     public func clearFleetingHotkey() {
         fleetingHotkeyManager.clear()
+    }
+
+    public func clipboardStatsHotkeyString() -> String {
+        clipboardStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordClipboardStatsHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置剪贴统计快捷键") { [weak self] combo in
+            self?.clipboardStatsHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearClipboardStatsHotkey() {
+        clipboardStatsHotkeyManager.clear()
+    }
+
+    public func browserStatsHotkeyString() -> String {
+        browserStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
+    }
+
+    public func recordBrowserStatsHotkey(completion: (() -> Void)? = nil) {
+        HotkeyRecorder.present(title: "设置浏览统计快捷键") { [weak self] combo in
+            self?.browserStatsHotkeyManager.save(combo: combo)
+            completion?()
+        }
+    }
+
+    public func clearBrowserStatsHotkey() {
+        browserStatsHotkeyManager.clear()
     }
 
     public func inputStatsHotkeyString() -> String {
@@ -382,75 +439,26 @@ public final class MenuBarController: NSObject {
     }
 
     public func otpHotkeyString() -> String {
-        (otpHotkeyManager?.currentCombo ?? OTPHotkeyManager.defaultCombo).displayString
+        otpHotkeyManager.currentCombo?.displayString ?? "未设置"
     }
 
     public func recordOTPHotkey(completion: (() -> Void)? = nil) {
         HotkeyRecorder.present(title: "设置验证码快捷键") { [weak self] combo in
-            self?.otpHotkeyManager?.save(combo: combo)
+            self?.otpHotkeyManager.save(combo: combo)
             completion?()
         }
     }
 
     public func clearOTPHotkey() {
-        otpHotkeyManager?.clear()
+        otpHotkeyManager.clear()
     }
 
-    public func codexHotkeyString() -> String {
-        (codexStatsHotkeyManager?.currentCombo ?? CodexStatsHotkeyManager.defaultCombo).displayString
-    }
-
-    public func recordCodexStatsHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置 Codex 统计快捷键") { [weak self] combo in
-            self?.codexStatsHotkeyManager?.save(combo: combo)
-            completion?()
-        }
-    }
-
-    public func clearCodexStatsHotkey() {
-        codexStatsHotkeyManager?.clear()
-    }
-
-    public func geminiHotkeyString() -> String {
-        (geminiStatsHotkeyManager?.currentCombo ?? GeminiStatsHotkeyManager.defaultCombo).displayString
-    }
-
-    public func recordGeminiStatsHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置 Gemini 统计快捷键") { [weak self] combo in
-            self?.geminiStatsHotkeyManager?.save(combo: combo)
-            completion?()
-        }
-    }
-
-    public func clearGeminiStatsHotkey() {
-        geminiStatsHotkeyManager?.clear()
-    }
-
-    public func workbuddyHotkeyString() -> String {
-        (workbuddyStatsHotkeyManager?.currentCombo ?? WorkBuddyStatsHotkeyManager.defaultCombo).displayString
-    }
-
-    public func recordWorkBuddyStatsHotkey(completion: (() -> Void)? = nil) {
-        HotkeyRecorder.present(title: "设置 WorkBuddy 统计快捷键") { [weak self] combo in
-            self?.workbuddyStatsHotkeyManager?.save(combo: combo)
-            completion?()
-        }
-    }
-
-    public func clearWorkBuddyStatsHotkey() {
-        workbuddyStatsHotkeyManager?.clear()
-    }
-
-    public func dshHotkeyString() -> String {
-        dshStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
-    }
-
-    public func zcodeHotkeyString() -> String {
-        zcodeStatsHotkeyManager.currentCombo?.displayString ?? "未设置"
+    public func agentStatsHotkeyString(for agent: StatsAgent) -> String {
+        agentStatsHotkeyManager(for: agent).currentCombo?.displayString ?? "未设置"
     }
 
     public func recordAgentStatsHotkey(for agent: StatsAgent, completion: (() -> Void)? = nil) {
-        guard let manager = genericAgentStatsHotkeyManager(agent) else { return }
+        let manager = agentStatsHotkeyManager(for: agent)
         HotkeyRecorder.present(title: "设置 \(agent.label) 统计快捷键") { combo in
             manager.save(combo: combo)
             completion?()
@@ -458,7 +466,7 @@ public final class MenuBarController: NSObject {
     }
 
     public func clearAgentStatsHotkey(for agent: StatsAgent) {
-        genericAgentStatsHotkeyManager(agent)?.clear()
+        agentStatsHotkeyManager(for: agent).clear()
     }
 
     // MARK: - Actions
@@ -468,50 +476,34 @@ public final class MenuBarController: NSObject {
         showAgentPanel(agent)
     }
 
-    /// Mirrors the dashboard's Agent toggle, including the keep-last-on rule.
-    @objc private func toggleAgentStats(_ sender: NSMenuItem) {
-        guard let agent = sender.representedObject as? StatsAgent else { return }
-        let selection = StatsAgentSelection.shared
-        let isOn = selection.enabledAgents.contains(agent)
-        if isOn && selection.enabledAgents.count <= 1 { return }
-        selection.setEnabled(agent, to: !isOn)
+    private func statsController(for agent: StatsAgent) -> AgentStatsWindowController {
+        switch agent {
+        case .codex: return codexStatsController
+        case .gemini: return geminiStatsController
+        case .workbuddy: return workbuddyStatsController
+        case .zcode: return zcodeStatsController
+        case .dsh: return dshStatsController
+        }
     }
 
-    /// Codex / Antigravity / WorkBuddy keep their dedicated panels; ZCode and
-    /// DSH open the shared compact panel.
     private func showAgentPanel(_ agent: StatsAgent) {
+        let controller = statsController(for: agent)
         if let btn = statusItem?.button {
             let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            switch agent {
-            case .codex: codexStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-            case .gemini: geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-            case .workbuddy: workbuddyStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-            case .zcode: zcodeStatsController.showAtMenuBar(buttonFrame: btnFrame)
-            case .dsh: dshStatsController.showAtMenuBar(buttonFrame: btnFrame)
-            }
+            controller.showAtMenuBar(buttonFrame: btnFrame)
         } else {
-            switch agent {
-            case .codex: codexStatsController?.showAtMouse()
-            case .gemini: geminiStatsController?.showAtMouse()
-            case .workbuddy: workbuddyStatsController?.showAtMouse()
-            case .zcode: zcodeStatsController.showAtMouse()
-            case .dsh: dshStatsController.showAtMouse()
-            }
+            controller.showAtMouse()
         }
     }
 
-    /// ZCode / DSH share the generic hotkey manager; other agents have none.
-    private func genericAgentStatsHotkeyManager(_ agent: StatsAgent) -> AgentStatsHotkeyManager? {
+    private func agentStatsHotkeyManager(for agent: StatsAgent) -> AgentStatsHotkeyManager {
         switch agent {
+        case .codex: return codexStatsHotkeyManager
+        case .gemini: return geminiStatsHotkeyManager
+        case .workbuddy: return workbuddyStatsHotkeyManager
         case .zcode: return zcodeStatsHotkeyManager
         case .dsh: return dshStatsHotkeyManager
-        default: return nil
         }
-    }
-
-    @objc private func setTheme(_ s: NSMenuItem) {
-        guard let t = s.representedObject as? AppTheme else { return }
-        UserDefaults.standard.set(t.rawValue, forKey: "CollectionBox.theme"); applyTheme()
     }
 
     @objc private func openDashboard() {
@@ -569,6 +561,28 @@ public final class MenuBarController: NSObject {
         }
     }
 
+    @objc public func showClipboardStats() {
+        Task { @MainActor in
+            if let btn = self.statusItem?.button {
+                let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+                ClipboardStatsWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
+            } else {
+                ClipboardStatsWindowController.shared.showAtMouse()
+            }
+        }
+    }
+
+    @objc public func showBrowserStats() {
+        Task { @MainActor in
+            if let btn = self.statusItem?.button {
+                let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
+                BrowserStatsWindowController.shared.showAtMenuBar(buttonFrame: btnFrame)
+            } else {
+                BrowserStatsWindowController.shared.showAtMouse()
+            }
+        }
+    }
+
     @objc public func showInputStats() {
         Task { @MainActor in
             if let btn = self.statusItem?.button {
@@ -613,53 +627,6 @@ public final class MenuBarController: NSObject {
         }
     }
 
-    private func showCodexStats() {
-        if let btn = statusItem?.button {
-            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            codexStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-        } else {
-            codexStatsController?.showAtMouse()
-        }
-    }
-
-    private func showGeminiStats() {
-        if let btn = statusItem?.button {
-            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            geminiStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-        } else {
-            geminiStatsController?.showAtMouse()
-        }
-    }
-
-    private func showWorkBuddyStats() {
-        if let btn = statusItem?.button {
-            let btnFrame = btn.window?.convertToScreen(btn.frame) ?? .zero
-            workbuddyStatsController?.showAtMenuBar(buttonFrame: btnFrame)
-        } else {
-            workbuddyStatsController?.showAtMouse()
-        }
-    }
-
-    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
-        let enable = sender.state == .off
-        do {
-            if enable {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = enable ? "无法开启开机自启" : "无法关闭开机自启"
-            alert.informativeText = enable
-                ? "请将 Pinner 放入「应用程序」文件夹后重试。\n\(error.localizedDescription)"
-                : error.localizedDescription
-            alert.alertStyle = .warning
-            alert.runModal()
-        }
-    }
-
-    @objc private func hidePanel() { edgeController?.collapse() }
     @MainActor
     @objc private func quitApp() {
         TrafficMonitorService.shared.stopMonitoring()

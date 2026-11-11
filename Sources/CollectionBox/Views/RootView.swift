@@ -1030,8 +1030,8 @@ struct FileIconWrap: NSViewRepresentable {
         let path = cachedResolvedPath(for: entry)
         let ext = path.map { ($0 as NSString).pathExtension } ?? (entry.displayName as NSString).pathExtension
         let fallback = ext.isEmpty
-            ? NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericFolderIcon)))
-            : NSWorkspace.shared.icon(forFileType: ext)
+            ? NSWorkspace.shared.icon(for: .folder)
+            : NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .item)
         guard let path = path else { return fallback }
         let key = iconKey(path)
         if let cached = iconCache.object(forKey: key) { return cached }

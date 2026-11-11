@@ -3,9 +3,9 @@
 > 钉在 macOS 菜单栏的高效常驻工作台。文件收藏、灵感与待办极速捕获、端口与外设监控、多 Agent AI 消耗账本，一键直达，不为你多开一个窗口。
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue.svg)](https://github.com/tienflow/Pinner/releases)
-[![Swift](https://img.shields.io/badge/Swift-6.0-orange.svg)](https://swift.org)
+[![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v1.13.0-brightgreen.svg)](https://github.com/tienflow/Pinner/releases/tag/v1.13.0)
+[![Release](https://img.shields.io/badge/release-v1.14.0-brightgreen.svg)](https://github.com/tienflow/Pinner/releases/tag/v1.14.0)
 
 ---
 
@@ -44,6 +44,15 @@
   - **24 小时心流节律**：00:00–23:59 柱状分布图，自动标识单小时峰值 Peak Hour（🔥）与活跃时段。
   - **7 天 / 30 天历史走势**：折线图与柱状图双形态切换，多日自动结转归档，前台应用活跃排行 (Top Apps) 与常用组合快捷键统计。
   - **绝对本地隐私**：零击键内容、零密码、零光标敏感坐标留存，纯本地内存轻量聚合。
+- **剪贴统计 (Clipboard Stats)**：
+  - **无缝挂载本地库**：开箱适配 PasteNow 商业版本地 SQLite 数据库，零常驻电量消耗与免权限读取。
+  - **核心指标大盘**：统计今日新增、选定时段总吞吐、历史总存量与日均频次。
+  - **内容形态与来源画像**：解析纯文本/代码、图片截图、网页链接与文件形态分布；还原前 8 大高频来源 App 真实图标与占比。
+  - **高频复用资产沉淀**：自动提炼被反复复制的高频片段（命令、常用 Prompt、地址），支持一键点击快速再次回拷。
+- **浏览统计 (Browser Stats)**：
+  - **Dia + Chrome 跨配置聚合**：自动发现 `Dia/User Data` 与 `Google/Chrome` 下所有本地 Profile 历史库，采用快照只读模式绕过运行期锁冲突，免额外系统权限。
+  - **有效停留与冲浪节律**：统计访问次数、有效停留时长（单次封顶 30 分钟过滤挂机噪声）、独立站点数与 24 小时冲浪心流。
+  - **域名 Favicon 与高频资产**：直读 `Favicons` 库还原站点图标与 Top 域名排行；提炼高频回访页面（支持一键打开、复制或移出榜单）。
 - **流量统计 (Traffic Monitor)**：
   - **整机实时速率**：基于物理网络接口（`en*`）精准差分计算实时整机下载/上传速率，排除回环（`lo0`）与虚拟接口干扰。
   - **周期累计与时段覆盖**：支持今日、昨日、本月多时段切换，展示整机总流量、下载接收、上传发送与监控覆盖时间。
@@ -60,11 +69,12 @@
 - **Agent 总览 (多 Agent Token 统计)**：
   - **全 Agent 本地聚合**：单窗口聚合 Codex / Antigravity (Gemini) / WorkBuddy / ZCode / DSH 五大本地 Agent 的 Token 消耗与会话量。
   - **全景数据看板**：支持今天 / 昨天 / 近 7 天 / 近 30 天 / 自定义区间；提供 24 小时心流节律卡片、实时 TPS (Tokens/s) 生成速率、半年 GitHub 格热力图、模型份额排行及 CSV 一键导出。
+  - **跨模块工作流 AI 复盘**：复用周度洞察入口按需并发聚合 Agent 账本、Dia/Chrome 浏览域名、PasteNow 剪贴分布、键鼠节律与流量摘要（含可选静默 `KnowledgeC` 亮屏与通知打扰探针），全部本地脱敏聚合后输出跨源心流与提效洞察。
   - **跨 Agent Skill 调用与沉睡治理**：全量逆向分析工具调用记录，对比本机 35+ 已安装技能库，识别 30 天零调用的沉睡技能并提供治理预警。
   - **模型别名重命名**：自定义映射规则将冗长原始模型名（如带时间戳的快照版本号）统一显示为简洁别名，全看板生效，配置本地持久化。
   - **高性能扫描内核**：会话日志统一 mmap 单次读取 + single-flight 并发去重闸门（相同时间窗共享一次扫描），消除重复全量读取与 zstd 重复解压，Dashboard 刷新开销减半。
   - **文件级持久化增量缓存**：mtime + fileSize 增量校验，冷启动扫描时延从 4.2s 降至 0.04s，毫秒级秒开。
-  - **数据新鲜度可见**：窗口头部常驻状态标识（`更新中 2/3 · 缓存` / `已更新 刚刚`），刷新期间数据区轻微降透明度并显示扫描进度，杜绝把上一轮缓存误读为最新数据；并发刷新按令牌去重，旧扫描结果不会覆盖新数据。
+  - **数据新鲜度可见**：窗口头部常驻状态标识（如 `更新中 2/5` / `已更新 刚刚`），刷新期间数据区轻微降透明度并显示扫描进度，杜绝把上一轮缓存误读为最新数据；并发刷新按令牌去重，旧扫描结果不会覆盖新数据。
 - **OTP 工具**：
   - **独立悬浮窗**：展示所有账户实时 6 位验证码，快捷键唤起时自动复制当前验证码到剪贴板。
   - **倒计时提示与平滑录入**：环形进度条实时显示有效剩余秒数（≤10 秒高亮提醒）；支持粘贴 URI 或图片二维码识别导入，添加完成后面板内无缝切回，新验证码立即可查可复制。
@@ -73,8 +83,8 @@
 
 ## 交互设计与体验
 
-- **心智聚类菜单**：右键菜单收敛为「录入」（收藏夹/待办/闪念）、「观测」（Agent 总览/各 Agent 明细/键鼠统计/流量）与「工具」（端口管家/进程管理/OTP 工具）三大心智分区，主菜单清爽精简；模块命名由 ModuleManager 单一来源统一派发，菜单与设置面板永不漂移。
-- **统一功能模块管理 (ModuleManager)**：统一偏好设置面板 (`⌘,`) 提供「功能模块」分页，支持自由独立启闭待办、闪念、OTP 工具、Agent 总览、键鼠统计、流量统计、端口管家与进程管理（核心收藏夹常驻不可关），关闭键鼠统计时彻底注销 CGEventTap 零资源开销。
+- **心智聚类菜单**：右键菜单按「观测」（Agent 总览/各 Agent 明细/剪贴统计/浏览统计/键鼠统计/流量统计）、「录入」（待办/闪念）与「工具」（端口/进程/收藏夹/验证码）三大心智分区排布，主菜单清爽精简；模块命名由 `ModuleManager` 单一来源统一派发，菜单与设置面板永不漂移。
+- **统一功能模块管理 (ModuleManager)**：统一偏好设置面板 (`⌘,`) 提供「功能模块」分页，支持自由独立启闭待办、闪念、OTP 工具、Agent 总览、剪贴统计、浏览统计、键鼠统计、流量统计、端口管家与进程管理（核心收藏夹常驻不可关），关闭键鼠统计时彻底注销 CGEventTap 零资源开销。
 - **极简圆形关闭按钮规范**：淘汰异形关闭按钮与传统红绿灯，全应用所有面板与子窗口（端口管家、进程管理、流量统计、Agent 总览、收藏夹、OTP 工具、添加 OTP 账户、待办、闪念、偏好设置、快捷键录制）统一采用极简圆形关闭按钮（收藏夹面板位于左上角，其余位于右上角），操作心智高度统一。
 - **统一面板顶栏与 Esc 关闭行为**：全部面板顶栏共用同一规格（14pt 半粗图标 + 14pt 加粗标题 + 16/10 内边距，行高由 24pt 圆形按钮驱动）；全部浮动面板与子窗口由共享 `EscDismissableWindow` / `EscDismissablePanel` 承载，tooltips 承诺的「关闭面板 (⎋)」在每一处真实生效。
 - **Taptic 震动触感反馈**：深度适配 Force Touch 触控板，在待办勾选、路径拷贝、批量保存、撤销、拖拽销毁等高频操作中提供清脆的原生物理触感反馈。
@@ -93,7 +103,7 @@
 | `⌘⇧I` | 打开 Codex 统计明细面板 | 默认启用 |
 | `⌘⇧G` | 打开 Antigravity 统计明细面板 | 默认启用 |
 | `⌘⇧W` | 打开 WorkBuddy 统计明细面板 | 默认启用 |
-| 自定义 | Agent 总览、待办录入、闪念投递、键鼠统计、流量面板、端口管家、进程管理、ZCode/DSH | 可在偏好设置 (`⌘,`) 中一键录制 |
+| 自定义 | Agent 总览、待办录入、闪念投递、剪贴统计、浏览统计、键鼠统计、流量面板、端口管家、进程管理、ZCode/DSH | 可在偏好设置 (`⌘,`) 中一键录制 |
 
 ### 核心面板操作快捷键
 
@@ -110,7 +120,7 @@
 
 ## 技术架构与工程
 
-- **开发语言与框架**：Swift 6 / SwiftUI / AppKit
+- **开发语言与框架**：Swift 5.9+ / SwiftUI / AppKit
 - **系统底层接入**：Security-Scoped Bookmarks、Carbon Events、CGEvent Tap、EventKit、NSAppleScript 进程内自动化、SMAppService 开机自启
 - **系统支持**：macOS 14+ (Sonoma) / 深度适配 macOS 26 (Tahoe) Liquid Glass 质感玻璃
 
@@ -124,6 +134,9 @@ Sources/
 │   │   ├── PortManagerService.swift       # lsof 异步监听解析、Docker 穿透与进程控制
 │   │   ├── TrafficMonitorService.swift    # 物理网卡差分吞吐、nettop 进程采集、热点感知与历史记账
 │   │   ├── InputStatsService.swift        # CGEvent 键鼠输入捕获、心流节律与历史持久化
+│   │   ├── ClipboardStatsService.swift    # PasteNow 本地 SQLite 历史解析、内容分布与高频复用
+│   │   ├── BrowserStatsService.swift      # Dia / Chrome 多 Profile 浏览历史聚合与站点停留统计
+│   │   ├── WorkflowDigestService.swift    # 跨源工作流摘要与 KnowledgeC 可选探针聚合
 │   │   ├── ModuleManager.swift            # 全局功能模块启闭与菜单动态派发
 │   │   ├── AppleNotesService.swift        # 备忘录进程内自动化与 HTML DOM 前插
 │   │   ├── RemindersService.swift         # EventKit 提醒事项双向同步与管理
@@ -138,13 +151,16 @@ Sources/
 │   │   ├── TrafficView.swift              # 流量统计面板、24小时心流穿透与进程排行榜
 │   │   ├── PortProcessDetailView.swift    # 进程详情等高卡片与网络安全域
 │   │   ├── InputStatsView.swift           # 键鼠统计仪表盘与趋势图表
+│   │   ├── ClipboardStatsView.swift       # 剪贴统计大盘与高频复用沉淀
+│   │   ├── BrowserStatsView.swift         # 浏览统计心流与站点排行榜
 │   │   ├── StatsDashboardView.swift       # 5 大 Agent Token 统计总览大窗口
+│   │   ├── AgentStatsView.swift           # 单 Agent 紧凑统计面板 (Codex/Antigravity/WorkBuddy/ZCode/DSH)
 │   │   └── ...                            # RootView, SettingsView, TodoCaptureView 等
 │   └── AppKit/                 # 窗口控制与系统集成 (WindowControllers, MenuBarController)
 └── CollectionBoxApp/           # 应用程序启动入口 (AppDelegate + Info.plist)
 ```
 
-测试：项目采用独立自动化测试套件（适配纯 CommandLineTools 环境），执行 `swift run PinnerTestRunner`，343 项断言全部通过时退出码为 0。
+测试：项目采用独立自动化测试套件（适配纯 CommandLineTools 环境），执行 `swift run PinnerTestRunner`，全部断言通过时退出码为 0。
 
 ---
 
@@ -164,7 +180,7 @@ Sources/
 
 ### 方式二：从源码构建
 
-构建依赖：DSH 统计模块依赖 Homebrew 的 `zstd`（`brew install zstd`）。
+构建依赖：DSH 统计模块在构建期静态链接 Homebrew 的 `zstd`（`brew install zstd`）；打包后的 `.app` 无运行时外部 dylib 依赖。
 
 ```bash
 git clone https://github.com/tienflow/Pinner.git

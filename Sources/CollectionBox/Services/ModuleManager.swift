@@ -39,6 +39,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
     case todo = "todo"
     case fleeting = "fleeting"
     case agentStats = "agentStats"
+    case clipboardStats = "clipboardStats"
+    case browserStats = "browserStats"
     case inputStats = "inputStats"
     case traffic = "traffic"
     case portManager = "portManager"
@@ -56,6 +58,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .fleeting: return "闪念"
         case .otp: return "验证码"
         case .agentStats: return "Agent 总览"
+        case .clipboardStats: return "剪贴统计"
+        case .browserStats: return "浏览统计"
         case .inputStats: return "键鼠统计"
         case .traffic: return "流量统计"
         case .portManager: return "端口"
@@ -75,6 +79,10 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
             return "本地加密存储两步验证密钥，快捷计算并自动复制 6 位动态验证码"
         case .agentStats:
             return "跨 IDE 汇总 Codex、Antigravity、WorkBuddy 等各 Agent 的消耗与节律"
+        case .clipboardStats:
+            return "深度分析 PasteNow 剪贴板历史资产、来源应用画像与高频复用沉淀"
+        case .browserStats:
+            return "聚合 Dia 与 Chrome 本地浏览历史，洞察访问时长、站点排行与高频回访页面"
         case .inputStats:
             return "全局按键、鼠标点击、滚轮与移动距离统计，支持心流节律分析"
         case .traffic:
@@ -93,6 +101,8 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         case .fleeting: return "note.text.badge.plus"
         case .otp: return "lock.shield"
         case .agentStats: return "chart.bar.xaxis"
+        case .clipboardStats: return "doc.on.clipboard"
+        case .browserStats: return "globe"
         case .inputStats: return "keyboard"
         case .traffic: return "arrow.up.arrow.down.circle"
         case .portManager: return "network"
@@ -109,7 +119,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
         switch self {
         case .todo, .fleeting:
             return .capture
-        case .agentStats, .inputStats, .traffic:
+        case .agentStats, .clipboardStats, .browserStats, .inputStats, .traffic:
             return .observation
         case .collection, .portManager, .processManager, .otp:
             return .tools
@@ -123,7 +133,7 @@ public enum PinnerModule: String, CaseIterable, Identifiable, Codable, Sendable 
     /// as well as to the enum.
     public static func ordered(in cluster: ModuleCluster) -> [PinnerModule] {
         switch cluster {
-        case .observation: return [.agentStats, .inputStats, .traffic]
+        case .observation: return [.agentStats, .clipboardStats, .browserStats, .inputStats, .traffic]
         case .capture: return [.todo, .fleeting]
         case .tools: return [.portManager, .processManager, .collection, .otp]
         }
@@ -206,6 +216,10 @@ public final class ModuleManager: ObservableObject {
                 case .processManager:
                     ProcessManagerService.shared.stopMonitoring()
                     ProcessManagerWindowController.shared.hide()
+                case .clipboardStats:
+                    ClipboardStatsWindowController.shared.hide()
+                case .browserStats:
+                    BrowserStatsWindowController.shared.hide()
                 default:
                     break
                 }

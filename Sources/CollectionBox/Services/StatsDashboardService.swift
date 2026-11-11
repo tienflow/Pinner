@@ -63,7 +63,7 @@ struct UnifiedUsageRecord: Sendable {
     let durationMs: Int?    // nil when the source has no duration (Codex, WorkBuddy)
 }
 
-/// Aggregates all three agents' local usage into one record stream for the
+/// Aggregates all five local agents' usage into one record stream for the
 /// dashboard window. Collection runs off-main; each agent resolves on its own
 /// schedule so the UI can fill in progressively. All stored services are
 /// stateless, and callers only touch this from a single detached task each.

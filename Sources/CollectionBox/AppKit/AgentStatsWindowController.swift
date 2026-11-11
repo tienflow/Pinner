@@ -5,7 +5,7 @@ import SwiftUI
 /// capsule, trend chart and bottom bar.
 private let agentPanelHeight: CGFloat = 380
 
-/// Compact stats panel for an agent, mirroring WorkBuddyStatsWindowController.
+/// Compact floating stats panel parameterized by `StatsAgent`.
 final class AgentStatsWindowController: NSObject {
     private let agent: StatsAgent
     private var panel: NSPanel?

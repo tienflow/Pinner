@@ -50,7 +50,7 @@ public struct SettingsView: View {
                     }
                 }
                 Spacer()
-                PanelCloseButton(helpText: "关闭设置 (⌘W)") {
+                PanelCloseButton(helpText: "关闭设置 (Esc / ⌘W)") {
                     NSApp.keyWindow?.close()
                 }
                 .frame(width: 32, alignment: .trailing)
@@ -246,6 +246,10 @@ public struct SettingsView: View {
             )
         case .agentStats:
             agentStatsSection
+        case .clipboardStats:
+            clipboardStatsSection
+        case .browserStats:
+            browserStatsSection
         case .inputStats:
             inputStatsSection
         case .portManager:
@@ -459,6 +463,82 @@ public struct SettingsView: View {
         }
     }
 
+    private var clipboardStatsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            moduleRow(
+                module: .clipboardStats,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.clipboardStats) },
+                    set: { moduleManager.setEnabled(.clipboardStats, to: $0) }
+                )
+            )
+
+            if moduleManager.isEnabled(.clipboardStats) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(ClipboardStatsService.shared.isAvailable ? Color.green : Color.orange)
+                        .frame(width: 7, height: 7)
+                    Text(ClipboardStatsService.shared.isAvailable ? "已就绪：本地 PasteNow 数据库挂载成功" : "未检测到 PasteNow 本地数据库")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: Design.radiusM)
+                        .fill(Color.primary.opacity(0.03))
+                )
+            }
+        }
+    }
+
+    private var browserStatsSection: some View {
+        let profiles = BrowserStatsService.shared.detectedProfiles
+        let diaCount = profiles.filter { $0.browser == .dia }.count
+        let chromeCount = profiles.filter { $0.browser == .chrome }.count
+        let statusText: String = {
+            if profiles.isEmpty {
+                return "未检测到 Dia 或 Chrome 本地历史库"
+            }
+            let parts = [
+                diaCount > 0 ? "Dia (\(diaCount) 个配置)" : nil,
+                chromeCount > 0 ? "Chrome (\(chromeCount) 个配置)" : nil
+            ].compactMap { $0 }.joined(separator: "、")
+            return "已就绪：检测到 \(parts)"
+        }()
+
+        return VStack(alignment: .leading, spacing: 14) {
+            moduleRow(
+                module: .browserStats,
+                isCore: false,
+                isOn: Binding(
+                    get: { moduleManager.isEnabled(.browserStats) },
+                    set: { moduleManager.setEnabled(.browserStats, to: $0) }
+                )
+            )
+
+            if moduleManager.isEnabled(.browserStats) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(BrowserStatsService.shared.isAvailable ? Color.green : Color.orange)
+                        .frame(width: 7, height: 7)
+                    Text(statusText)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: Design.radiusM)
+                        .fill(Color.primary.opacity(0.03))
+                )
+            }
+        }
+    }
+
     private var inputStatsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             moduleRow(
@@ -550,6 +630,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "Agent 总览",
                             icon: "square.grid.2x2",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.dashboardHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordDashboardHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearDashboardHotkey(); hotkeyRefreshID = UUID() }
@@ -558,6 +639,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "待办快速录入",
                             icon: "checklist",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.todoHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordTodoHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearTodoHotkey(); hotkeyRefreshID = UUID() }
@@ -566,6 +648,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "闪念投递",
                             icon: "note.text.badge.plus",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.fleetingHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordFleetingHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearFleetingHotkey(); hotkeyRefreshID = UUID() }
@@ -574,6 +657,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "收藏夹抽屉",
                             icon: "tray.full",
+                            hasDefault: true,
                             getCombo: { MenuBarController.shared?.collectionHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearHotkey(); hotkeyRefreshID = UUID() }
@@ -582,14 +666,34 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "验证码面板",
                             icon: "key.fill",
+                            hasDefault: true,
                             getCombo: { MenuBarController.shared?.otpHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordOTPHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearOTPHotkey(); hotkeyRefreshID = UUID() }
                         )
                         Divider()
                         hotkeyRow(
+                            title: "剪贴统计面板",
+                            icon: "doc.on.clipboard",
+                            hasDefault: false,
+                            getCombo: { MenuBarController.shared?.clipboardStatsHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordClipboardStatsHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearClipboardStatsHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
+                            title: "浏览统计面板",
+                            icon: "globe",
+                            hasDefault: false,
+                            getCombo: { MenuBarController.shared?.browserStatsHotkeyString() ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordBrowserStatsHotkey { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearBrowserStatsHotkey(); hotkeyRefreshID = UUID() }
+                        )
+                        Divider()
+                        hotkeyRow(
                             title: "键鼠统计面板",
                             icon: "keyboard.fill",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.inputStatsHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordInputStatsHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearInputStatsHotkey(); hotkeyRefreshID = UUID() }
@@ -598,6 +702,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "端口面板",
                             icon: "network",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.portManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordPortManagerHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearPortManagerHotkey(); hotkeyRefreshID = UUID() }
@@ -606,6 +711,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "进程面板",
                             icon: "speedometer",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.processManagerHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordProcessManagerHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearProcessManagerHotkey(); hotkeyRefreshID = UUID() }
@@ -614,6 +720,7 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "流量统计",
                             icon: "arrow.up.arrow.down.circle",
+                            hasDefault: false,
                             getCombo: { MenuBarController.shared?.trafficHotkeyString() ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordTrafficHotkey { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearTrafficHotkey(); hotkeyRefreshID = UUID() }
@@ -627,31 +734,35 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "Codex 统计",
                             icon: "terminal.fill",
-                            getCombo: { MenuBarController.shared?.codexHotkeyString() ?? "未设置" },
-                            onRecord: { MenuBarController.shared?.recordCodexStatsHotkey { hotkeyRefreshID = UUID() } },
-                            onReset: { MenuBarController.shared?.clearCodexStatsHotkey(); hotkeyRefreshID = UUID() }
+                            hasDefault: true,
+                            getCombo: { MenuBarController.shared?.agentStatsHotkeyString(for: .codex) ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordAgentStatsHotkey(for: .codex) { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearAgentStatsHotkey(for: .codex); hotkeyRefreshID = UUID() }
                         )
                         Divider()
                         hotkeyRow(
                             title: "Antigravity 统计",
                             icon: "sparkles",
-                            getCombo: { MenuBarController.shared?.geminiHotkeyString() ?? "未设置" },
-                            onRecord: { MenuBarController.shared?.recordGeminiStatsHotkey { hotkeyRefreshID = UUID() } },
-                            onReset: { MenuBarController.shared?.clearGeminiStatsHotkey(); hotkeyRefreshID = UUID() }
+                            hasDefault: true,
+                            getCombo: { MenuBarController.shared?.agentStatsHotkeyString(for: .gemini) ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordAgentStatsHotkey(for: .gemini) { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearAgentStatsHotkey(for: .gemini); hotkeyRefreshID = UUID() }
                         )
                         Divider()
                         hotkeyRow(
                             title: "WorkBuddy 统计",
                             icon: "briefcase.fill",
-                            getCombo: { MenuBarController.shared?.workbuddyHotkeyString() ?? "未设置" },
-                            onRecord: { MenuBarController.shared?.recordWorkBuddyStatsHotkey { hotkeyRefreshID = UUID() } },
-                            onReset: { MenuBarController.shared?.clearWorkBuddyStatsHotkey(); hotkeyRefreshID = UUID() }
+                            hasDefault: true,
+                            getCombo: { MenuBarController.shared?.agentStatsHotkeyString(for: .workbuddy) ?? "未设置" },
+                            onRecord: { MenuBarController.shared?.recordAgentStatsHotkey(for: .workbuddy) { hotkeyRefreshID = UUID() } },
+                            onReset: { MenuBarController.shared?.clearAgentStatsHotkey(for: .workbuddy); hotkeyRefreshID = UUID() }
                         )
                         Divider()
                         hotkeyRow(
                             title: "ZCode 统计",
                             icon: "chevron.left.forwardslash.chevron.right",
-                            getCombo: { MenuBarController.shared?.zcodeHotkeyString() ?? "未设置" },
+                            hasDefault: false,
+                            getCombo: { MenuBarController.shared?.agentStatsHotkeyString(for: .zcode) ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordAgentStatsHotkey(for: .zcode) { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearAgentStatsHotkey(for: .zcode); hotkeyRefreshID = UUID() }
                         )
@@ -659,7 +770,8 @@ public struct SettingsView: View {
                         hotkeyRow(
                             title: "DSH 统计",
                             icon: "fish.fill",
-                            getCombo: { MenuBarController.shared?.dshHotkeyString() ?? "未设置" },
+                            hasDefault: false,
+                            getCombo: { MenuBarController.shared?.agentStatsHotkeyString(for: .dsh) ?? "未设置" },
                             onRecord: { MenuBarController.shared?.recordAgentStatsHotkey(for: .dsh) { hotkeyRefreshID = UUID() } },
                             onReset: { MenuBarController.shared?.clearAgentStatsHotkey(for: .dsh); hotkeyRefreshID = UUID() }
                         )
@@ -674,6 +786,7 @@ public struct SettingsView: View {
     private func hotkeyRow(
         title: String,
         icon: String,
+        hasDefault: Bool = true,
         getCombo: () -> String,
         onRecord: @escaping () -> Void,
         onReset: @escaping () -> Void
@@ -705,7 +818,7 @@ public struct SettingsView: View {
             }
             .controlSize(.small)
 
-            Button("恢复默认") {
+            Button(hasDefault ? "恢复默认" : "清除") {
                 onReset()
             }
             .controlSize(.small)
@@ -800,18 +913,16 @@ public struct SettingsView: View {
 
     private func toggleLaunchAtLogin(_ enable: Bool) {
         let service = SMAppService.mainApp
+        let currentlyEnabled = service.status == .enabled
+        guard currentlyEnabled != enable else { return }
         do {
             if enable {
-                if service.status != .enabled {
-                    try service.register()
-                }
+                try service.register()
             } else {
-                if service.status == .enabled {
-                    try service.unregister()
-                }
+                try service.unregister()
             }
         } catch {
-            print("Failed to update launch at login: \(error)")
+            launchAtLogin = service.status == .enabled
         }
     }
 }

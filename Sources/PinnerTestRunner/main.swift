@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import SQLite3
 import CollectionBox
 @testable import CollectionBox
 
@@ -698,6 +699,18 @@ func testAgentStatsHotkeyManagerLifecycle() {
     manager.clear()
     check(UserDefaults.standard.object(forKey: prefix + "Code") == nil, "dashboard hotkey clear removes binding")
     check(manager.currentCombo == nil, "dashboard hotkey cleared")
+
+    // Default-combo fallback (used by OTP / Codex / Antigravity / WorkBuddy).
+    let defPrefix = "CollectionBox.testDefaultHotkey"
+    let defCombo = HotkeyCombo(keyCode: 31, modifiers: 768)
+    let defManager = AgentStatsHotkeyManager(keyPrefix: defPrefix, eventID: 99, defaultCombo: defCombo, label: "TestDefault")
+    defManager.clear()
+    check(defManager.currentCombo?.keyCode == 31 && defManager.currentCombo?.modifiers == 768,
+          "default-combo hotkey falls back to default when cleared")
+    defManager.save(combo: HotkeyCombo(keyCode: 16, modifiers: 256))
+    check(defManager.currentCombo?.keyCode == 16, "default-combo hotkey override persists")
+    defManager.clear()
+    check(defManager.currentCombo?.keyCode == 31, "default-combo hotkey clear restores default")
 }
 
 // MARK: - Todo quick capture (M2/M4 pure-function surfaces)
@@ -1221,24 +1234,34 @@ func testFleetingCapture() {
     }
 }
 
+@MainActor
+func runThrowing(_ name: String, _ block: () async throws -> Void) async {
+    do {
+        try await block()
+    } catch {
+        failed += 1
+        print("FAIL  \(name) threw error: \(error)")
+    }
+}
+
 // MARK: - Entry Point
 let allPassed = await Task { @MainActor () -> Bool in
     testTabCRUD()
     testMoveTab()
-    try? testEntryOperations()
-    try? testRenameEntryIgnoresEmptyName()
-    try? testAddEntriesDedup()
+    await runThrowing("testEntryOperations") { try testEntryOperations() }
+    await runThrowing("testRenameEntryIgnoresEmptyName") { try testRenameEntryIgnoresEmptyName() }
+    await runThrowing("testAddEntriesDedup") { try testAddEntriesDedup() }
     await testRefreshMarksMissingInsteadOfRemoving()
-    try? await testRefreshClearsMissingForValidFile()
-    try? testBatchOperations()
-    try? testReorderEntry()
-    try? testUndo()
-    try? testRecentEntries()
-    try? testPersistenceRoundtrip()
-    try? testLegacyJSONCompatibility()
-    try? testBookmarkServiceHelpers()
-    try? testThumbnailDoesNotHitIconCache()
-    try? testNonVisualFileDoesNotGenerateThumbnail()
+    await runThrowing("testRefreshClearsMissingForValidFile") { try await testRefreshClearsMissingForValidFile() }
+    await runThrowing("testBatchOperations") { try testBatchOperations() }
+    await runThrowing("testReorderEntry") { try testReorderEntry() }
+    await runThrowing("testUndo") { try testUndo() }
+    await runThrowing("testRecentEntries") { try testRecentEntries() }
+    await runThrowing("testPersistenceRoundtrip") { try testPersistenceRoundtrip() }
+    await runThrowing("testLegacyJSONCompatibility") { try testLegacyJSONCompatibility() }
+    await runThrowing("testBookmarkServiceHelpers") { try testBookmarkServiceHelpers() }
+    await runThrowing("testThumbnailDoesNotHitIconCache") { try testThumbnailDoesNotHitIconCache() }
+    await runThrowing("testNonVisualFileDoesNotGenerateThumbnail") { try testNonVisualFileDoesNotGenerateThumbnail() }
     testAgentSelectionPersistence()
     testMenuBarMenuFollowsSelection()
     testSettingsSubmenuContents()
@@ -1253,19 +1276,20 @@ let allPassed = await Task { @MainActor () -> Bool in
     testTodoLLMParseResponse()
     testTodoSettingsStoreStorage()
     testReminderCompletionModel()
-    try? testShelfOperations()
+    await runThrowing("testShelfOperations") { try testShelfOperations() }
     await testShelfFileNSURL()
     testPinyinMatcher()
     testWorkBuddyScanCache()
     testGeminiScanCache()
     testFleetingCapture()
     testSkillStatsService()
-    try? await testCustomAliasPreservation()
+    await runThrowing("testCustomAliasPreservation") { try await testCustomAliasPreservation() }
     testOTPServiceTimeRemaining()
     testInputStats()
     testModuleManager()
     testPortManager()
     testProcessManager()
+    testClipboardAndBrowserStatsQueries()
     print("\n\(passed) passed, \(failed) failed")
     return failed == 0
 }.value
@@ -1292,14 +1316,13 @@ func testSkillStatsService() {
     let hasWebgen = records.contains { $0.skillName.lowercased() == "gemini-webgen" }
     check(hasWebgen, "SkillStatsService detects gemini-webgen call records")
 
-    // Check that .workbuddy/skills directory is supported in scanInstalledSkills
-    let home = FileManager.default.homeDirectoryForCurrentUser
-    let testWorkbuddySkills = home.appendingPathComponent(".workbuddy/skills")
-    let fakeSkill = testWorkbuddySkills.appendingPathComponent("test-custom-skill-\(UUID().uuidString)")
+    // Check that isolated custom skill root scanning works without touching user directories
+    let tempSkillRoot = FileManager.default.temporaryDirectory.appendingPathComponent("test-skills-\(UUID().uuidString)")
+    let fakeSkill = tempSkillRoot.appendingPathComponent("test-custom-skill-\(UUID().uuidString)")
     if (try? FileManager.default.createDirectory(at: fakeSkill, withIntermediateDirectories: true)) != nil {
-        defer { try? FileManager.default.removeItem(at: fakeSkill) }
-        let scanned = service.scanInstalledSkills()
-        check(scanned.contains(fakeSkill.lastPathComponent), "scanInstalledSkills picks up skill in .workbuddy/skills")
+        defer { try? FileManager.default.removeItem(at: tempSkillRoot) }
+        let scanned = service.scanInstalledSkills(in: [tempSkillRoot])
+        check(scanned.contains(fakeSkill.lastPathComponent), "scanInstalledSkills picks up skill in custom root")
     }
 }
 
@@ -1688,6 +1711,67 @@ func testProcessManager() {
     check(ProcessFilterOption.suspended.rawValue == "已冻结", "suspended rawValue matches")
     check(ProcessFilterOption.all.rawValue == "全部", "all rawValue matches")
     check(ProcessManagerService.shared.filterOption == .highLoad, "ProcessManagerService defaults to .highLoad")
+}
+
+@MainActor
+func testClipboardAndBrowserStatsQueries() {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("pinner-stats-test-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 1. ClipboardStatsService SQLite fixture with span > 30 days (60 days ago -> 6 items => avgDailyCount == 6/60 == 0, 120 items => 2/day)
+    let pasteDB = tempDir.appendingPathComponent("PasteNow.sqlite").path
+    var db: OpaquePointer?
+    if sqlite3_open(pasteDB, &db) == SQLITE_OK, let db {
+        let nowRef = Date().timeIntervalSinceReferenceDate
+        let sixtyDaysAgo = nowRef - 59.5 * 86400
+        let sql = """
+        CREATE TABLE ZPASTEITEM (Z_PK INTEGER PRIMARY KEY, ZTEXT TEXT, ZTITLE TEXT, ZBASEUNIFORMTYPE TEXT, ZAPPBUNDLEID TEXT, ZCOPYCOUNT INTEGER, ZTIMESTAMP REAL);
+        INSERT INTO ZPASTEITEM VALUES (1, 'hello', NULL, 'public.utf8-plain-text', 'com.apple.Terminal', 3, \(sixtyDaysAgo));
+        INSERT INTO ZPASTEITEM VALUES (2, 'https://example.com', NULL, 'public.url', 'com.google.Chrome', 1, \(nowRef - 60));
+        """
+        sqlite3_exec(db, sql, nil, nil, nil)
+        sqlite3_close(db)
+
+        if let allStats = ClipboardStatsService.queryDatabase(at: pasteDB, range: .all) {
+            check(allStats.totalCount == 2, "ClipboardStatsService reads all paste items")
+            check(allStats.todayCount == 1, "ClipboardStatsService isolates today paste item")
+            check(allStats.avgDailyCount == 0, "ClipboardStatsService .all divides by actual ~60d span instead of hardcoded 30d")
+        } else {
+            check(false, "ClipboardStatsService queries temp sqlite fixture")
+        }
+    }
+
+    // 2. BrowserStatsService SQLite fixture
+    let historyDB = tempDir.appendingPathComponent("History").path
+    var bdb: OpaquePointer?
+    if sqlite3_open(historyDB, &bdb) == SQLITE_OK, let bdb {
+        let chromeEpochOffset: Double = 11_644_473_600.0
+        let nowUs = Int64((Date().timeIntervalSince1970 + chromeEpochOffset - 60) * 1_000_000)
+        let oldUs = Int64((Date().timeIntervalSince1970 + chromeEpochOffset - 89.5 * 86400) * 1_000_000)
+        let sql = """
+        CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT);
+        CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER, visit_duration INTEGER);
+        INSERT INTO urls VALUES (1, 'https://www.apple.com/mac#top', 'Apple Mac');
+        INSERT INTO visits VALUES (1, 1, \(oldUs), 5000000);
+        INSERT INTO visits VALUES (2, 1, \(nowUs), 5000000);
+        """
+        sqlite3_exec(bdb, sql, nil, nil, nil)
+        sqlite3_close(bdb)
+
+        let profile = BrowserProfileInfo(
+            browser: .chrome,
+            profileName: "Default",
+            historyPath: historyDB,
+            faviconsPath: nil,
+            lastModified: Date()
+        )
+        let res = BrowserStatsService.queryAllProfiles([profile], range: .all, source: .all)
+        check(res.totalVisits == 2, "BrowserStatsService counts browser visits")
+        check(res.todayVisits == 1, "BrowserStatsService counts today visit")
+        check(res.avgDailyVisits == 0, "BrowserStatsService .all divides by actual ~90d span instead of 30d")
+        check(res.topDomains.first?.domain == "apple.com", "BrowserStatsService strips www prefix for top domains")
+    }
 }
 
 

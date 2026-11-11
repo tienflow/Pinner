@@ -4,6 +4,7 @@ import AppKit
 struct AgentWeeklyInsightSheet: View {
     let insight: AgentWeeklyInsight?
     let snapshot: StatsDashboardView.DashboardSnapshot?
+    let workflowDigest: WorkflowObservationDigest?
     let isLoading: Bool
     let errorMessage: String?
     let onRegenerate: () -> Void
@@ -13,15 +14,16 @@ struct AgentWeeklyInsightSheet: View {
     @State private var loadingStartDate: Date = Date()
 
     private let pipelineSteps = [
-        ("cylinder.split.1x2.fill", "正在汇聚 Codex / Antigravity / WorkBuddy 多 Agent 账本…"),
-        ("bolt.shield.fill", "深度比对 Prompt Cache 命中率与 Top 重型会话…"),
-        ("wrench.and.screwdriver.fill", "审计 35+ 本地技能调用频次与 30 天沉睡清单…"),
-        ("sparkles", "正在由 AI 提炼极客深度洞察与提效行动清单…")
+        ("cylinder.split.1x2.fill", "正在汇聚 Agent 账本与多维工作流摘要…"),
+        ("globe", "采集 Dia / Chrome 域名时长与 PasteNow 剪贴分布…"),
+        ("keyboard", "关联键鼠心流节律与 30 天沉睡技能审计…"),
+        ("sparkles", "正在由 AI 提炼跨源工作流洞察与提效清单…")
     ]
 
     init(
         insight: AgentWeeklyInsight?,
         snapshot: StatsDashboardView.DashboardSnapshot? = nil,
+        workflowDigest: WorkflowObservationDigest? = nil,
         isLoading: Bool,
         errorMessage: String?,
         onRegenerate: @escaping () -> Void,
@@ -29,6 +31,7 @@ struct AgentWeeklyInsightSheet: View {
     ) {
         self.insight = insight
         self.snapshot = snapshot
+        self.workflowDigest = workflowDigest
         self.isLoading = isLoading
         self.errorMessage = errorMessage
         self.onRegenerate = onRegenerate
@@ -86,9 +89,20 @@ struct AgentWeeklyInsightSheet: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.purple)
 
-            Text(insight?.title ?? "多 Agent 协同周度智能洞察")
+            Text(insight?.title ?? "工作流周度智能复盘")
                 .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
+
+            let sources = insight?.includedSources ?? workflowDigest?.activeSourceLabels ?? []
+            if sources.count > 1 && !shouldShowLoading {
+                Text(sources.joined(separator: " · "))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(.purple)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.purple.opacity(0.10)))
+                    .lineLimit(1)
+            }
 
             Spacer()
 
@@ -258,6 +272,11 @@ struct AgentWeeklyInsightSheet: View {
                 quickMetricsStrip(snap)
             }
 
+            // Cross-Module Observation Strip (If browser/clipboard/input/system digest available)
+            if let digest = workflowDigest, digest.hasCrossModuleData {
+                crossModuleStrip(digest)
+            }
+
             // High-fidelity Markdown Rendered Body
             MarkdownContentView(markdown: ins.contentMarkdown)
         }
@@ -291,6 +310,59 @@ struct AgentWeeklyInsightSheet: View {
             metricCard(title: "领跑 Agent", value: topAgentText, sub: topAgentSub)
             metricCard(title: "Prompt 缓存", value: String(format: "%.1f%%", snap.cacheHitRate), sub: "输入 \(WorkBuddyStats.formatTokens(snap.freshInput))")
         }
+    }
+
+    private func crossModuleStrip(_ digest: WorkflowObservationDigest) -> some View {
+        HStack(spacing: 8) {
+            if let b = digest.browser {
+                metricCard(
+                    title: "浏览 · 7天",
+                    value: formatCompactMinutes(b.durationMinutes7d),
+                    sub: "\(b.visits7d) 次 · \(b.uniqueDomains7d) 站"
+                )
+            }
+            if let c = digest.clipboard {
+                metricCard(
+                    title: "剪贴 · 7天",
+                    value: "\(c.count7d) 次",
+                    sub: "日均 \(c.avgDaily) 次"
+                )
+            }
+            if let inp = digest.input {
+                metricCard(
+                    title: "键鼠 · 7天",
+                    value: formatCompactCount(inp.totalKeys7d),
+                    sub: "点击 \(formatCompactCount(inp.totalClicks7d))"
+                )
+            }
+            if let kc = digest.knowledgeC {
+                metricCard(
+                    title: "系统/打扰",
+                    value: formatCompactMinutes(kc.screenLitMinutes7d),
+                    sub: "通知 \(kc.totalNotifications7d) 条"
+                )
+            } else if let tr = digest.traffic {
+                metricCard(
+                    title: "流量 · 7天",
+                    value: ByteCountFormatter.string(fromByteCount: Int64(tr.totalBytes7d), countStyle: .binary),
+                    sub: "下行 \(ByteCountFormatter.string(fromByteCount: Int64(tr.receivedBytes7d), countStyle: .binary))"
+                )
+            }
+        }
+    }
+
+    private func formatCompactMinutes(_ mins: Int) -> String {
+        if mins < 60 { return "\(mins)m" }
+        let h = mins / 60
+        let m = mins % 60
+        return m > 0 ? "\(h)h \(m)m" : "\(h)h"
+    }
+
+    private func formatCompactCount(_ n: Int) -> String {
+        if n >= 1000 {
+            return String(format: "%.1fk", Double(n) / 1000.0)
+        }
+        return "\(n)"
     }
 
     private func metricCard(title: String, value: String, sub: String) -> some View {

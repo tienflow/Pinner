@@ -19,8 +19,8 @@ let package = Package(
             path: "Sources/CollectionBoxApp",
             exclude: ["Assets.xcassets", "Resources"],
             linkerSettings: [
-                // DSH session files are zstd-compressed; link Homebrew libzstd.
-                .unsafeFlags(["-L/opt/homebrew/lib", "-lzstd"]),
+                // DSH session files are zstd-compressed; statically link libzstd so the .app has no external Homebrew dylib runtime dependency.
+                .unsafeFlags(["/opt/homebrew/opt/zstd/lib/libzstd.a"]),
             ]
         ),
         // Test runner: the pure-CommandLineTools toolchain has no XCTest /
@@ -30,7 +30,7 @@ let package = Package(
             dependencies: ["CollectionBox"],
             path: "Sources/PinnerTestRunner",
             linkerSettings: [
-                .unsafeFlags(["-L/opt/homebrew/lib", "-lzstd"]),
+                .unsafeFlags(["/opt/homebrew/opt/zstd/lib/libzstd.a"]),
             ]
         ),
     ]

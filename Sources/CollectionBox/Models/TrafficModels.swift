@@ -114,12 +114,6 @@ public struct TrafficDayRecord: Codable, Sendable {
         self.proxiedClients = try container.decodeIfPresent([String: TrafficBytes].self, forKey: .proxiedClients) ?? [:]
         self.hourlyProxiedClients = try container.decodeIfPresent([Int: [String: TrafficBytes]].self, forKey: .hourlyProxiedClients) ?? [:]
     }
-
-    /// 当前记录中经代理转发并已归属到具体应用的字节总量。
-    public func attributedProxiedTotal(hour: Int? = nil) -> UInt64 {
-        let source = hour.flatMap { hourlyProxiedClients[$0] } ?? proxiedClients
-        return source.values.reduce(0) { $0 + $1.total }
-    }
 }
 
 /// Hardware network type classification.
@@ -279,8 +273,41 @@ public struct TrafficLedger: Codable, Sendable {
             netHourProcs[name] = hb
         }
         netDay.hourlyProcesses[hour] = netHourProcs
+
+        if !proxiedClients.isEmpty {
+            var netHourProxied = netDay.hourlyProxiedClients[hour] ?? [:]
+            for (name, value) in proxiedClients {
+                var b = netDay.proxiedClients[name] ?? TrafficBytes()
+                b.add(value)
+                netDay.proxiedClients[name] = b
+
+                var hb = netHourProxied[name] ?? TrafficBytes()
+                hb.add(value)
+                netHourProxied[name] = hb
+            }
+            netDay.hourlyProxiedClients[hour] = netHourProxied
+        }
+
         history.days[day] = netDay
         networks[network.key] = history
+    }
+
+    /// Retain only the most recent `keepingDays` calendar days to keep ledger size bounded.
+    public mutating func pruneOldDays(keepingDays: Int = 90) {
+        guard keepingDays > 0,
+              let cutoffDate = Calendar.current.date(byAdding: .day, value: -keepingDays, to: Date()) else {
+            return
+        }
+        let cutoffKey = TrafficDateKeys.day(cutoffDate)
+        days = days.filter { $0.key >= cutoffKey }
+        for (key, var history) in networks {
+            history.days = history.days.filter { $0.key >= cutoffKey }
+            if history.days.isEmpty {
+                networks.removeValue(forKey: key)
+            } else {
+                networks[key] = history
+            }
+        }
     }
 
     public func sum(keys: [String], networkName: String? = nil) -> TrafficDayRecord {
@@ -375,8 +402,6 @@ public struct TrafficProcessItem: Identifiable, Equatable, Sendable {
     public var isRelay: Bool
     /// 经本地代理转发并归属到该应用的字节（客户端行）或已归属出去的合计（代理行）。
     public var proxied: TrafficBytes
-    /// 仅代理行：该进程在物理网卡上实际转发的总量（未扣减归归属前）。
-    public var relayRawTotal: TrafficBytes
 
     public init(
         name: String,
@@ -385,8 +410,7 @@ public struct TrafficProcessItem: Identifiable, Equatable, Sendable {
         appBundlePath: String? = nil,
         bytes: TrafficBytes,
         isRelay: Bool = false,
-        proxied: TrafficBytes = TrafficBytes(),
-        relayRawTotal: TrafficBytes = TrafficBytes()
+        proxied: TrafficBytes = TrafficBytes()
     ) {
         self.name = name
         self.displayName = displayName
@@ -395,7 +419,6 @@ public struct TrafficProcessItem: Identifiable, Equatable, Sendable {
         self.bytes = bytes
         self.isRelay = isRelay
         self.proxied = proxied
-        self.relayRawTotal = relayRawTotal
     }
 }
 

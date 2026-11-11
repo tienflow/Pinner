@@ -138,8 +138,6 @@ struct LiquidGlassBackground: ViewModifier {
 struct LiquidGlassCard: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
     var cornerRadius: CGFloat = Design.radiusM
-    var style: LiquidGlassStyle = .clear
-    var tintColor: NSColor? = nil
 
     func body(content: Content) -> some View {
         content
@@ -170,11 +168,9 @@ extension View {
     }
 
     func liquidGlassCard(
-        cornerRadius: CGFloat = Design.radiusM,
-        style: LiquidGlassStyle = .clear,
-        tintColor: NSColor? = nil
+        cornerRadius: CGFloat = Design.radiusM
     ) -> some View {
-        modifier(LiquidGlassCard(cornerRadius: cornerRadius, style: style, tintColor: tintColor))
+        modifier(LiquidGlassCard(cornerRadius: cornerRadius))
     }
 }
 
@@ -183,6 +179,7 @@ extension View {
 public struct PanelCloseButton: View {
     public var helpText: String
     public var action: () -> Void
+    @State private var isHovered = false
 
     public init(helpText: String = "关闭面板", action: @escaping () -> Void) {
         self.helpText = helpText
@@ -193,13 +190,14 @@ public struct PanelCloseButton: View {
         Button(action: action) {
             Image(systemName: "xmark")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
+                .foregroundColor(isHovered ? .primary : .secondary)
                 .frame(width: 24, height: 24)
-                .background(Color.primary.opacity(0.06))
+                .background(Color.primary.opacity(isHovered ? 0.16 : 0.08))
                 .clipShape(Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .help(helpText)
     }
 }

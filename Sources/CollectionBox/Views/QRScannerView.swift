@@ -31,24 +31,38 @@ struct QRScannerView: View {
         panel.prompt = "选择"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        errorMessage = ""
 
-        guard let image = NSImage(contentsOf: url),
-              let tiffData = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let ciImage = CIImage(bitmapImageRep: bitmap) else {
-            errorMessage = "无法读取图片"
-            return
+        Task.detached(priority: .userInitiated) {
+            let result = Self.decodeQRCode(at: url)
+            await MainActor.run {
+                switch result {
+                case .success(let uri):
+                    onCodeFound(uri)
+                case .failure(let msg):
+                    errorMessage = msg.message
+                }
+            }
         }
+    }
 
-        let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: nil,
-                                  options: [CIDetectorAccuracy: CIDetectorAccuracyHigh])
+    private struct QRDecodeError: Error {
+        let message: String
+    }
+
+    nonisolated private static func decodeQRCode(at url: URL) -> Result<String, QRDecodeError> {
+        guard let ciImage = CIImage(contentsOf: url) else {
+            return .failure(QRDecodeError(message: "无法读取图片"))
+        }
+        let detector = CIDetector(
+            ofType: CIDetectorTypeQRCode,
+            context: nil,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        )
         let features = detector?.features(in: ciImage) as? [CIQRCodeFeature]
-
         guard let first = features?.first, let uri = first.messageString else {
-            errorMessage = "图片中未识别到二维码"
-            return
+            return .failure(QRDecodeError(message: "图片中未识别到二维码"))
         }
-
-        onCodeFound(uri)
+        return .success(uri)
     }
 }

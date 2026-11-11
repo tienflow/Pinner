@@ -131,9 +131,9 @@ final class SkillStatsService: @unchecked Sendable {
     }
 
     /// Scan directory names of installed skills across all common skill locations
-    func scanInstalledSkills() -> Set<String> {
+    func scanInstalledSkills(in customSearchDirs: [URL]? = nil) -> Set<String> {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let searchDirs = [
+        let searchDirs = customSearchDirs ?? [
             home.appendingPathComponent(".gemini/config/skills"),
             home.appendingPathComponent(".gemini/antigravity/builtin/skills"),
             home.appendingPathComponent(".skills-manager/skills"),
@@ -388,7 +388,9 @@ final class SkillStatsService: @unchecked Sendable {
                             if parts[i] == "skills" && i + 1 < parts.count {
                                 var raw = String(parts[i + 1])
                                 raw = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'\\ `;,()[]{}"))
-                                if let firstSpace = raw.firstIndex(of: " ") {
+                                // Keep multi-word installed names (e.g. "Skill Creator") intact before splitting on spaces.
+                                if !lowerInstalled.contains(raw.lowercased()),
+                                   let firstSpace = raw.firstIndex(of: " ") {
                                     raw = String(raw[..<firstSpace])
                                 }
                                 let lower = raw.lowercased()

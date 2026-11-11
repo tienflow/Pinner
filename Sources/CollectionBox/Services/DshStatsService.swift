@@ -6,7 +6,7 @@ private func zstd_getFrameContentSize(_ src: UnsafeRawPointer, _ srcSize: Int) -
 @_silgen_name("ZSTD_decompress")
 private func zstd_decompress(_ dst: UnsafeMutableRawPointer, _ dstCap: Int, _ src: UnsafeRawPointer, _ srcSize: Int) -> Int
 @_silgen_name("ZSTD_isError")
-private func zstd_isError(_ code: Int) -> UInt
+private func zstd_isError(_ code: Int) -> UInt32
 @_silgen_name("ZSTD_getErrorName")
 private func zstd_getErrorName(_ code: Int) -> UnsafePointer<CChar>
 
@@ -235,13 +235,36 @@ final class DshStatsService {
         return records
     }
 
-    /// "--Users-apple-Documents-My_Code-Dev--" → "/Users/apple/Documents/My_Code/Dev"
+    /// "--Users-alice-Documents-Projects-Dev--" → "/Users/alice/Documents/Projects/Dev"
     private func decodeWorkspaceName(_ name: String) -> String? {
         var s = name
         if s.hasPrefix("--") { s.removeFirst(2) }
         if s.hasSuffix("--") { s.removeLast(2) }
         guard !s.isEmpty else { return nil }
-        return "/" + s.replacingOccurrences(of: "-", with: "/")
+        // Resolve hyphenated directory names greedily against the filesystem when available
+        let parts = s.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        var current = ""
+        var idx = 0
+        while idx < parts.count {
+            var matched: String?
+            // Prefer longer hyphenated segment that actually exists on disk
+            for end in stride(from: parts.count, to: idx, by: -1) {
+                let joined = parts[idx..<end].joined(separator: "-")
+                let candidate = current + "/" + joined
+                if FileManager.default.fileExists(atPath: candidate) {
+                    matched = joined
+                    idx = end
+                    break
+                }
+            }
+            if let m = matched {
+                current += "/" + m
+            } else {
+                current += "/" + parts[idx]
+                idx += 1
+            }
+        }
+        return current
     }
 
     /// Decompress a .zstd file via libzstd. Single-frame assumption with a

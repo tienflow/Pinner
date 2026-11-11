@@ -50,6 +50,7 @@ final class EdgeDockWindowController: NSObject {
     deinit {
         if let o = collapseObserver { NotificationCenter.default.removeObserver(o) }
         if let o = quickLookObserver { NotificationCenter.default.removeObserver(o) }
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
     }
 
     // MARK: - Expand
@@ -61,13 +62,15 @@ final class EdgeDockWindowController: NSObject {
         let h = expandedHeight, w = expandedWidth
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
-        let screenMidX = screen.frame.midX
-        let x: CGFloat
-        if mouse.x < screenMidX { x = mouse.x + 4 } else { x = mouse.x - w - 4 }
-        let y: CGFloat
-        if mouse.y - h < screen.frame.minY { y = screen.frame.minY + 4 }
-        else if mouse.y > screen.frame.maxY - h/2 { y = screen.frame.maxY - h - 4 }
-        else { y = mouse.y - h/2 }
+        let bounds = screen.visibleFrame
+        let screenMidX = bounds.midX
+        let rawX = mouse.x < screenMidX ? mouse.x + 4 : mouse.x - w - 4
+        let x = max(bounds.minX + 4, min(rawX, bounds.maxX - w - 4))
+        let rawY: CGFloat
+        if mouse.y - h < bounds.minY { rawY = bounds.minY + 4 }
+        else if mouse.y > bounds.maxY - h / 2 { rawY = bounds.maxY - h - 4 }
+        else { rawY = mouse.y - h / 2 }
+        let y = max(bounds.minY + 4, min(rawY, bounds.maxY - h - 4))
         let f = NSRect(x: x, y: y, width: w, height: h)
 
         showPanel(in: f)

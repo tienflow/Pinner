@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct StatsDashboardView: View {
@@ -150,7 +151,6 @@ struct StatsDashboardView: View {
     @State private var modelSortAsc: Bool = false
     @State private var skillSortKey: String = "calls"
     @State private var skillSortAsc: Bool = false
-    @State private var showDormantSkills: Bool = false
     @State private var heatHoverText: String?
     @State private var trendHoverText: String?
     @State private var hourlyHoverText: String?
@@ -164,11 +164,13 @@ struct StatsDashboardView: View {
     @State private var showingWeeklyInsight: Bool = false
     @State private var weeklyInsight: AgentWeeklyInsight? = nil
     @State private var weeklyInsightSnapshot: DashboardSnapshot? = nil
+    @State private var weeklyWorkflowDigest: WorkflowObservationDigest? = nil
     @State private var isGeneratingInsight: Bool = false
     @State private var weeklyInsightError: String? = nil
 
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     @ObservedObject private var aliasService = ModelAliasService.shared
+    private let autoRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
     private let service = StatsDashboardService.shared
 
@@ -229,7 +231,7 @@ struct StatsDashboardView: View {
                 }
             }
         }
-        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(autoRefreshTimer) { _ in
             if DashboardWindowController.shared.isVisible {
                 reload()
             }
@@ -251,6 +253,7 @@ struct StatsDashboardView: View {
             AgentWeeklyInsightSheet(
                 insight: weeklyInsight,
                 snapshot: weeklyInsightSnapshot ?? snapshot,
+                workflowDigest: weeklyWorkflowDigest,
                 isLoading: isGeneratingInsight,
                 errorMessage: weeklyInsightError,
                 onRegenerate: {
@@ -651,9 +654,16 @@ struct StatsDashboardView: View {
     // MARK: - Main Area (range view)
 
     private var mainArea: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                rangeTabs
+        VStack(spacing: 0) {
+            // Fixed top toolbar so range switcher, refresh, and close button never scroll out of view
+            rangeTabs
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+
+            Divider().opacity(0.25)
+
+            ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     totalTokenHeader
                     stackedShareBar
@@ -663,11 +673,10 @@ struct StatsDashboardView: View {
                 }
                 .opacity(staleDataOpacity)
                 .animation(.easeInOut(duration: 0.25), value: dimStaleData)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
-            .padding(.top, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -733,6 +742,10 @@ struct StatsDashboardView: View {
                 PanelRefreshButton(isLoading: isRefreshing, helpText: "刷新总览 (⌘R)") {
                     reload(force: true)
                 }
+
+                Divider()
+                    .frame(height: 16)
+                    .opacity(0.35)
 
                 PanelCloseButton(helpText: "关闭总览 (⎋ / ⌘W)") {
                     DashboardWindowController.shared.close()
@@ -1286,7 +1299,7 @@ struct StatsDashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(Design.slotAlpha))
         .cornerRadius(Design.radiusM)
-        .onChange(of: detailTab) { _ in
+        .onChange(of: detailTab) { _, _ in
             listSearchText = ""
             isSearchFocused = false
             DispatchQueue.main.async {
@@ -1507,7 +1520,7 @@ struct StatsDashboardView: View {
         }
     }
 
-    static func sessionSort(key: String, ascending: Bool) -> (SessionRow, SessionRow) -> Bool {
+    nonisolated static func sessionSort(key: String, ascending: Bool) -> (SessionRow, SessionRow) -> Bool {
         { a, b in
             switch key {
             case "title":
@@ -1713,59 +1726,10 @@ struct StatsDashboardView: View {
         dfTime.dateFormat = "M/d HH:mm"
 
         return VStack(spacing: 0) {
-            // Dormant skills warning card
+            // Dormant skills warning card (isolated child view to avoid relayout/redraw across the dashboard)
             if !dormant.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "moon.stars.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
-                        Text("沉睡技能预警")
-                            .font(.system(size: Design.caption, weight: .semibold))
-                            .foregroundStyle(.orange)
-                        Text("(\(dormant.count) 个本地技能连续 30 天 0 次调用)")
-                            .font(.system(size: Design.micro))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                showDormantSkills.toggle()
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Text(showDormantSkills ? "收起" : "展开查看")
-                                Image(systemName: showDormantSkills ? "chevron.up" : "chevron.down")
-                            }
-                            .font(.system(size: Design.micro, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if showDormantSkills {
-                        Text("以下本地技能未被任何 Agent 触发，可评估是否需精简或优化触发词：")
-                            .font(.system(size: Design.micro))
-                            .foregroundStyle(.secondary)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(dormant, id: \.self) { name in
-                                    Text(name)
-                                        .font(.system(size: Design.micro, design: .monospaced))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.orange.opacity(0.12))
-                                        .foregroundStyle(.orange)
-                                        .cornerRadius(Design.radiusS)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                }
-                .padding(8)
-                .background(Color.orange.opacity(0.08))
-                .cornerRadius(Design.radiusS)
-                .padding(.bottom, 8)
+                DormantSkillsCard(dormant: dormant)
+                    .padding(.bottom, 8)
             }
 
             // Table Header
@@ -1878,16 +1842,16 @@ struct StatsDashboardView: View {
 
         Task.detached(priority: .userInitiated) {
             async let skillsTask = SkillStatsService.shared.collectAll(force: force)
-            var collected: [(StatsAgent, [UnifiedUsageRecord])] = []
-            await withTaskGroup(of: (StatsAgent, [UnifiedUsageRecord]).self) { group in
+            let collected = await withTaskGroup(of: (StatsAgent, [UnifiedUsageRecord]).self) { group -> [(StatsAgent, [UnifiedUsageRecord])] in
                 for agent in agentsToScan {
                     group.addTask {
                         let agentRecords = service.collect(agent: agent, sinceMs: 0, force: force)
                         return (agent, agentRecords)
                     }
                 }
+                var items: [(StatsAgent, [UnifiedUsageRecord])] = []
                 for await item in group {
-                    collected.append(item)
+                    items.append(item)
                     await MainActor.run {
                         // A superseded scan must not touch the shared progress state.
                         guard token == refreshToken else { return }
@@ -1895,6 +1859,7 @@ struct StatsDashboardView: View {
                         refreshProgress += 1
                     }
                 }
+                return items
             }
             let (skills, installed) = await skillsTask
             await MainActor.run {
@@ -1979,7 +1944,7 @@ struct StatsDashboardView: View {
         }
     }
 
-    static func buildSnapshot(
+    nonisolated static func buildSnapshot(
         records: [UnifiedUsageRecord],
         skillRecords: [SkillRecord],
         installedSkills: Set<String>,
@@ -2256,7 +2221,7 @@ struct StatsDashboardView: View {
 
     /// Aggregates records into 24 hour buckets (00:00 to 23:59 local time),
     /// identifying the peak hour, active hours count, and the rolling 4-hour golden window.
-    static func computeHourlyMetrics(
+    nonisolated static func computeHourlyMetrics(
         records: [UnifiedUsageRecord],
         calendar: Calendar = .current
     ) -> (
@@ -2337,7 +2302,7 @@ struct StatsDashboardView: View {
     /// aliases collapse into a single row. Every group remembers which raw
     /// names fed it, and rows built from more than one are flagged so the UI
     /// can show "已合并 N 个原始 ID" — a merge must never be invisible.
-    static func mergedModelGroups(
+    nonisolated static func mergedModelGroups(
         _ records: [UnifiedUsageRecord],
         aliases: ModelAliasTable = ModelAliasTable()
     ) -> [(name: String, provider: String?, tokens: Int, sessions: Int, agents: [StatsAgent], tps: Double?, mergedFrom: [String])] {
@@ -2444,6 +2409,7 @@ struct StatsDashboardView: View {
                 let table = aliasService.table
                 let fallbackSnap = snapshot
                 Task {
+                    async let digestTask = WorkflowDigestService.shared.collect7DayDigest()
                     let built = await Task.detached(priority: .userInitiated) { () -> DashboardSnapshot? in
                         guard !records.isEmpty else { return nil }
                         let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
@@ -2462,9 +2428,10 @@ struct StatsDashboardView: View {
                             aliasTable: table
                         )
                     }.value
-                    try? await Task.sleep(nanoseconds: 1_100_000_000)
+                    let digest = await digestTask
                     await MainActor.run {
                         self.weeklyInsightSnapshot = built ?? fallbackSnap
+                        self.weeklyWorkflowDigest = digest
                         self.weeklyInsight = cached
                         self.isGeneratingInsight = false
                     }
@@ -2472,6 +2439,12 @@ struct StatsDashboardView: View {
             } else {
                 if weeklyInsightSnapshot == nil {
                     weeklyInsightSnapshot = buildWeeklyInsightSnapshot() ?? snapshot
+                }
+                if weeklyWorkflowDigest == nil {
+                    Task {
+                        let digest = await WorkflowDigestService.shared.collect7DayDigest()
+                        await MainActor.run { self.weeklyWorkflowDigest = digest }
+                    }
                 }
                 weeklyInsight = cached
                 isGeneratingInsight = false
@@ -2498,6 +2471,7 @@ struct StatsDashboardView: View {
 
         Task {
             let startTime = Date()
+            async let digestTask = WorkflowDigestService.shared.collect7DayDigest()
             let builtSnap = await Task.detached(priority: .userInitiated) { () -> DashboardSnapshot? in
                 guard !records.isEmpty else { return nil }
                 let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
@@ -2517,6 +2491,8 @@ struct StatsDashboardView: View {
                 )
             }.value
 
+            let digest = await digestTask
+
             guard let snap = builtSnap ?? fallbackSnap else {
                 await MainActor.run {
                     self.weeklyInsightError = "账本数据正在加载中，请稍后重试"
@@ -2527,11 +2503,13 @@ struct StatsDashboardView: View {
 
             await MainActor.run {
                 self.weeklyInsightSnapshot = snap
+                self.weeklyWorkflowDigest = digest
             }
 
             do {
                 let insight = try await AgentWeeklyInsightService.shared.generateInsight(
                     snapshot: snap,
+                    workflowDigest: digest,
                     forceRefresh: forceRefresh
                 )
                 let elapsed = Date().timeIntervalSince(startTime)
@@ -2615,6 +2593,141 @@ private struct RefreshStatusChip: View {
         }
         guard let lastUpdated else { return "尚未完成首次扫描" }
         return "最后更新于 \(Self.stamp.string(from: lastUpdated))"
+    }
+}
+
+private struct DormantSkillsCard: View {
+    let dormant: [String]
+    @State private var isExpanded = false
+    @State private var copiedSkill: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "moon.stars.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                Text("沉睡技能预警")
+                    .font(.system(size: Design.caption, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text("(\(dormant.count) 个本地技能连续 30 天 0 次调用)")
+                    .font(.system(size: Design.micro))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(isExpanded ? "收起" : "展开查看")
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.system(size: Design.micro, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if isExpanded {
+                Text("以下本地技能未被任何 Agent 触发，可评估是否需精简或优化触发词（点击标签复制名称）：")
+                    .font(.system(size: Design.micro))
+                    .foregroundStyle(.secondary)
+
+                DormantSkillFlowLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(dormant, id: \.self) { name in
+                        let isCopied = (copiedSkill == name)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(name, forType: .string)
+                            Haptics.light()
+                            copiedSkill = name
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                if copiedSkill == name { copiedSkill = nil }
+                            }
+                        } label: {
+                            Text(isCopied ? "已复制 \(name)" : name)
+                                .font(.system(size: Design.micro, design: .monospaced))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(isCopied ? Color.green.opacity(0.16) : Color.orange.opacity(0.12))
+                                .foregroundStyle(isCopied ? .green : .orange)
+                                .cornerRadius(Design.radiusS)
+                        }
+                        .buttonStyle(.plain)
+                        .help("点击复制技能名：\(name)")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+            }
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.08))
+        .cornerRadius(Design.radiusS)
+    }
+}
+
+private struct DormantSkillFlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    struct CacheData {
+        var sizes: [CGSize] = []
+    }
+
+    func makeCache(subviews: Subviews) -> CacheData {
+        CacheData(sizes: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    func updateCache(_ cache: inout CacheData, subviews: Subviews) {
+        cache.sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) -> CGSize {
+        if cache.sizes.count != subviews.count {
+            cache.sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        }
+        let maxWidth = proposal.width ?? .infinity
+        return arrange(maxWidth: maxWidth, sizes: cache.sizes).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) {
+        if cache.sizes.count != subviews.count {
+            cache.sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        }
+        let result = arrange(maxWidth: bounds.width, sizes: cache.sizes)
+        for (index, subview) in subviews.enumerated() where index < result.frames.count {
+            let frame = result.frames[index]
+            subview.place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                proposal: ProposedViewSize(frame.size)
+            )
+        }
+    }
+
+    private func arrange(maxWidth: CGFloat, sizes: [CGSize]) -> (size: CGSize, frames: [CGRect]) {
+        var frames: [CGRect] = []
+        frames.reserveCapacity(sizes.count)
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for size in sizes {
+            if x > 0 && x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + lineSpacing
+                rowHeight = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            rowHeight = max(rowHeight, size.height)
+            usedWidth = max(usedWidth, x + size.width)
+            x += size.width + spacing
+        }
+
+        let totalHeight = y + rowHeight
+        let finalWidth = maxWidth.isFinite ? maxWidth : usedWidth
+        return (CGSize(width: finalWidth, height: totalHeight), frames)
     }
 }
 

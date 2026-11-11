@@ -1,25 +1,34 @@
 import AppKit
 import Carbon
 
-/// Configurable hotkeys for agents without a legacy default binding.
-/// No default is registered, so adding an agent does not take over another app's shortcut.
+/// Configurable Carbon hotkey manager used by panels and agents, with optional
+/// default binding fallback.
 final class AgentStatsHotkeyManager {
     private let keyPrefix: String
     private let eventID: UInt32
+    let defaultCombo: HotkeyCombo?
+    private let label: String?
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     var onHotkeyTriggered: (() -> Void)?
     /// Outcome of the latest registered attempt: nil = no binding registered.
     private(set) var lastRegistrationSucceeded: Bool?
 
-    init(keyPrefix: String, eventID: UInt32) {
+    init(keyPrefix: String, eventID: UInt32, defaultCombo: HotkeyCombo? = nil, label: String? = nil) {
         self.keyPrefix = keyPrefix
         self.eventID = eventID
+        self.defaultCombo = defaultCombo
+        self.label = label
     }
 
     var currentCombo: HotkeyCombo? {
         guard let code = UserDefaults.standard.object(forKey: keyPrefix + "Code") as? Int,
-              let mods = UserDefaults.standard.object(forKey: keyPrefix + "Mods") as? Int else { return nil }
+              let mods = UserDefaults.standard.object(forKey: keyPrefix + "Mods") as? Int else {
+            return defaultCombo
+        }
+        if code == 0 && mods == 0 {
+            return defaultCombo
+        }
         return HotkeyCombo(keyCode: UInt32(code), modifiers: UInt32(mods))
     }
 
@@ -45,7 +54,7 @@ final class AgentStatsHotkeyManager {
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, id, GetApplicationEventTarget(), 0, &hotKeyRef)
         lastRegistrationSucceeded = status == noErr
         if status != noErr {
-            HotkeyRegistrationNotifier.notifyFailure(combo: combo)
+            HotkeyRegistrationNotifier.notifyFailure(label: label, combo: combo)
         }
     }
 
@@ -58,7 +67,7 @@ final class AgentStatsHotkeyManager {
     func clear() {
         UserDefaults.standard.removeObject(forKey: keyPrefix + "Code")
         UserDefaults.standard.removeObject(forKey: keyPrefix + "Mods")
-        unregister()
+        register()
     }
 
     private func unregister() {

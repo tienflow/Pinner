@@ -16,6 +16,7 @@ public final class PortManagerService: ObservableObject {
     @Published public var selectedFilter: ProcessFilterCategory = .all
 
     private var refreshTimer: Timer?
+    private var isRefreshingInFlight = false
     private var favoriteKeys: Set<String>
 
     public init() {
@@ -48,8 +49,13 @@ public final class PortManagerService: ObservableObject {
     // MARK: - Process Scanning & Aggregation
 
     public func refresh() async {
+        guard !isRefreshingInFlight else { return }
+        isRefreshingInFlight = true
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            isRefreshingInFlight = false
+        }
 
         let result = await Task.detached(priority: .userInitiated) { () -> ([PortProcessInfo], PortSummaryStats) in
             return Self.scanPortsAndProcessesSync()

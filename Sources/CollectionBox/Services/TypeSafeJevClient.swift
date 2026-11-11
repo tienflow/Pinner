@@ -132,6 +132,7 @@ public struct TypeSafeJevClient: Sendable {
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.timeoutIntervalForRequest = 15
         let session = URLSession(configuration: sessionConfig)
+        defer { session.finishTasksAndInvalidate() }
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -269,6 +270,7 @@ public struct TypeSafeJevClient: Sendable {
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.timeoutIntervalForRequest = 4.0
         let reqSession = URLSession(configuration: sessionConfig)
+        defer { reqSession.finishTasksAndInvalidate() }
 
         let (data, response) = try await reqSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {

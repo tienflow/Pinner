@@ -342,7 +342,7 @@ struct TodoCaptureView: View {
             .help("刷新提醒事项")
 
             Button {
-                TodoSettingsWindowController.shared.show()
+                SettingsWindowController.shared.show(tab: .aiConfig)
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 10))
@@ -869,7 +869,7 @@ struct TodoCaptureView: View {
         let store = TodoSettingsStore.shared
         guard store.isConfigured else {
             showStatus("请先配置待办 AI 设置")
-            TodoSettingsWindowController.shared.show()
+            SettingsWindowController.shared.show(tab: .aiConfig)
             return
         }
         guard !isParsing else { return } // 防重入

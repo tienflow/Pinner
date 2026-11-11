@@ -7,12 +7,10 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public static let shared = SettingsWindowController()
 
     private var window: NSWindow?
-    private var currentTab: SettingsTab = .general
 
     public var isVisible: Bool { window != nil }
 
     public func show(tab: SettingsTab = .general, targetAnchor: String? = nil) {
-        self.currentTab = tab
         if window == nil {
             // EscDismissableWindow keeps menu shortcuts (⌘C/⌘V/⌘W/⌘Q) alive while
             // the app stays `.accessory`, i.e. without a Dock icon — and adds the
