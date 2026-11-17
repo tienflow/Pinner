@@ -24,7 +24,7 @@
   - **今日看板与日报小结**：下半区展开今日/已逾期任务，支持一键快捷推迟（明天 9:00、下周一等）与完成勾选；提供「今日小结」一键导出 Markdown 完成日报闭环。
 - **闪念投递 (Fleeting Capture)**：
   - **极速直达 Apple Notes**：菜单栏右键或全局快捷键唤出轻量玻璃卡片，随手记录当下灵感与随笔。
-  - **Jev 语义路由 + 大模型终审**：优先通过 TypeSafe Jev 极速预判目标分类与笔记（~200ms），低置信度自动升级大模型仲裁；支持置顶前插与尾部追加。
+  - **Jev 语义路由 + 大模型终审**：优先通过可配置的 Jev 兼容端点（默认指向百炼 OpenAI 兼容接口，私有网关自行在设置中填写）做语义路由，极速预判目标分类与笔记（~200ms），低置信度自动升级大模型仲裁；支持置顶前插与尾部追加。
   - **100% 文本真实性铁律**：正文绝对保真用户原始字词，绝不擅自添加前缀破折号或进行 AI 说教扩写；集成一键 AI 错别字与语病润色。
 
 ### 🖥️ 开发者与系统监控 (Dev & Monitor)
@@ -33,6 +33,7 @@
   - **原生 Docker / OrbStack 穿透反查**：自动解析宿主机代理端口（如 `docker-proxy`），穿透识别具体 Docker 容器名与镜像名，支持针对具体容器执行安全平滑停止（`docker stop`）。
   - **外部暴露安全识别**：精准区分外部暴露（`0.0.0.0` / `*`）与本机隔离（`127.0.0.1`），提供专属过滤胶囊。
   - **交互式表头双向排序**：支持点击进程表头按名称、PID、端口、分类、CPU、内存一键升降序切换。
+  - **瞬时 CPU 与整机口径**：进程 CPU 走累计时间差分取瞬时值（与活动监视器、`top` 同口径，非 `ps` 的生命周期均值）；概览卡片主数值为整机占比，副标题注明多核累计（如「12 核累计 148.5%」），不再出现超过 100% 的误导读数。
   - **深度进程详情弹窗**：指标卡片严格等高对称排布（64pt），网络暴露安全域归位至头部元信息，多端口清单完整下沉；支持普通进程一键强杀与 root 进程 Touch ID / 密码管理员提权。
 - **进程管理 (Process Manager)**：
   - **算力与内存急救**：Mach/Darwin 内核微秒级采样 CPU 综合负载、统一内存压力等级（正常/受压/告警）与 Swap 磁盘换页，用完即走零常驻电量损耗。
@@ -61,7 +62,7 @@
   - **移动热点感知与流量保护**：接入 `NWPathMonitor` 实时感知 iPhone 个人热点或按流量计费网络，自动弹出顶部保护横幅并在进程表中标注大消耗进程。
   - **进程流量排行榜**：基于 `nettop` 采集进程上下行消耗，还原 App 真实名称与高清图标；自动标识代理/VPN 转发徽章，支持搜索与多维度双向排序。
   - **代理流量归属修正**：检测到本机系统代理（`SCDynamicStore` 读回环代理端口）时，额外采样回环 flow，把「经代理转发」的字节按 `对端端口 = 代理端口` 的占比回填到真实客户端应用名下（写入账本时即完成扣减，保证排行数值单调不倒退）；代理进程仅显示未归属余量，排除 IDE/本地服务的纯回环 RPC 噪声。
-  - **口径对账**：表格底部固定展示「未归属（采样缺口）」行，等于整机物理流量减去各进程合计，保证排行与整机总量恒等；采样周期 3 秒，缩短「连接在两次采样间关闭」的漏计窗口。
+  - **口径对账**：表格底部固定展示「未归属（采样缺口）」行，等于整机物理流量减去各进程合计，保证排行与整机总量恒等；整机速率 3 秒采样（直接读取内核 64 位接口计数器，零子进程），进程排行 15 秒增量采样，兼顾「连接在两次采样间关闭」的漏计窗口与常驻电量开销。
   - **7 天 / 30 天历史趋势**：总流量、下载量、上传量三维切换，折线图与柱状图双形态自由切换，沉底展示全局网络演进。
   - **本地持久化与 CSV 导出**：定期自动落盘 `traffic_ledger.json`，支持一键导出 CSV 报表。
 
@@ -78,6 +79,7 @@
 - **OTP 工具**：
   - **独立悬浮窗**：展示所有账户实时 6 位验证码，快捷键唤起时自动复制当前验证码到剪贴板。
   - **倒计时提示与平滑录入**：环形进度条实时显示有效剩余秒数（≤10 秒高亮提醒）；支持粘贴 URI 或图片二维码识别导入，添加完成后面板内无缝切回，新验证码立即可查可复制。
+  - **完整 TOTP 参数**：按账户逐个保存 `algorithm`（SHA1/SHA256/SHA512）、`digits`（6/7/8）与 `period`（默认 30s），导入 `otpauth://` 时自动解析，兼容企业内网与硬件令牌，不再把所有账户硬编码为 SHA1/6 位/30 秒。
 
 ---
 
@@ -143,9 +145,14 @@ Sources/
 │   │   ├── SkillStatsService.swift        # 跨 Agent 技能扫描与持久化增量缓存
 │   │   ├── JSONLReader.swift              # 会话日志 mmap 共享读取内核
 │   │   ├── ScanGate.swift                 # 高开销扫描 single-flight 并发闸门
+│   │   ├── AppLog.swift                   # os.Logger 分类日志（traffic/otp/stats/llm/input/system）
+│   │   ├── CSVExport.swift                # CSV 字段转义与公式注入防护
 │   │   ├── ModelAliasService.swift        # 模型别名重命名规则与本地持久化
+│   │   ├── SubprocessRunner.swift         # 子进程统一封装（超时 + SIGTERM/SIGKILL 兜底 + 管道排空）
+│   │   ├── FleetingRoutingRules.swift     # 闪念投递的智能路由规则表
+│   │   ├── ProcessCPUSampler.swift        # 进程瞬时 CPU 采样（累计时间差分，对齐活动监视器口径）
 │   │   └── ...                            # BookmarkService, Haptics, PinyinMatcher 等
-│   ├── ViewModels/             # 视图模型 (CollectionStore, OTPStore)
+│   ├── ViewModels/             # 视图模型 (CollectionStore, OTPStore, StatsDashboardViewModel)
 │   ├── Views/                  # 现代化 SwiftUI 界面组件
 │   │   ├── PortManagerView.swift          # 端口管家主面板与排序表格
 │   │   ├── TrafficView.swift              # 流量统计面板、24小时心流穿透与进程排行榜
@@ -153,7 +160,7 @@ Sources/
 │   │   ├── InputStatsView.swift           # 键鼠统计仪表盘与趋势图表
 │   │   ├── ClipboardStatsView.swift       # 剪贴统计大盘与高频复用沉淀
 │   │   ├── BrowserStatsView.swift         # 浏览统计心流与站点排行榜
-│   │   ├── StatsDashboardView.swift       # 5 大 Agent Token 统计总览大窗口
+│   │   ├── StatsDashboardView.swift       # 5 大 Agent Token 统计总览大窗口（数据面见 StatsDashboardViewModel）
 │   │   ├── AgentStatsView.swift           # 单 Agent 紧凑统计面板 (Codex/Antigravity/WorkBuddy/ZCode/DSH)
 │   │   └── ...                            # RootView, SettingsView, TodoCaptureView 等
 │   └── AppKit/                 # 窗口控制与系统集成 (WindowControllers, MenuBarController)
@@ -180,7 +187,7 @@ Sources/
 
 ### 方式二：从源码构建
 
-构建依赖：DSH 统计模块在构建期静态链接 Homebrew 的 `zstd`（`brew install zstd`）；打包后的 `.app` 无运行时外部 dylib 依赖。
+构建依赖：DSH 统计模块在构建期静态链接 `zstd`（自动探测 Homebrew / MacPorts 路径，构建机需 `brew install zstd`；也可用 `ZSTD_STATIC_LIB` 指定静态库路径）；打包后的 `.app` 无运行时外部 dylib 依赖。
 
 ```bash
 git clone https://github.com/tienflow/Pinner.git

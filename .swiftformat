@@ -1,0 +1,44 @@
+# SwiftFormat configuration — https://github.com/nicklockwood/SwiftFormat
+#
+# Deliberately conservative: this repo has ~33k lines of Swift written by hand,
+# so the goal is to stop *new* drift, not to reflow the whole codebase in one
+# 5000-line diff. Run `swiftformat . --lint` in CI, and `swiftformat .` locally
+# only when you are ready to absorb the reformat.
+
+--swiftversion 5.9
+
+# Layout
+--indent 4
+--tabwidth 4
+--maxwidth 160
+--wraparguments after-first
+--wrapelements before-first
+
+# Whitespace / hygiene (safe, no semantic change)
+--trimwhitespace always
+--stripunusedargs closure-only
+--emptybraces no-space
+--header strip
+--commas inline
+--semicolons inline
+
+# Keep SwiftUI modifier chains readable: never reflow them into one line.
+--funcattributes prev-line
+--typeattributes prev-line
+--varattributes prev-line
+
+# Rules that would rewrite large amounts of existing code — leave off until the
+# codebase is reformatted as a dedicated commit.
+--disable redundantSelf
+--disable redundantType
+--disable redundantReturn
+--disable hoistPatternLet
+--disable organizeDeclarations
+--disable extensionAccessControl
+--disable wrapLoopBodies
+--disable preferKeyPath
+
+# Explicitly keep these on: they catch real bugs rather than taste.
+--enable unusedArguments
+--enable redundantBackticks
+--enable trailingClosures

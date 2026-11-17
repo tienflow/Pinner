@@ -4,6 +4,9 @@ screenshots/
 *.xcodeproj
 .dsh-vision-toolkit/
 
+# Local agent tool config (machine-specific, never publish)
+.zcode/
+
 # Exclude docs and plan files
 docs/
 mac-收藏箱-app-plan.md

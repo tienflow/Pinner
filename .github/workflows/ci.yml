@@ -1,0 +1,76 @@
+name: CI
+
+# Build + test on every push/PR. The release pipeline (signing, notarization,
+# DMG) is intentionally not here: it needs a Developer ID certificate and is run
+# from the release checklist in AGENTS.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test (macOS 14, arm64)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      # libzstd is linked statically so the shipped .app has no dylib
+      # dependency; the manifest resolves the archive from these paths.
+      - name: Install zstd
+        run: |
+          brew list zstd >/dev/null 2>&1 || brew install zstd
+          ls -l "$(brew --prefix zstd)/lib/libzstd.a"
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+
+      - name: Build (debug)
+        run: swift build --product CollectionBoxApp
+
+      - name: Build (release)
+        run: swift build -c release --product CollectionBoxApp
+
+      # The project ships a CLI test runner because the CommandLineTools
+      # toolchain has no XCTest; it exits non-zero on any failed assertion.
+      - name: Run tests
+        run: swift run PinnerTestRunner
+
+      - name: Validate Info.plist
+        run: plutil -lint Sources/CollectionBoxApp/Resources/Info.plist
+
+  lint:
+    name: Lint (informational)
+    runs-on: macos-14
+    timeout-minutes: 15
+    # Not a merge gate yet: the existing tree predates these configs, so a first
+    # run will produce findings. Flip to required once the baseline is clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SwiftFormat (lint only)
+        run: |
+          brew list swiftformat >/dev/null 2>&1 || brew install swiftformat
+          swiftformat . --lint --reporter github-actions-log
+
+      - name: SwiftLint
+        run: |
+          brew list swiftlint >/dev/null 2>&1 || brew install swiftlint
+          swiftlint lint --reporter github-actions-logging --quiet || true
