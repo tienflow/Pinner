@@ -38,7 +38,10 @@ public enum FleetingPrompt {
         }
     }
 
-    public static func build(context: Context) -> (system: String, user: String) {
+    public static func build(
+        context: Context,
+        rules: FleetingRoutingRulesTable = FleetingRoutingRulesService.shared.table
+    ) -> (system: String, user: String) {
         let dateFormatter = DateFormatter()
         dateFormatter.locale = Locale(identifier: "zh_CN")
         dateFormatter.dateFormat = "yyyy-MM-dd EEEE HH:mm"
@@ -62,13 +65,7 @@ public enum FleetingPrompt {
            - 若用户输入为全新独立构想或无合适已有笔记承载：mode 设为 "create"（新建笔记），targetNoteTitle 提炼一个克制简明的标题（≤15字）。
            - formattedContent 必须严格基于用户原始输入，不进行任何自动天数累加或日期篡改，用户自己写了什么天数就保持什么。若未带列表符号，可规整为“- <用户原始文字>”。
         3. 【目标分类与笔记意图识别原则】：
-           - 深度理解用户输入的语义核心，必须从 [备忘录分类与已有笔记] 中匹配最契合的分类与目标笔记。
-           - 语义路由参考：
-             * 读书名句、体验感悟、人生金句、生活闲思随笔 → 优先归入《妙笔偶得》或《有感而发》；
-             * 情绪反思、亲密关系复盘、戒断与认知重塑、日常打卡/天数记录 → 优先归入《清醒备忘》对应笔记（如【断联日志】、【认知重塑】等）；
-             * 知识点、速查表、打印、驾驶技巧、模型方法 → 优先归入《日积月累》；
-             * 生活开销、资产健康、个人资料档案 → 优先归入《生活台账》；
-             * 房屋装修、尺寸家具、电路设计 → 优先归入《装修笔记》。
+           - 深度理解用户输入的语义核心，必须从 [备忘录分类与已有笔记] 中匹配最契合的分类与目标笔记；若存在 [自定义分类偏好]，结合其中的分类说明辅助判定。
            - 若用户输入是对已有某个笔记的记录或补充，直接选择该已有笔记（mode 设为 "append" 或倒序日志的 "prepend"）；
            - 只有当输入为全新的独立专题且无合适已有笔记承载时，才选择最贴切的文件夹并新建笔记（mode: "create"，简炼标题 ≤15 字）。
            - 严禁盲目默认偏向某一特定笔记，每次识别必须完全基于用户当前输入的真实语义！
@@ -92,6 +89,13 @@ public enum FleetingPrompt {
             }
             if !context.recentNotes.isEmpty {
                 user += "[最近笔记列表: \(context.recentNotes.prefix(30).joined(separator: ", "))]\n"
+            }
+        }
+        let customDescriptions = rules.orderedRules.filter { !$0.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !customDescriptions.isEmpty {
+            user += "[自定义分类偏好]:\n"
+            for rule in customDescriptions {
+                user += "- \(rule.folder): \(rule.description)\n"
             }
         }
         if !context.pinnedNotes.isEmpty {

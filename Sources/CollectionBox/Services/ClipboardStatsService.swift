@@ -13,7 +13,7 @@ public final class ClipboardStatsService: ObservableObject {
     @Published public private(set) var isLoading: Bool = false
     @Published public private(set) var lastRefreshTime: Date?
     @Published public private(set) var ignoredRepeatedIDs: Set<Int64>
-    @Published public var selectedRange: ClipboardTimeRange = .days7 {
+    @Published public var selectedRange: ClipboardTimeRange = .today {
         didSet {
             if oldValue != selectedRange {
                 refresh()
@@ -315,16 +315,46 @@ public final class ClipboardStatsService: ObservableObject {
             sqlite3_finalize(stmt)
         }
 
-        // 7. Top Repeated Items (ZCOPYCOUNT > 1)
-        var topRepeated: [ClipboardRepeatedItem] = []
-        let repSql = """
-        SELECT Z_PK, ZTEXT, ZTITLE, ZBASEUNIFORMTYPE, ZAPPBUNDLEID, ZCOPYCOUNT, ZTIMESTAMP
-        FROM ZPASTEITEM
-        WHERE ZCOPYCOUNT > 1 AND ZTEXT IS NOT NULL AND length(trim(ZTEXT)) > 0
-        ORDER BY ZCOPYCOUNT DESC
-        LIMIT 50
-        """
+        // 7. Top Repeated Items (ZCOPYCOUNT > 1): selected range & all-time
+        let allTimeTopRepeated = queryTopRepeated(db, sinceRef: nil)
+        let topRepeated = range == .all ? allTimeTopRepeated : queryTopRepeated(db, sinceRef: rangeStartRef)
+
+        return ClipboardStatsData(
+            totalCount: totalCount,
+            todayCount: todayCount,
+            rangeCount: rangeCount,
+            avgDailyCount: avgDailyCount,
+            typeStats: typeStats,
+            topApps: topApps,
+            hourlyStats: hourlyStats,
+            dailyTrends: dailyTrends,
+            topRepeated: topRepeated,
+            allTimeTopRepeated: allTimeTopRepeated
+        )
+    }
+
+    private nonisolated static func queryTopRepeated(_ db: OpaquePointer?, sinceRef: Double?) -> [ClipboardRepeatedItem] {
+        var result: [ClipboardRepeatedItem] = []
+        let repSql = sinceRef == nil
+            ? """
+            SELECT Z_PK, ZTEXT, ZTITLE, ZBASEUNIFORMTYPE, ZAPPBUNDLEID, ZCOPYCOUNT, ZTIMESTAMP
+            FROM ZPASTEITEM
+            WHERE ZCOPYCOUNT > 1 AND ZTEXT IS NOT NULL AND length(trim(ZTEXT)) > 0
+            ORDER BY ZCOPYCOUNT DESC
+            LIMIT 50
+            """
+            : """
+            SELECT Z_PK, ZTEXT, ZTITLE, ZBASEUNIFORMTYPE, ZAPPBUNDLEID, ZCOPYCOUNT, ZTIMESTAMP
+            FROM ZPASTEITEM
+            WHERE ZTIMESTAMP >= ? AND ZCOPYCOUNT > 1 AND ZTEXT IS NOT NULL AND length(trim(ZTEXT)) > 0
+            ORDER BY ZCOPYCOUNT DESC
+            LIMIT 50
+            """
+        var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, repSql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
+            if let sinceRef {
+                sqlite3_bind_double(stmt, 1, sinceRef)
+            }
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let pk = sqlite3_column_int64(stmt, 0)
                 let text = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
@@ -345,22 +375,11 @@ public final class ClipboardStatsService: ObservableObject {
                     copyCount: copyCount,
                     date: date
                 )
-                topRepeated.append(item)
+                result.append(item)
             }
             sqlite3_finalize(stmt)
         }
-
-        return ClipboardStatsData(
-            totalCount: totalCount,
-            todayCount: todayCount,
-            rangeCount: rangeCount,
-            avgDailyCount: avgDailyCount,
-            typeStats: typeStats,
-            topApps: topApps,
-            hourlyStats: hourlyStats,
-            dailyTrends: dailyTrends,
-            topRepeated: topRepeated
-        )
+        return result
     }
 
     private nonisolated static func queryInt(_ db: OpaquePointer?, _ sql: String, _ doubleBinds: [Double] = []) -> Int {

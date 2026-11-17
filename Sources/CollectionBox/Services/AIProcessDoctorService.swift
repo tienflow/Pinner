@@ -244,20 +244,9 @@ final class AIProcessDoctorService: Sendable {
     }
 
     private nonisolated static func quickScanListeningPortsByPID() -> [pid_t: Set<Int>] {
-        let pipe = Pipe()
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        proc.arguments = ["-n", "-P", "-iTCP", "-sTCP:LISTEN", "-F", "pn"]
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do {
-            try proc.run()
-        } catch {
-            return [:]
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard let output = String(data: data, encoding: .utf8) else { return [:] }
+        let res = SubprocessRunner.run("/usr/sbin/lsof", ["-n", "-P", "-iTCP", "-sTCP:LISTEN", "-F", "pn"], timeout: 6.0)
+        guard res.succeeded else { return [:] }
+        let output = res.output
 
         var result: [pid_t: Set<Int>] = [:]
         var currentPid: pid_t? = nil

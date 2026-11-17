@@ -46,6 +46,12 @@ public struct TypeSafeJevClient: Sendable {
         }
     }
 
+    /// 公开默认值，仅作占位：私有 MaaS 网关或自建 Jev 服务请写入偏好设置
+    /// (`TypeSafe.baseURL` / `TypeSafe.model`) 或 `TYPESAFE_BASE_URL` 环境变量，
+    /// 不要硬编码进仓库。
+    public static let defaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    public static let defaultModel = "qwen-plus"
+
     public var session: URLSession
 
     public init(session: URLSession = .shared) {
@@ -61,14 +67,14 @@ public struct TypeSafeJevClient: Sendable {
             let udModel = defaults.string(forKey: "TypeSafe.model")?.trimmingCharacters(in: .whitespacesAndNewlines)
             return (
                 apiKey: udKey,
-                baseURL: (udURL?.isEmpty == false) ? udURL! : "https://api.typesafe.ai/v1",
-                model: (udModel?.isEmpty == false) ? udModel! : "jev-latest"
+                baseURL: (udURL?.isEmpty == false) ? udURL! : Self.defaultBaseURL,
+                model: (udModel?.isEmpty == false) ? udModel! : Self.defaultModel
             )
         }
 
         if let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines), !envKey.isEmpty {
-            let envURL = ProcessInfo.processInfo.environment["TYPESAFE_BASE_URL"] ?? "https://api.typesafe.ai/v1"
-            let envModel = ProcessInfo.processInfo.environment["TYPESAFE_MODEL"] ?? "jev-latest"
+            let envURL = ProcessInfo.processInfo.environment["TYPESAFE_BASE_URL"] ?? Self.defaultBaseURL
+            let envModel = ProcessInfo.processInfo.environment["TYPESAFE_MODEL"] ?? Self.defaultModel
             return (apiKey: envKey, baseURL: envURL, model: envModel)
         }
 
@@ -159,35 +165,26 @@ public struct TypeSafeJevClient: Sendable {
     }
 
     /// Evaluates user input against folderTree using Jev System One questions, returning detailed confidence and distribution.
-    public func evaluate(context: FleetingPrompt.Context, config: (apiKey: String, baseURL: String, model: String)) async throws -> JevRouteResult? {
+    public func evaluate(
+        context: FleetingPrompt.Context,
+        config: (apiKey: String, baseURL: String, model: String),
+        rules: FleetingRoutingRulesTable = FleetingRoutingRulesService.shared.table
+    ) async throws -> JevRouteResult? {
         let trimmed = context.input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
         let tree = context.folderTree.filter { $0.name != "Recently Deleted" && $0.name != "最近删除" && $0.name != "Notes" }
         guard !tree.isEmpty else { return nil }
 
-        // 1. Build folder rubric
+        // 1. Build folder rubric dynamically from the user's real Apple Notes tree and optional local rules.
         var folderCriteria: [String: String] = [:]
         for item in tree {
-            switch item.name {
-            case "清醒备忘":
-                folderCriteria[item.name] = "情绪反思、亲密关系复盘、戒断与认知重塑、日常打卡/天数记录、断联日志"
-            case "装修笔记":
-                folderCriteria[item.name] = "全屋尺寸、电路布局、家具定制方案、装修材料与施工"
-            case "妙笔偶得":
-                folderCriteria[item.name] = "生活闲思、金句警句、读书体验摘抄、灵感短句"
-            case "有感而发":
-                folderCriteria[item.name] = "长篇随笔感悟、生活大事件记录、人生独处思考、深度心得"
-            case "日积月累":
-                folderCriteria[item.name] = "专业知识点、速查表、3D打印参数、驾驶技术、实用技能"
-            case "生活台账":
-                folderCriteria[item.name] = "个人档案、健康体检、资产账单、借款贷款、生活数据"
-            default:
-                if !item.notes.isEmpty {
-                    folderCriteria[item.name] = "包含已有笔记: " + item.notes.prefix(6).joined(separator: "、")
-                } else {
-                    folderCriteria[item.name] = "备忘录分类：\(item.name)"
-                }
+            if let customDesc = rules.description(for: item.name) {
+                folderCriteria[item.name] = customDesc
+            } else if !item.notes.isEmpty {
+                folderCriteria[item.name] = "包含已有笔记: " + item.notes.prefix(6).joined(separator: "、")
+            } else {
+                folderCriteria[item.name] = "备忘录分类：\(item.name)"
             }
         }
 
@@ -212,11 +209,9 @@ public struct TypeSafeJevClient: Sendable {
         // 2. Identify plausible folders for speculative note evaluation (limit to max 3 folders to keep latency < 1s)
         var candidateFolders: [AppleNotesService.FolderItem] = []
         for item in tree where !item.notes.isEmpty {
-            let matchesKeyword = trimmed.contains(item.name) ||
-                (item.name == "清醒备忘" && (trimmed.contains("断联") || trimmed.contains("情绪") || trimmed.contains("戒断") || trimmed.contains("执念") || trimmed.contains("打卡") || trimmed.contains("日志") || trimmed.contains("天"))) ||
-                (item.name == "装修笔记" && (trimmed.contains("装修") || trimmed.contains("尺寸") || trimmed.contains("家具") || trimmed.contains("电路"))) ||
-                (item.name == "生活台账" && (trimmed.contains("买") || trimmed.contains("贷") || trimmed.contains("健康") || trimmed.contains("体检") || trimmed.contains("档案"))) ||
-                (item.name == "日积月累" && (trimmed.contains("速查") || trimmed.contains("技巧") || trimmed.contains("打印") || trimmed.contains("参数")))
+            let matchesKeyword = trimmed.localizedCaseInsensitiveContains(item.name) ||
+                rules.matchesKeywords(folder: item.name, input: trimmed) ||
+                FleetingRoutingRulesTable.noteTitleOverlaps(trimmed, notes: item.notes)
             if matchesKeyword {
                 candidateFolders.append(item)
             }

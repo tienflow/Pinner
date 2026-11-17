@@ -176,6 +176,7 @@ public struct ClipboardStatsData: Sendable {
     public let hourlyStats: [ClipboardHourlyStat]
     public let dailyTrends: [ClipboardDailyTrend]
     public let topRepeated: [ClipboardRepeatedItem]
+    public let allTimeTopRepeated: [ClipboardRepeatedItem]
 
     public init(
         totalCount: Int,
@@ -186,7 +187,8 @@ public struct ClipboardStatsData: Sendable {
         topApps: [ClipboardAppStat],
         hourlyStats: [ClipboardHourlyStat],
         dailyTrends: [ClipboardDailyTrend],
-        topRepeated: [ClipboardRepeatedItem]
+        topRepeated: [ClipboardRepeatedItem],
+        allTimeTopRepeated: [ClipboardRepeatedItem]
     ) {
         self.totalCount = totalCount
         self.todayCount = todayCount
@@ -197,5 +199,6 @@ public struct ClipboardStatsData: Sendable {
         self.hourlyStats = hourlyStats
         self.dailyTrends = dailyTrends
         self.topRepeated = topRepeated
+        self.allTimeTopRepeated = allTimeTopRepeated
     }
 }

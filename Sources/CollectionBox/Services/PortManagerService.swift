@@ -19,6 +19,10 @@ public final class PortManagerService: ObservableObject {
     private var isRefreshingInFlight = false
     private var favoriteKeys: Set<String>
 
+    /// Scans are single-flight (`isRefreshingInFlight`), so one shared sampler is
+    /// safe and keeps the per-pid CPU baselines across refreshes.
+    nonisolated private static let cpuSampler = ProcessCPUSampler()
+
     public init() {
         if let saved = UserDefaults.standard.stringArray(forKey: Self.favoriteKeysDefaultsKey) {
             self.favoriteKeys = Set(saved)
@@ -44,6 +48,7 @@ public final class PortManagerService: ObservableObject {
     public func stopMonitoring() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        Self.cpuSampler.reset()
     }
 
     // MARK: - Process Scanning & Aggregation
@@ -173,33 +178,23 @@ public final class PortManagerService: ObservableObject {
                 return .failure(err)
             }
 
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: dockerPath)
-            proc.arguments = [force ? "kill" : "stop", name]
-            proc.standardOutput = FileHandle.nullDevice
-            proc.standardError = FileHandle.nullDevice
-
-            do {
-                try proc.run()
-                proc.waitUntilExit()
-                if proc.terminationStatus == 0 {
-                    await MainActor.run {
-                        Haptics.success()
-                        Task { [weak self] in
-                            await self?.refresh()
-                        }
+            let res = SubprocessRunner.run(dockerPath, [force ? "kill" : "stop", name], timeout: 10.0, forceCLocale: false)
+            if res.succeeded {
+                await MainActor.run {
+                    Haptics.success()
+                    Task { [weak self] in
+                        await self?.refresh()
                     }
-                    return .success(())
-                } else {
-                    let err = NSError(
-                        domain: "DockerError",
-                        code: Int(proc.terminationStatus),
-                        userInfo: [NSLocalizedDescriptionKey: "停止 Docker 容器 \(name) 失败"]
-                    )
-                    return .failure(err)
                 }
-            } catch {
-                return .failure(error)
+                return .success(())
+            } else {
+                let msg = res.timedOut ? "停止 Docker 容器 \(name) 超时" : "停止 Docker 容器 \(name) 失败"
+                let err = NSError(
+                    domain: "DockerError",
+                    code: Int(res.exitCode),
+                    userInfo: [NSLocalizedDescriptionKey: msg]
+                )
+                return .failure(err)
             }
         }.value
     }
@@ -282,21 +277,9 @@ public final class PortManagerService: ObservableObject {
 
     public func fetchCommandLine(for pid: pid_t) async -> String {
         return await Task.detached(priority: .utility) {
-            let pipe = Pipe()
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-p", "\(pid)", "-o", "command="]
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return output
-            } catch {
-                return ""
-            }
+            let res = SubprocessRunner.run("/bin/ps", ["-p", "\(pid)", "-o", "command="], timeout: 5.0)
+            guard res.succeeded else { return "" }
+            return res.output.trimmingCharacters(in: .whitespacesAndNewlines)
         }.value
     }
 
@@ -318,25 +301,16 @@ public final class PortManagerService: ObservableObject {
             return [:]
         }
 
-        let pipe = Pipe()
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: dockerPath)
-        proc.arguments = ["ps", "--format", "{{.Ports}}\t{{.Names}}\t{{.Image}}"]
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-
-        do {
-            try proc.run()
-        } catch {
+        let res = SubprocessRunner.run(
+            dockerPath,
+            ["ps", "--format", "{{.Ports}}\t{{.Names}}\t{{.Image}}"],
+            timeout: 6.0,
+            forceCLocale: false
+        )
+        guard res.succeeded else {
             return [:]
         }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-
-        guard let output = String(data: data, encoding: .utf8) else {
-            return [:]
-        }
+        let output = res.output
 
         var map: [Int: DockerContainerPortInfo] = [:]
         output.enumerateLines { line, _ in
@@ -368,26 +342,16 @@ public final class PortManagerService: ObservableObject {
     }
 
     nonisolated private static func scanPortsAndProcessesSync() -> ([PortProcessInfo], PortSummaryStats) {
+        // One timestamp for the whole pass so every pid shares the same CPU
+        // sample window.
+        let scanAt = Date().timeIntervalSince1970
+
         // 1. Run lsof -n -P -iTCP -sTCP:LISTEN -F pcuPn
-        let lsofPipe = Pipe()
-        let lsofProc = Process()
-        lsofProc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        lsofProc.arguments = ["-n", "-P", "-iTCP", "-sTCP:LISTEN", "-F", "pcuPn"]
-        lsofProc.standardOutput = lsofPipe
-        lsofProc.standardError = FileHandle.nullDevice
-
-        do {
-            try lsofProc.run()
-        } catch {
+        let lsofRes = SubprocessRunner.run("/usr/sbin/lsof", ["-n", "-P", "-iTCP", "-sTCP:LISTEN", "-F", "pcuPn"], timeout: 8.0)
+        guard lsofRes.succeeded else {
             return ([], PortSummaryStats())
         }
-
-        let lsofData = lsofPipe.fileHandleForReading.readDataToEndOfFile()
-        lsofProc.waitUntilExit()
-
-        guard let output = String(data: lsofData, encoding: .utf8) else {
-            return ([], PortSummaryStats())
-        }
+        let output = lsofRes.output
 
         // Intermediate parsing storage
         struct RawProcessEntry {
@@ -443,34 +407,26 @@ public final class PortManagerService: ObservableObject {
             return ([], PortSummaryStats())
         }
 
-        // 2. Query ps -p <pids> -o pid=,%cpu=,rss=,user=
+        // 2. Query ps -p <pids> -o pid=,%cpu=,rss=,user=,time=
+        //    `%cpu` is only a fallback (lifetime average); `time` is the cumulative
+        //    CPU time used to derive the instantaneous figure.
         let pids = Array(processMap.keys)
         let pidArg = pids.map(String.init).joined(separator: ",")
 
-        let psPipe = Pipe()
-        let psProc = Process()
-        psProc.executableURL = URL(fileURLWithPath: "/bin/ps")
-        psProc.arguments = ["-p", pidArg, "-o", "pid=,%cpu=,rss=,user="]
-        psProc.standardOutput = psPipe
-        psProc.standardError = FileHandle.nullDevice
-
-        var psInfoMap: [pid_t: (cpu: Double, rssBytes: Int64, user: String)] = [:]
-
-        if let _ = try? psProc.run() {
-            let psData = psPipe.fileHandleForReading.readDataToEndOfFile()
-            psProc.waitUntilExit()
-            if let psOutput = String(data: psData, encoding: .utf8) {
-                psOutput.enumerateLines { line, _ in
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    guard !trimmed.isEmpty else { return }
-                    let tokens = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-                    guard tokens.count >= 4,
-                          let pid = pid_t(tokens[0]),
-                          let cpu = Double(tokens[1]),
-                          let rssKB = Int64(tokens[2]) else { return }
-                    let user = tokens[3]
-                    psInfoMap[pid] = (cpu: cpu, rssBytes: rssKB * 1024, user: user)
-                }
+        var psInfoMap: [pid_t: (cpu: Double, rssBytes: Int64, user: String, cpuSeconds: Double?)] = [:]
+        let psRes = SubprocessRunner.run("/bin/ps", ["-p", pidArg, "-o", "pid=,%cpu=,rss=,user=,time="], timeout: 5.0)
+        if psRes.succeeded {
+            psRes.output.enumerateLines { line, _ in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return }
+                let tokens = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                guard tokens.count >= 5,
+                      let pid = pid_t(tokens[0]),
+                      let cpu = Double(tokens[1]),
+                      let rssKB = Int64(tokens[2]) else { return }
+                let user = tokens[3]
+                let cpuSeconds = ProcessCPUSampler.parseCumulativeSeconds(tokens[tokens.count - 1])
+                psInfoMap[pid] = (cpu: cpu, rssBytes: rssKB * 1024, user: user, cpuSeconds: cpuSeconds)
             }
         }
 
@@ -484,13 +440,21 @@ public final class PortManagerService: ObservableObject {
         var devCount = 0
         var dockerCount = 0
         var rootCount = 0
+        /// Resolved once per pid so the per-row values and the header total agree
+        /// (one pid can emit several rows: one per Docker container plus the rest).
+        var cpuByPid: [pid_t: Double] = [:]
 
         for (pid, raw) in processMap {
             let sortedPorts = Array(raw.ports).sorted()
             totalPorts += sortedPorts.count
 
             let ps = psInfoMap[pid]
-            let cpu = ps?.cpu ?? 0.0
+            // Instantaneous sample when we have a baseline; `ps %cpu` (a lifetime
+            // average) only as the fallback for the very first pass.
+            let cpu = ps?.cpuSeconds.flatMap { Self.cpuSampler.percent(for: pid, cumulativeSeconds: $0, at: scanAt) }
+                ?? ps?.cpu
+                ?? 0.0
+            cpuByPid[pid] = cpu
             let memory = ps?.rssBytes ?? 0
             let user = ps?.user ?? (raw.user.isEmpty ? "unknown" : raw.user)
             let isRoot = (user == "root" || user == "0")
@@ -578,10 +542,9 @@ public final class PortManagerService: ObservableObject {
             }
         }
 
-        var totalCpu: Double = 0.0
-        for (_, ps) in psInfoMap {
-            totalCpu += ps.cpu
-        }
+        self.cpuSampler.retainOnly(Set(processMap.keys))
+
+        let totalCpu = cpuByPid.values.reduce(0.0, +)
 
         let summary = PortSummaryStats(
             activePortCount: totalPorts,
@@ -590,6 +553,7 @@ public final class PortManagerService: ObservableObject {
             dockerCount: dockerCount,
             rootProcessCount: rootCount,
             totalCpuPercent: totalCpu,
+            logicalCores: ProcessInfo.processInfo.processorCount,
             exposedPortCount: exposedPorts.count
         )
 
@@ -636,23 +600,9 @@ public final class PortManagerService: ObservableObject {
         if let raw = readProcessWorkingDirectoryRaw(pid: pid) {
             return raw == "/" ? nil : raw
         }
-        let pipe = Pipe()
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        proc.arguments = ["-a", "-p", "\(pid)", "-d", "cwd", "-Fn"]
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do {
-            try proc.run()
-        } catch {
-            return nil
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard let output = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        for line in output.split(whereSeparator: { $0.isNewline }) {
+        let res = SubprocessRunner.run("/usr/sbin/lsof", ["-a", "-p", "\(pid)", "-d", "cwd", "-Fn"], timeout: 4.0)
+        guard res.succeeded else { return nil }
+        for line in res.output.split(whereSeparator: { $0.isNewline }) {
             if line.hasPrefix("n") {
                 let dir = String(line.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !dir.isEmpty && dir != "/" {

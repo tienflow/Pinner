@@ -175,7 +175,12 @@ public struct PortSummaryStats: Sendable, Equatable {
     public var devServerCount: Int
     public var dockerCount: Int
     public var rootProcessCount: Int
+    /// Sum of every listening process's CPU, where 100% = one core. On an N-core
+    /// machine this can reach N×100%, so it must never be shown as-is next to a
+    /// "total CPU" label — see `systemCpuPercent`.
     public var totalCpuPercent: Double
+    /// Logical core count, captured when the sample was taken.
+    public var logicalCores: Int
     public var exposedPortCount: Int
 
     public var dockerContainerCount: Int {
@@ -190,6 +195,7 @@ public struct PortSummaryStats: Sendable, Equatable {
         dockerCount: Int = 0,
         rootProcessCount: Int = 0,
         totalCpuPercent: Double = 0.0,
+        logicalCores: Int = ProcessInfo.processInfo.processorCount,
         exposedPortCount: Int = 0
     ) {
         self.activePortCount = activePortCount
@@ -198,6 +204,7 @@ public struct PortSummaryStats: Sendable, Equatable {
         self.dockerCount = dockerCount
         self.rootProcessCount = rootProcessCount
         self.totalCpuPercent = totalCpuPercent
+        self.logicalCores = max(1, logicalCores)
         self.exposedPortCount = exposedPortCount
     }
 
@@ -208,6 +215,7 @@ public struct PortSummaryStats: Sendable, Equatable {
         dockerContainerCount: Int,
         rootProcessCount: Int = 0,
         totalCpuPercent: Double = 0.0,
+        logicalCores: Int = ProcessInfo.processInfo.processorCount,
         exposedPortCount: Int = 0
     ) {
         self.activePortCount = activePortCount
@@ -216,6 +224,7 @@ public struct PortSummaryStats: Sendable, Equatable {
         self.dockerCount = dockerContainerCount
         self.rootProcessCount = rootProcessCount
         self.totalCpuPercent = totalCpuPercent
+        self.logicalCores = max(1, logicalCores)
         self.exposedPortCount = exposedPortCount
     }
 
@@ -223,7 +232,17 @@ public struct PortSummaryStats: Sendable, Equatable {
         PortProcessInfo.formatBytes(totalMemoryBytes)
     }
 
+    /// Machine-wide CPU share (0–100%), the number users read "总 CPU 占用" as.
+    public var systemCpuPercent: Double {
+        totalCpuPercent / Double(max(1, logicalCores))
+    }
+
     public var cpuDisplayString: String {
-        String(format: "%.1f%%", totalCpuPercent)
+        String(format: "%.1f%%", systemCpuPercent)
+    }
+
+    /// The raw per-core sum, e.g. "12 核累计 152.8%".
+    public var cpuBreakdownString: String {
+        String(format: "%d 核累计 %.1f%%", logicalCores, totalCpuPercent)
     }
 }

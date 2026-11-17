@@ -1062,15 +1062,15 @@ func testFleetingCapture() {
       "answers": {
         "target_folder": {
           "type": "choice",
-          "choice": "清醒备忘",
+          "choice": "生活记录",
           "confidence": 1.0,
-          "probabilities": {"清醒备忘": 1.0, "装修笔记": 0.0}
+          "probabilities": {"生活记录": 1.0, "工作笔记": 0.0}
         },
-        "note_清醒备忘": {
+        "note_生活记录": {
           "type": "choice",
-          "choice": "【断联日志】",
+          "choice": "【每日日志】",
           "confidence": 1.0,
-          "probabilities": {"【断联日志】": 1.0, "新建独立笔记": 0.0}
+          "probabilities": {"【每日日志】": 1.0, "新建独立笔记": 0.0}
         },
         "mode": {
           "type": "choice",
@@ -1082,22 +1082,22 @@ func testFleetingCapture() {
     }
     """
     let tree = [
-        AppleNotesService.FolderItem(name: "清醒备忘", notes: ["【断联日志】", "【认知重塑】"]),
-        AppleNotesService.FolderItem(name: "装修笔记", notes: ["【全屋尺寸】"])
+        AppleNotesService.FolderItem(name: "生活记录", notes: ["【每日日志】", "【习惯追踪】"]),
+        AppleNotesService.FolderItem(name: "工作笔记", notes: ["【项目周报】"])
     ]
     let jevParsed = TypeSafeJevClient.decodeJevResponse(
         Data(jevSampleJSON.utf8),
-        originalInput: "今天断联第 37 天，心情很平静",
+        originalInput: "今天早起打卡第 37 天，状态不错",
         tree: tree
     )
-    check(jevParsed?.folder == "清醒备忘", "Jev decodes target folder")
-    check(jevParsed?.targetNoteTitle == "【断联日志】", "Jev decodes target note title")
+    check(jevParsed?.folder == "生活记录", "Jev decodes target folder")
+    check(jevParsed?.targetNoteTitle == "【每日日志】", "Jev decodes target note title")
     check(jevParsed?.mode == .prepend, "Jev decodes prepend mode for diary")
-    check(jevParsed?.formattedContent == "今天断联第 37 天，心情很平静", "Jev preserves authentic text verbatim")
+    check(jevParsed?.formattedContent == "今天早起打卡第 37 天，状态不错", "Jev preserves authentic text verbatim")
 
     let jevRouteResult = TypeSafeJevClient.decodeJevResult(
         Data(jevSampleJSON.utf8),
-        originalInput: "今天断联第 37 天，心情很平静",
+        originalInput: "今天早起打卡第 37 天，状态不错",
         tree: tree
     )
     check(jevRouteResult?.isHighConfidence == true, "Jev calibrated isHighConfidence is true on dominant top probability")
@@ -1112,8 +1112,8 @@ func testFleetingCapture() {
         fallback: false
     )
     let sanitized = FleetingThoughtLLMClient.sanitize(parsed: hallucinated, tree: tree, originalInput: "随笔内容")
-    check(sanitized.folder == "清醒备忘", "sanitize snaps unknown folder to valid tree folder")
-    check(sanitized.targetNoteTitle == "【断联日志】", "sanitize snaps unknown note to valid folder note")
+    check(sanitized.folder == "生活记录", "sanitize snaps unknown folder to valid tree folder")
+    check(sanitized.targetNoteTitle == "【每日日志】", "sanitize snaps unknown note to valid folder note")
     check(sanitized.formattedContent == "随笔内容", "sanitize guarantees authentic input content")
 
     // Invalidate folder tree cache roundtrip
@@ -1129,28 +1129,28 @@ func testFleetingCapture() {
     check(convertedHTML.contains("<ul>") && convertedHTML.contains("<li>第一条<br></li>") && convertedHTML.contains("</ul>"), "markdownToHTML converts bullet list")
 
     // 3. Prepend into existing <ul>
-    let oldListHTML = "<h1>【断联日志】</h1><div><br></div><ul><li>第 36 天：内容<br></li></ul>"
+    let oldListHTML = "<h1>【每日日志】</h1><div><br></div><ul><li>第 36 天：内容<br></li></ul>"
     let prepended = AppleNotesService.insertPrepend(into: oldListHTML, content: "- 第 37 天：新记录")
     check(prepended.contains("<ul><li>第 37 天：新记录<br></li><li>第 36 天：内容<br></li></ul>"), "insertPrepend inserts at top of <ul> list")
 
     // 4. Prompt building & authenticity guarantee
     let ctx = FleetingPrompt.Context(
         input: "今天去咖啡馆看了会儿书，心情很平静",
-        folders: ["Notes", "清醒备忘"],
-        recentNotes: ["【断联日志】", "读书笔记"],
-        pinnedNotes: ["【断联日志】"],
+        folders: ["Notes", "生活记录"],
+        recentNotes: ["【每日日志】", "读书笔记"],
+        pinnedNotes: ["【每日日志】"],
         folderTree: [
-            AppleNotesService.FolderItem(name: "清醒备忘", notes: ["【断联日志】", "【认知重塑】"]),
-            AppleNotesService.FolderItem(name: "妙笔偶得", notes: ["日常随笔", "佳句"])
+            AppleNotesService.FolderItem(name: "生活记录", notes: ["【每日日志】", "【习惯追踪】"]),
+            AppleNotesService.FolderItem(name: "阅读摘抄", notes: ["日常随笔", "佳句"])
         ],
-        lastFolder: "清醒备忘",
-        lastNote: "【断联日志】"
+        lastFolder: "生活记录",
+        lastNote: "【每日日志】"
     )
-    let (systemPrompt, userPrompt) = FleetingPrompt.build(context: ctx)
+    let (systemPrompt, userPrompt) = FleetingPrompt.build(context: ctx, rules: .empty)
     check(systemPrompt.contains("必须 100% 原样保留用户的原始文字表述"), "prompt guarantees 100% text authenticity")
     check(systemPrompt.contains("prepend"), "prompt specifies prepend mode")
     check(userPrompt.contains("今天去咖啡馆看了会儿书，心情很平静"), "user prompt includes raw input")
-    check(userPrompt.contains("【断联日志】"), "user prompt includes target note")
+    check(userPrompt.contains("【每日日志】"), "user prompt includes target note")
     check(userPrompt.contains("[备忘录分类与已有笔记]"), "user prompt contains folder tree structure")
 
     // 5. LLM client parsing & stripping reasoning tags
@@ -1158,34 +1158,49 @@ func testFleetingCapture() {
     {
       "choices": [{
         "message": {
-          "content": "<think>用户记录断联日志，应置顶前插并递增天数</think>```json\\n{\\"folder\\":\\"清醒备忘\\",\\"targetNoteTitle\\":\\"【断联日志】\\",\\"mode\\":\\"prepend\\",\\"formattedContent\\":\\"- 第 37 天：今天心情很平静\\",\\"confidence\\":0.98}\\n```"
+          "content": "<think>用户记录每日日志，应置顶前插</think>```json\\n{\\"folder\\":\\"生活记录\\",\\"targetNoteTitle\\":\\"【每日日志】\\",\\"mode\\":\\"prepend\\",\\"formattedContent\\":\\"- 第 37 天：今天心情很平静\\",\\"confidence\\":0.98}\\n```"
         }
       }]
     }
     """
     let parsed = FleetingThoughtLLMClient.parseResponse(Data(rawEnvelopeWithThink.utf8))
-    check(parsed?.folder == "清醒备忘", "LLM parse extracts folder")
-    check(parsed?.targetNoteTitle == "【断联日志】", "LLM parse extracts note title")
+    check(parsed?.folder == "生活记录", "LLM parse extracts folder")
+    check(parsed?.targetNoteTitle == "【每日日志】", "LLM parse extracts note title")
     check(parsed?.mode == .prepend, "LLM parse extracts prepend mode")
     check(parsed?.formattedContent == "- 第 37 天：今天心情很平静", "LLM parse strips think tags and extracts content")
 
-    // 6. Local fallback logic
-    let fallback = FleetingThoughtLLMClient.localFallback(context: ctx)
-    check(fallback.folder == "清醒备忘" && fallback.targetNoteTitle == "【断联日志】", "fallback routes breakup diary to 清醒备忘 / 【断联日志】")
+    // 6. Local fallback logic (generic, no hardcoded personal folders)
+    let fallback = FleetingThoughtLLMClient.localFallback(context: ctx, rules: .empty)
+    check(fallback.folder == "生活记录" && fallback.targetNoteTitle == "【每日日志】", "fallback routes diary to last log target")
     check(fallback.mode == .prepend, "fallback uses prepend mode")
     check(fallback.formattedContent == "今天去咖啡馆看了会儿书，心情很平静", "fallback preserves user verbatim input without day modification")
 
-    // 6.1 Semantic routing fallback when lastNote is clean/nil
+    // 6.1 Dynamic note-title overlap fallback when lastNote is clean/nil
     let cleanCtx = FleetingPrompt.Context(
         input: "卧室的全屋定制柜体尺寸需要再复核一遍",
         folderTree: [
-            AppleNotesService.FolderItem(name: "装修笔记", notes: ["【全屋尺寸】", "【电路布局】"]),
-            AppleNotesService.FolderItem(name: "妙笔偶得", notes: ["日常随笔"])
+            AppleNotesService.FolderItem(name: "居室规划", notes: ["【全屋尺寸】", "【电路布局】"]),
+            AppleNotesService.FolderItem(name: "阅读摘抄", notes: ["日常随笔"])
         ]
     )
-    let cleanFallback = FleetingThoughtLLMClient.localFallback(context: cleanCtx)
-    check(cleanFallback.folder == "装修笔记", "fallback routes renovation keyword to 装修笔记")
+    let cleanFallback = FleetingThoughtLLMClient.localFallback(context: cleanCtx, rules: .empty)
+    check(cleanFallback.folder == "居室规划", "fallback routes dynamically via note-title overlap")
     check(cleanFallback.targetNoteTitle == "【全屋尺寸】", "fallback selects first note in matched folder")
+
+    // 6.2 Custom user rules override
+    let customRules = FleetingRoutingRulesTable(
+        orderedRules: [FleetingFolderRule(folder: "工作笔记", description: "需求与周报", keywords: ["周报", "排期"])],
+        logKeywords: ["复盘"]
+    )
+    let ruleCtx = FleetingPrompt.Context(
+        input: "下周需求排期要对齐一下",
+        folderTree: [
+            AppleNotesService.FolderItem(name: "阅读摘抄", notes: ["日常随笔"]),
+            AppleNotesService.FolderItem(name: "工作笔记", notes: ["【项目周报】"])
+        ]
+    )
+    let ruleFallback = FleetingThoughtLLMClient.localFallback(context: ruleCtx, rules: customRules)
+    check(ruleFallback.folder == "工作笔记", "fallback honors custom user keyword rules")
 
     // 7. FleetingSettingsStore pinning and LRU
     let store = FleetingSettingsStore(defaults: UserDefaults(suiteName: "test-fleeting-\(UUID().uuidString)")!)
@@ -1195,15 +1210,15 @@ func testFleetingCapture() {
     store.unpinNote("灵感随想")
     check(!store.pinnedNotes.contains("灵感随想"), "unpinNote removes note")
 
-    store.recordTarget(folder: "妙笔偶得", note: "新灵感")
-    check(store.lastFolder == "妙笔偶得" && store.lastNote == "新灵感", "recordTarget updates last target")
+    store.recordTarget(folder: "阅读摘抄", note: "新灵感")
+    check(store.lastFolder == "阅读摘抄" && store.lastNote == "新灵感", "recordTarget updates last target")
     check(store.recentTargets.first?.note == "新灵感", "recentTargets places latest at front")
 
-    store.removeTarget(id: "妙笔偶得/新灵感")
+    store.removeTarget(id: "阅读摘抄/新灵感")
     check(!store.recentTargets.contains(where: { $0.note == "新灵感" }), "removeTarget deletes target from history")
     check(store.lastNote == nil, "removeTarget clears lastNote if matched")
 
-    store.recordTarget(folder: "清醒备忘", note: "【断联日志】")
+    store.recordTarget(folder: "生活记录", note: "【每日日志】")
     store.clearAllTargets()
     check(store.recentTargets.isEmpty, "clearAllTargets empties recent list")
 
@@ -1605,14 +1620,19 @@ func testPortManager() {
         dockerCount: 2,
         rootProcessCount: 1,
         totalCpuPercent: 15.6,
+        logicalCores: 12,
         exposedPortCount: 4
     )
     check(stats.activePortCount == 12, "summary activePortCount matches")
     check(stats.dockerCount == 2, "summary dockerCount matches 2")
     check(stats.dockerContainerCount == 2, "summary dockerContainerCount alias matches 2")
     check(stats.memoryDisplayString == "2.0 GB", "summary memoryDisplayString matches 2.0 GB")
-    check(stats.totalCpuPercent == 15.6, "summary totalCpuPercent matches 15.6")
-    check(stats.cpuDisplayString == "15.6%", "summary cpuDisplayString matches 15.6%")
+    check(stats.totalCpuPercent == 15.6, "summary totalCpuPercent keeps the per-core sum")
+    // The headline figure is machine-wide (sum ÷ cores); the per-core sum moves to
+    // the subtitle, so a 12-core box never reports "152.8%" as total CPU usage.
+    check(abs(stats.systemCpuPercent - 1.3) < 0.01, "summary systemCpuPercent divides by core count")
+    check(stats.cpuDisplayString == "1.3%", "summary cpuDisplayString reports machine-wide share")
+    check(stats.cpuBreakdownString == "12 核累计 15.6%", "summary cpuBreakdownString names the core count")
     check(stats.exposedPortCount == 4, "summary exposedPortCount matches 4")
 }
 

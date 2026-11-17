@@ -254,7 +254,8 @@ public final class ProcessManagerService: ObservableObject {
             let size = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &taskInfo, Int32(MemoryLayout<proc_taskinfo>.size))
             guard size == MemoryLayout<proc_taskinfo>.size else { continue }
 
-            let totalCpuNano = taskInfo.pti_total_user + taskInfo.pti_total_system
+            // Mach ticks → nanoseconds; the raw fields are NOT ns on Apple Silicon.
+            let totalCpuNano = MachTimeBase.nanoseconds(fromTicks: taskInfo.pti_total_user + taskInfo.pti_total_system)
 
             // Wakeups & Darwin rusage for Energy Impact
             var totalWakeups: UInt64 = UInt64(taskInfo.pti_csw)

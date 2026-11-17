@@ -101,7 +101,12 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
     private let bridge = InputTapBridge()
     private var saveTimer: Timer?
     private var decayTimer: Timer?
+    private var workspaceObserver: NSObjectProtocol?
     private var isDirty = false
+
+    /// Daily summaries are tiny, but unbounded growth still adds up over years
+    /// of use. Keep a rolling year — more than any trend view asks for.
+    private static let historyRetentionDays = 365
 
     // Sliding window for rate calculation
     private var keyTimestamps: [TimeInterval] = []
@@ -161,9 +166,59 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
             self.stats = DailyInputStats(dateString: today)
         }
         Self.normalizeKeyFrequencies(&self.stats.keyFrequencies)
+        let pruned = Self.prunedHistory(hist, keepingDays: Self.historyRetentionDays)
+        if pruned.count != hist.count {
+            hist = pruned
+            Self.saveHistoryToDisk(hist, url: historyURL)
+        }
         self.history = hist
         checkPermission()
+
+        // Prime the frontmost-app cache once, then keep it fresh from workspace
+        // notifications. Querying `frontmostApplication` per key press is a
+        // synchronous XPC round trip on the global input path.
+        if let app = NSWorkspace.shared.frontmostApplication {
+            updateFrontmost(
+                bundle: app.bundleIdentifier ?? "unknown",
+                name: app.localizedName ?? app.bundleIdentifier ?? "未知应用"
+            )
+        }
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                return
+            }
+            let bundle = app.bundleIdentifier ?? "unknown"
+            let name = app.localizedName ?? bundle
+            Task { @MainActor in
+                self.updateFrontmost(bundle: bundle, name: name)
+            }
+        }
         // Timers start from startMonitoring() only — see stopDecayTimer().
+    }
+
+    deinit {
+        if let workspaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
+        }
+    }
+
+    private static func prunedHistory(
+        _ history: [String: DailyInputSummary],
+        keepingDays: Int
+    ) -> [String: DailyInputSummary] {
+        guard keepingDays > 0 else { return history }
+        let calendar = Calendar.current
+        let cutoff = calendar.date(byAdding: .day, value: -(keepingDays - 1), to: Date()) ?? Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let cutoffString = formatter.string(from: cutoff)
+        // dateString is zero-padded yyyy-MM-dd, so lexical comparison is chronological.
+        return history.filter { $0.key >= cutoffString }
     }
 
     private static func normalizeKeyFrequencies(_ freqs: inout [String: Int]) {
@@ -272,8 +327,17 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
             nonisolatedMouseLock.unlock()
             if shouldSkip { return }
         }
-        Task { @MainActor in
-            self.processEvent(type: type, event: event)
+        // The event tap is installed on the main run loop, so the common path is
+        // already on the main actor. Hiding a Task per event keeps modifier/key
+        // ordering deterministic and removes an allocation from every keystroke.
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                processEvent(type: type, event: event)
+            }
+        } else {
+            Task { @MainActor in
+                self.processEvent(type: type, event: event)
+            }
         }
     }
 
@@ -282,6 +346,7 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
         if stats.dateString != today {
             if !stats.dateString.isEmpty {
                 history[stats.dateString] = DailyInputSummary(from: stats)
+                history = Self.prunedHistory(history, keepingDays: Self.historyRetentionDays)
                 saveHistory()
             }
             flushPendingSave()
@@ -301,28 +366,20 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
 
     // MARK: - Frontmost App Cache
 
-    private var cachedFrontmostPid: pid_t = 0
     private var cachedFrontmost: (bundleId: String, name: String) = ("unknown", "未知应用")
 
     /// `NSWorkspace.frontmostApplication` is a synchronous XPC round trip to the
     /// window server (~0.1-1 ms). It used to run per key press and per scroll
     /// tick, putting a main-thread IPC on the global input path.
     ///
-    /// The frontmost app only changes when the user switches windows, so the
-    /// answer is cached until the observed pid differs. A background refresh
-    /// keeps the "unknown" bootstrap case honest.
+    /// The cache is now driven by `didActivateApplicationNotification`, so the
+    /// event hot path is a pure in-memory read.
     private func activeAppInfo() -> (bundleId: String, name: String) {
-        if let app = NSWorkspace.shared.frontmostApplication {
-            if app.processIdentifier != cachedFrontmostPid {
-                cachedFrontmostPid = app.processIdentifier
-                let bundle = app.bundleIdentifier ?? "unknown"
-                cachedFrontmost = (bundle, app.localizedName ?? bundle)
-            }
-        } else if cachedFrontmostPid != 0 {
-            cachedFrontmostPid = 0
-            cachedFrontmost = ("unknown", "未知应用")
-        }
-        return cachedFrontmost
+        cachedFrontmost
+    }
+
+    private func updateFrontmost(bundle: String, name: String) {
+        cachedFrontmost = (bundle, name)
     }
 
     private func recordAppActivity(isKey: Bool = false, isClick: Bool = false, scrollPixels: Double = 0.0) {
@@ -454,8 +511,10 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
     private func startDecayTimer() {
         decayTimer?.invalidate()
         decayTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateRates()
+            guard let self else { return }
+            // Timers scheduled from the main actor fire on the main run loop.
+            MainActor.assumeIsolated {
+                self.updateRates()
             }
         }
     }
@@ -602,8 +661,9 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
     private func startSaveTimer() {
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.flushPendingSave()
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.flushPendingSave()
             }
         }
     }
@@ -615,7 +675,7 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
             let data = try JSONEncoder().encode(stats)
             try data.write(to: storageURL, options: .atomic)
         } catch {
-            NSLog("[InputStatsService] save failed: \(error)")
+            AppLog.input.error("input stats save failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -712,7 +772,7 @@ public final class InputStatsService: ObservableObject, InputEventReceiver {
             let data = try JSONEncoder().encode(history)
             try data.write(to: url, options: .atomic)
         } catch {
-            NSLog("[InputStatsService] save history failed: \(error)")
+            AppLog.input.error("input stats history save failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

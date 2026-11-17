@@ -6,7 +6,10 @@ public enum OTPService {
 
     /// Decode a base32 string to Data.
     public static func base32Decode(_ input: String) -> Data? {
-        let cleaned = input.uppercased().replacingOccurrences(of: " ", with: "")
+        let cleaned = input
+            .uppercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "=", with: "")
         guard !cleaned.isEmpty else { return nil }
 
         var bits = ""
@@ -26,42 +29,71 @@ public enum OTPService {
             data.append(byte)
             i = end
         }
-        return data
+        return data.isEmpty ? nil : data
     }
 
     /// Generate a TOTP code for the given secret at the specified time.
-    /// HMAC-SHA1, 30-second time step, 6-digit output (RFC 6238).
-    public static func generateCode(secret: String, at date: Date = Date()) -> String? {
+    ///
+    /// Defaults are the RFC 6238 baseline (HMAC-SHA1 / 30 s / 6 digits); the
+    /// per-account parameters let SHA256/SHA512 and 8-digit issuers work too.
+    public static func generateCode(
+        secret: String,
+        algorithm: OTPAlgorithm = .sha1,
+        digits: Int = 6,
+        period: Int = 30,
+        at date: Date = Date()
+    ) -> String? {
         guard let keyData = base32Decode(secret) else { return nil }
+        let step = max(1, period)
+        let codeDigits = (6...8).contains(digits) ? digits : 6
 
-        let counter = UInt64(date.timeIntervalSince1970) / 30
+        let counter = UInt64(max(0, date.timeIntervalSince1970)) / UInt64(step)
         var counterBig = counter.bigEndian
         let counterData = Data(bytes: &counterBig, count: 8)
 
-        var mac = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+        let digestLength: Int
+        let hmacAlgorithm: CCHmacAlgorithm
+        switch algorithm {
+        case .sha1:
+            digestLength = Int(CC_SHA1_DIGEST_LENGTH)
+            hmacAlgorithm = CCHmacAlgorithm(kCCHmacAlgSHA1)
+        case .sha256:
+            digestLength = Int(CC_SHA256_DIGEST_LENGTH)
+            hmacAlgorithm = CCHmacAlgorithm(kCCHmacAlgSHA256)
+        case .sha512:
+            digestLength = Int(CC_SHA512_DIGEST_LENGTH)
+            hmacAlgorithm = CCHmacAlgorithm(kCCHmacAlgSHA512)
+        }
+
+        var mac = [UInt8](repeating: 0, count: digestLength)
         counterData.withUnsafeBytes { cBytes in
             keyData.withUnsafeBytes { kBytes in
-                CCHmac(CCHmacAlgorithm(kCCHmacAlgSHA1),
+                CCHmac(hmacAlgorithm,
                        kBytes.baseAddress, keyData.count,
                        cBytes.baseAddress, counterData.count,
                        &mac)
             }
         }
 
+        // Dynamic truncation is identical for every digest size (RFC 4226 §5.3),
+        // and the offset is keyed off the *last* byte of whichever digest we used.
         let offset = Int(mac[mac.count - 1] & 0x0F)
         let binary = ((UInt32(mac[offset]) & 0x7F) << 24)
                    | ((UInt32(mac[offset + 1]) & 0xFF) << 16)
                    | ((UInt32(mac[offset + 2]) & 0xFF) << 8)
                    | (UInt32(mac[offset + 3]) & 0xFF)
 
-        return String(format: "%06d", binary % 1_000_000)
+        let modulus: UInt32 = codeDigits == 8 ? 100_000_000 : (codeDigits == 7 ? 10_000_000 : 1_000_000)
+        let value = binary % modulus
+        return String(format: "%0\(codeDigits)d", value)
     }
 
-    /// Seconds remaining in the current 30-second TOTP window.
-    public static func timeRemaining(at date: Date = Date()) -> Int {
+    /// Seconds remaining in the current TOTP window.
+    public static func timeRemaining(period: Int = 30, at date: Date = Date()) -> Int {
+        let step = max(1, period)
         let t = Int(date.timeIntervalSince1970)
-        let rem = 30 - ((t % 30 + 30) % 30)
-        return rem == 0 ? 30 : rem
+        let rem = step - ((t % step + step) % step)
+        return rem == 0 ? step : rem
     }
 
     /// Validate that a string is valid base32.
@@ -74,6 +106,25 @@ public enum OTPService {
         public let name: String
         public let secret: String
         public let issuer: String
+        public let algorithm: OTPAlgorithm
+        public let digits: Int
+        public let period: Int
+
+        public init(
+            name: String,
+            secret: String,
+            issuer: String,
+            algorithm: OTPAlgorithm = .sha1,
+            digits: Int = 6,
+            period: Int = 30
+        ) {
+            self.name = name
+            self.secret = secret
+            self.issuer = issuer
+            self.algorithm = algorithm
+            self.digits = digits
+            self.period = period
+        }
     }
 
     /// Parse an otpauth://totp/... URI.
@@ -95,10 +146,23 @@ public enum OTPService {
             }
         }
 
-        guard let secret = params["secret"], !secret.isEmpty else { return nil }
+        guard let secret = params["secret"], !secret.isEmpty, isValidBase32(secret) else { return nil }
         let issuer = params["issuer"] ?? ""
         let name = label
 
-        return OTPAuthInfo(name: name, secret: secret, issuer: issuer)
+        // Google Authenticator / 1Password style extensions. Unknown or malformed
+        // values fall back to the RFC baseline rather than rejecting the URI.
+        let algorithm = OTPAlgorithm(rawValue: (params["algorithm"] ?? "").uppercased()) ?? .sha1
+        let digits = Int(params["digits"] ?? "") ?? 6
+        let period = Int(params["period"] ?? "") ?? 30
+
+        return OTPAuthInfo(
+            name: name,
+            secret: secret,
+            issuer: issuer,
+            algorithm: algorithm,
+            digits: (6...8).contains(digits) ? digits : 6,
+            period: period > 0 ? period : 30
+        )
     }
 }

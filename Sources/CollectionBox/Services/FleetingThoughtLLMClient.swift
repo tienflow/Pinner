@@ -348,20 +348,31 @@ public struct FleetingThoughtLLMClient {
     }
 
     /// Local rule-based fallback when offline or LLM unavailable.
-    public static func localFallback(context: FleetingPrompt.Context) -> ParsedFleetingThought {
+    public static func localFallback(
+        context: FleetingPrompt.Context,
+        rules: FleetingRoutingRulesTable = FleetingRoutingRulesService.shared.table
+    ) -> ParsedFleetingThought {
         let trimmed = context.input.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Check if matching log/diary pattern (e.g. 日志, 打卡, 断联)
-        let isLogPattern = trimmed.contains("断联") ||
-                           trimmed.contains("打卡") ||
-                           trimmed.contains("日志") ||
-                           trimmed.range(of: #"第\s*\d+\s*天"#, options: .regularExpression) != nil ||
-                           context.lastNote?.contains("日志") == true
+        // Check if matching generic log/diary pattern (e.g. 日志, 打卡, 第N天, or user-configured log keywords)
+        let isLogPattern = rules.isLogInput(trimmed) ||
+                           context.lastNote?.contains("日志") == true ||
+                           context.lastNote?.contains("打卡") == true
 
         if isLogPattern {
-            let targetFolder = context.lastFolder ?? context.folderTree.first(where: { $0.name.contains("清醒") })?.name ?? "清醒备忘"
+            let logFolderItem = context.folderTree.first { item in
+                item.notes.contains { $0.contains("日志") || $0.contains("打卡") }
+            }
+            let targetFolder = context.lastFolder
+                ?? logFolderItem?.name
+                ?? context.folderTree.first(where: { $0.name != "Recently Deleted" && $0.name != "最近删除" })?.name
+                ?? context.folders.first
+                ?? "Notes"
             let matchingNotes = context.folderTree.first(where: { $0.name == targetFolder })?.notes ?? []
-            let targetNote = context.lastNote ?? matchingNotes.first(where: { $0.contains("日志") }) ?? matchingNotes.first ?? "日常日志"
+            let targetNote = context.lastNote
+                ?? matchingNotes.first(where: { $0.contains("日志") || $0.contains("打卡") })
+                ?? matchingNotes.first
+                ?? "日常日志"
 
             return ParsedFleetingThought(
                 folder: targetFolder,
@@ -373,29 +384,18 @@ public struct FleetingThoughtLLMClient {
             )
         }
 
-        // Regular thought fallback
-        var targetFolder = context.lastFolder
-        let targetNote = context.lastNote
+        // Regular thought fallback: prefer explicit last folder, then local user rules,
+        // then dynamic overlap against the user's actual Apple Notes folderTree.
+        let targetFolder = context.lastFolder
+            ?? rules.matchingRuleFolder(for: trimmed, in: context.folderTree)
+            ?? FleetingRoutingRulesTable.bestMatchingFolder(for: trimmed, in: context.folderTree)
 
-        if targetFolder == nil {
-            if trimmed.contains("装修") || trimmed.contains("尺寸") || trimmed.contains("家具") || trimmed.contains("电路") {
-                targetFolder = context.folderTree.first(where: { $0.name.contains("装修") })?.name
-            } else if trimmed.contains("断联") || trimmed.contains("情绪") || trimmed.contains("戒断") || trimmed.contains("认知") || trimmed.contains("执念") {
-                targetFolder = context.folderTree.first(where: { $0.name.contains("清醒") })?.name
-            } else if trimmed.contains("买") || trimmed.contains("贷") || trimmed.contains("健康") || trimmed.contains("档案") || trimmed.contains("体检") {
-                targetFolder = context.folderTree.first(where: { $0.name.contains("台账") })?.name
-            } else if trimmed.contains("模型") || trimmed.contains("速查") || trimmed.contains("技巧") || trimmed.contains("打印") {
-                targetFolder = context.folderTree.first(where: { $0.name.contains("日积月累") })?.name
-            } else if trimmed.count > 40 {
-                targetFolder = context.folderTree.first(where: { $0.name.contains("有感而发") })?.name
-            } else {
-                targetFolder = context.folderTree.first(where: { $0.name.contains("妙笔偶得") })?.name
-            }
-        }
-
-        let fallbackFolder = targetFolder ?? context.folderTree.first(where: { $0.name != "Notes" && $0.name != "Recently Deleted" })?.name ?? context.folders.first ?? "有感而发"
+        let fallbackFolder = targetFolder
+            ?? context.folderTree.first(where: { $0.name != "Notes" && $0.name != "Recently Deleted" && $0.name != "最近删除" })?.name
+            ?? context.folders.first
+            ?? "Notes"
         let matchingNotes = context.folderTree.first(where: { $0.name == fallbackFolder })?.notes ?? []
-        let fallbackNote = targetNote ?? matchingNotes.first ?? "日常随笔"
+        let fallbackNote = context.lastNote ?? matchingNotes.first ?? "日常随笔"
 
         return ParsedFleetingThought(
             folder: fallbackFolder,

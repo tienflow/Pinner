@@ -3,6 +3,7 @@ import AppKit
 import CoreWLAN
 import Network
 import SystemConfiguration
+import Darwin
 
 @MainActor
 public final class TrafficMonitorService: ObservableObject {
@@ -48,6 +49,8 @@ public final class TrafficMonitorService: ObservableObject {
 
     private var timer: Timer?
     private var inFlight: Bool = false
+    /// Start of the in-flight sample, used by the `sample()` watchdog.
+    private var inFlightSince: Date?
     private var oldProcesses: [String: TrafficProcessCounter] = [:]
     private var oldLoopback: [String: LoopbackSnapshot] = [:]
     private var oldInterfaces: [String: TrafficBytes] = [:]
@@ -57,6 +60,30 @@ public final class TrafficMonitorService: ObservableObject {
     private var appPaths: [String: String] = [:]
     private var pidMapping: [String: (name: String, path: String)] = [:]
     private var activePIDs: [String: pid_t] = [:]
+
+    // Sampling cadence. Whole-machine rates stay at 3 s (sysctl is free), while
+    // the expensive `nettop`/`ps` child processes are amortised over a longer
+    // window. Process counters are cumulative, so a 15 s diff is just as exact.
+    private var lastProcessSampleTime: Date?
+    private var lastPSRefreshTime: Date = .distantPast
+    private let processSampleInterval: TimeInterval = 15
+    private let psRefreshInterval: TimeInterval = 30
+
+    // Physical bytes are read every 3 s for live rates, but the ledger is only
+    // written on a process sample so the "unattributed" row (physical − process)
+    // compares two counters measured over the same window.
+    private var pendingPhysical = TrafficBytes()
+    private var pendingWiFi = TrafficBytes()
+    private var pendingEthernet = TrafficBytes()
+    private var pendingInterval: TimeInterval = 0
+
+    // CoreWLAN queries are synchronous and were previously paid every 3 s.
+    private var cachedNetworkContextValue: TrafficNetworkContext?
+    private var cachedNetworkContextAt: Date = .distantPast
+    private let networkContextTTL: TimeInterval = 30
+    private var cachedWiFiInterfaceNames: Set<String> = []
+    private var cachedWiFiInterfaceNamesAt: Date = .distantPast
+    private let wifiInterfaceTTL: TimeInterval = 60
 
     private let pathMonitor = NWPathMonitor()
     private let pathMonitorQueue = DispatchQueue(label: "com.tienyeung.pinner.traffic.pathmonitor", qos: .utility)
@@ -91,10 +118,19 @@ public final class TrafficMonitorService: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.oldTime = nil
-            if self.timer != nil {
-                self.sample()
+            // Delivered on the main queue; assumeIsolated keeps the mutation on
+            // the main actor without spawning a task per wake.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.oldTime = nil
+                // Force the next tick to re-baseline both process counters and the
+                // PID→name map; otherwise sleep-time bytes land in one wake delta.
+                self.lastProcessSampleTime = nil
+                self.lastPSRefreshTime = .distantPast
+                self.clearPendingSampleWindow()
+                if self.timer != nil {
+                    self.sample()
+                }
             }
         }
     }
@@ -295,17 +331,35 @@ public final class TrafficMonitorService: ObservableObject {
     public func startMonitoring() {
         guard timer == nil else { return }
         sample()
-        // 3s 采样：nettop 单次仅 0.01–0.16s，缩短窗口可显著减少「连接在两次采样之间关闭」导致的漏计
+        // 3 s 整机速率（sysctl 零子进程）；进程排行在 sample() 内按 15 s 降频采样。
         timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            self?.sample()
+            MainActor.assumeIsolated {
+                self?.sample()
+            }
         }
+    }
+
+    /// Single source of truth for "throw away the diff baseline".
+    ///
+    /// Every path that stops, pauses or clears monitoring must reset **all four**
+    /// baselines (`oldTime`, `oldProcesses`, `oldLoopback`, `oldInterfaces`).
+    /// A partial reset re-diffs the next window against stale counters, which
+    /// shows up as a phantom spike containing everything that flowed while the
+    /// panel was closed (e.g. across a lid-close sleep).
+    private func resetBaselines() {
+        oldTime = nil
+        oldProcesses.removeAll()
+        oldLoopback.removeAll()
+        oldInterfaces.removeAll()
+        lastProcessSampleTime = nil
+        lastPSRefreshTime = .distantPast
+        clearPendingSampleWindow()
     }
 
     public func stopMonitoring() {
         timer?.invalidate()
         timer = nil
-        oldTime = nil
-        oldLoopback.removeAll()
+        resetBaselines()
         currentDownloadRate = 0
         currentUploadRate = 0
         save()
@@ -313,8 +367,7 @@ public final class TrafficMonitorService: ObservableObject {
 
     public func togglePause() {
         isPaused.toggle()
-        oldTime = nil
-        oldLoopback.removeAll()
+        resetBaselines()
         currentDownloadRate = 0
         currentUploadRate = 0
         statusMessage = isPaused ? "已暂停统计" : "采集中"
@@ -326,64 +379,95 @@ public final class TrafficMonitorService: ObservableObject {
     public func clearTodayData() {
         let todayKey = TrafficDateKeys.day(Date())
         ledger.clear(day: todayKey)
-        oldProcesses.removeAll()
-        oldLoopback.removeAll()
-        oldInterfaces.removeAll()
-        oldTime = nil
+        resetBaselines()
         save()
     }
 
     public func clearAllData() {
         ledger.clearAll()
-        oldProcesses.removeAll()
-        oldLoopback.removeAll()
-        oldInterfaces.removeAll()
-        oldTime = nil
+        resetBaselines()
         save()
     }
 
     public func refresh() async {
         guard !inFlight else { return }
         isLoading = true
-        sample()
+        sample(forceProcessSample: true)
         try? await Task.sleep(nanoseconds: 600_000_000)
         isLoading = false
     }
 
     // MARK: - Sampling Pipeline
 
-    public func sample() {
+    /// - Parameter forceProcessSample: bypasses the 15 s process-ranking cadence.
+    ///   Used when a panel opens or the user hits refresh, so the ranking is not
+    ///   stale on first paint.
+    public func sample(forceProcessSample: Bool = false) {
+        // Watchdog: a wedged `nettop` / `ps` child, or a lost main-queue hop,
+        // would otherwise leave `inFlight` true forever — sampling would stop
+        // silently while the panel still claims "采集中". 20 s is well past the
+        // 8 s + 2 s child timeout, so a legitimately slow sample never trips it.
+        if inFlight, let since = inFlightSince, Date().timeIntervalSince(since) > 20 {
+            let stalled = Date().timeIntervalSince(since)
+            inFlight = false
+            inFlightSince = nil
+            statusMessage = "采样超时，已自动恢复"
+            AppLog.traffic.warning("sampling watchdog tripped after \(stalled, privacy: .public)s — child process or main-queue hop never returned")
+        }
         guard !inFlight, !isPaused else { return }
         inFlight = true
+        inFlightSince = Date()
 
-        let netContext = detectCurrentNetwork()
+        let now = Date()
+        let netContext: TrafficNetworkContext
+        if forceProcessSample {
+            netContext = detectCurrentNetwork()
+            cachedNetworkContextValue = netContext
+            cachedNetworkContextAt = now
+        } else {
+            netContext = cachedNetworkContext(now: now)
+        }
         self.currentNetwork = netContext
         if selectedNetwork != "__all__" && !availableNetworkNames.contains(selectedNetwork) {
             selectedNetwork = "__all__"
         }
 
         let samplingNetwork = netContext
+        // `oldTime == nil` means first tick after launch/wake: always re-baseline
+        // the process counters so the next diff starts from a clean snapshot.
+        let shouldSampleProcesses = forceProcessSample
+            || oldTime == nil
+            || lastProcessSampleTime.map { now.timeIntervalSince($0) >= processSampleInterval } ?? true
+        let shouldRefreshPS = forceProcessSample || now.timeIntervalSince(lastPSRefreshTime) >= psRefreshInterval
+        if shouldSampleProcesses { lastProcessSampleTime = now }
+        if shouldRefreshPS { lastPSRefreshTime = now }
 
         sampleQueue.async { [weak self] in
             autoreleasepool {
-                let proxyPorts = Self.detectLocalProxyPorts()
+                let proxyPorts = shouldSampleProcesses ? Self.detectLocalProxyPorts() : []
                 // -t external: 严格排除 loopback 回环 (127.0.0.1/lo0)，只统计实际外部物理网卡流量 (Wi-Fi / Ethernet)
-                let procResult = Self.runCommand("/usr/bin/nettop", ["-t", "external", "-P", "-L", "1", "-n", "-J", "bytes_in,bytes_out"])
+                let procResult = shouldSampleProcesses
+                    ? Self.runCommand("/usr/bin/nettop", ["-t", "external", "-P", "-L", "1", "-n", "-J", "bytes_in,bytes_out"])
+                    : (text: "", success: false)
                 // -t loopback: 仅在检测到本机代理时采样。逐条 flow 可判定「该 socket 的对端是否为代理端口」，用于把经代理转发的流量回填到真实客户端应用名下
-                let loopResult = proxyPorts.isEmpty
-                    ? (text: "", success: false)
-                    : Self.runCommand("/usr/bin/nettop", ["-x", "-t", "loopback", "-l", "1"])
-                let netResult = Self.runCommand("/usr/sbin/netstat", ["-ibn"])
-                let psResult = Self.runCommand("/bin/ps", ["-axo", "pid=,comm="])
-                let now = Date()
+                let loopResult = (shouldSampleProcesses && !proxyPorts.isEmpty)
+                    ? Self.runCommand("/usr/bin/nettop", ["-x", "-t", "loopback", "-l", "1"])
+                    : (text: "", success: false)
+                // 整机计数器直接读内核 64 位接口统计，零子进程、无 4 GB 回绕。
+                let interfaces = Self.readInterfaceCounters()
+                let psResult = shouldRefreshPS
+                    ? Self.runCommand("/bin/ps", ["-axo", "pid=,comm="])
+                    : (text: "", success: false)
 
                 DispatchQueue.main.async {
                     self?.applySampleResults(
                         proc: procResult,
                         loop: loopResult,
-                        net: netResult,
+                        interfaces: interfaces,
                         psOutput: psResult.text,
-                        now: now,
+                        psRefreshed: shouldRefreshPS,
+                        processSampled: shouldSampleProcesses,
+                        now: Date(),
                         network: samplingNetwork,
                         proxyPorts: proxyPorts
                     )
@@ -392,8 +476,40 @@ public final class TrafficMonitorService: ObservableObject {
         }
     }
 
+    private func cachedNetworkContext(now: Date) -> TrafficNetworkContext {
+        if let cached = cachedNetworkContextValue,
+           now.timeIntervalSince(cachedNetworkContextAt) < networkContextTTL {
+            return cached
+        }
+        let context = detectCurrentNetwork()
+        cachedNetworkContextValue = context
+        cachedNetworkContextAt = now
+        return context
+    }
+
+    private func wifiInterfaceNames() -> Set<String> {
+        let now = Date()
+        if now.timeIntervalSince(cachedWiFiInterfaceNamesAt) < wifiInterfaceTTL {
+            return cachedWiFiInterfaceNames
+        }
+        let names = Set(CWWiFiClient.shared().interfaceNames() ?? [])
+        cachedWiFiInterfaceNames = names
+        cachedWiFiInterfaceNamesAt = now
+        return names
+    }
+
+    /// Drops a partially accumulated ledger window. Called whenever the clock
+    /// baseline is reset (launch, wake, pause) so sleep/pause bytes never land
+    /// in a later window.
+    private func clearPendingSampleWindow() {
+        pendingPhysical = TrafficBytes()
+        pendingWiFi = TrafficBytes()
+        pendingEthernet = TrafficBytes()
+        pendingInterval = 0
+    }
+
     /// 读取系统代理配置，仅当代理指向本机回环地址时返回端口集合。
-    private static func detectLocalProxyPorts() -> [Int] {
+    nonisolated private static func detectLocalProxyPorts() -> [Int] {
         guard let proxies = SCDynamicStoreCopyProxies(nil) as? [String: Any] else { return [] }
 
         var ports: [Int] = []
@@ -420,7 +536,7 @@ public final class TrafficMonitorService: ObservableObject {
         var flowProxied: UInt64 = 0
     }
 
-    private static func parseLoopbackSnapshot(_ text: String, proxyPorts: Set<Int>) -> [String: LoopbackSnapshot] {
+    nonisolated private static func parseLoopbackSnapshot(_ text: String, proxyPorts: Set<Int>) -> [String: LoopbackSnapshot] {
         var result: [String: LoopbackSnapshot] = [:]
         var currentPID: String?
 
@@ -474,7 +590,7 @@ public final class TrafficMonitorService: ObservableObject {
     }
 
     /// 去掉行首时间戳列（`13:03:27.242309`），返回其后的内容；表头行返回 nil。
-    private static func bodyAfterTimestamp(_ line: String) -> String? {
+    nonisolated private static func bodyAfterTimestamp(_ line: String) -> String? {
         guard let sep = line.firstIndex(where: { $0 == " " || $0 == "\t" }) else { return nil }
         let head = line[line.startIndex..<sep]
         guard head.contains(":"), head.contains(".") else { return nil }
@@ -482,7 +598,7 @@ public final class TrafficMonitorService: ObservableObject {
     }
 
     /// 从 `127.0.0.1:7890` / `localhost:7890` / `::1.7890` 这类端点串里取出端口。
-    private static func endpointPort(_ endpoint: String) -> Int? {
+    nonisolated private static func endpointPort(_ endpoint: String) -> Int? {
         guard let last = endpoint.lastIndex(where: { $0 == ":" || $0 == "." }) else { return nil }
         return Int(endpoint[endpoint.index(after: last)...])
     }
@@ -490,48 +606,57 @@ public final class TrafficMonitorService: ObservableObject {
     private func applySampleResults(
         proc: (text: String, success: Bool),
         loop: (text: String, success: Bool),
-        net: (text: String, success: Bool),
+        interfaces: [String: TrafficBytes],
         psOutput: String,
+        psRefreshed: Bool,
+        processSampled: Bool,
         now: Date,
         network: TrafficNetworkContext,
         proxyPorts: [Int] = []
     ) {
         inFlight = false
+        inFlightSince = nil
         guard !isPaused else {
             oldTime = nil
             return
         }
 
-        localProxyPorts = proxyPorts
-        let parsedProcesses = Self.parseProcesses(proc.text)
-        let parsedInterfaces = Self.parseInterfaces(net.text)
-        let proxyPortSet = Set(proxyPorts)
-        let parsedLoopback = loop.success
+        if processSampled {
+            localProxyPorts = proxyPorts
+        }
+        let parsedProcesses = (processSampled && proc.success) ? Self.parseProcesses(proc.text) : [:]
+        let parsedInterfaces = interfaces
+        let proxyPortSet = Set(localProxyPorts)
+        let parsedLoopback = (processSampled && loop.success)
             ? Self.parseLoopbackSnapshot(loop.text, proxyPorts: proxyPortSet)
             : [:]
 
-        guard proc.success, !parsedProcesses.isEmpty, net.success, !parsedInterfaces.isEmpty else {
-            statusMessage = "采集异常：无法获取网络计数器"
+        // Whole-machine counters come from the kernel and are always available;
+        // a failed/throttled process sample must not blank the live rates.
+        guard !parsedInterfaces.isEmpty else {
+            statusMessage = "采集异常：无法读取网络接口计数器"
             currentDownloadRate = 0
             currentUploadRate = 0
             oldTime = nil
             return
         }
 
-        let mapping = Self.parseProcessPaths(psOutput)
-        if !mapping.isEmpty {
-            pidMapping = mapping
-            var currentActivePIDs: [String: pid_t] = [:]
-            currentActivePIDs.reserveCapacity(mapping.count)
-            for (pidStr, item) in mapping {
-                if let pidNum = pid_t(pidStr) {
-                    currentActivePIDs[item.name] = pidNum
+        if psRefreshed {
+            let mapping = Self.parseProcessPaths(psOutput)
+            if !mapping.isEmpty {
+                pidMapping = mapping
+                var currentActivePIDs: [String: pid_t] = [:]
+                currentActivePIDs.reserveCapacity(mapping.count)
+                for (pidStr, item) in mapping {
+                    if let pidNum = pid_t(pidStr) {
+                        currentActivePIDs[item.name] = pidNum
+                    }
+                    if item.path.contains(".app") {
+                        appPaths[item.name] = item.path
+                    }
                 }
-                if item.path.contains(".app") {
-                    appPaths[item.name] = item.path
-                }
+                activePIDs = currentActivePIDs
             }
-            activePIDs = currentActivePIDs
         }
 
         if let previous = oldTime {
@@ -541,7 +666,7 @@ public final class TrafficMonitorService: ObservableObject {
                 var wifiBytes = TrafficBytes()
                 var ethernetBytes = TrafficBytes()
 
-                let wifiInterfaces = Set(CWWiFiClient.shared().interfaceNames() ?? [])
+                let wifiInterfaces = wifiInterfaceNames()
 
                 for (name, val) in parsedInterfaces {
                     if let oldVal = oldInterfaces[name] {
@@ -555,162 +680,188 @@ public final class TrafficMonitorService: ObservableObject {
                     }
                 }
 
-                var processDeltas: [String: TrafficBytes] = [:]
-                for (key, val) in parsedProcesses {
-                    guard let oldVal = oldProcesses[key], oldVal.name == val.name else { continue }
-                    let delta = val.bytes.difference(from: oldVal.bytes)
-                    guard delta.total > 0 else { continue }
-
-                    let pidString = key.split(separator: ".").last.map(String.init) ?? ""
-                    let mappedName = pidMapping[pidString]?.name ?? val.name
-                    if let pidNum = pid_t(pidString) {
-                        activePIDs[mappedName] = pidNum
-                    }
-                    var existing = processDeltas[mappedName] ?? TrafficBytes()
-                    existing.add(delta)
-                    processDeltas[mappedName] = existing
-                }
-
-                // 经本机代理转发、按回环归属回填到真实客户端应用名下的字节。
-                // 体量取「进程回环累计差分」（单调、可信），再乘以「对端为代理端口的 flow 占比」剥离本地 RPC。
-                var proxiedDeltas: [String: TrafficBytes] = [:]
-                let relayPresent = processDeltas.keys.contains { Self.checkIsRelay(name: $0, displayName: $0) }
-                if !proxyPortSet.isEmpty, relayPresent, !parsedLoopback.isEmpty {
-                    for (pid, snapshot) in parsedLoopback {
-                        guard snapshot.flowProxied > 0, snapshot.flowTotal > 0 else { continue }
-
-                        // 新出现的进程（或 PID 被复用）：其生命周期计数即为本窗口增量；老进程走差分
-                        let delta: TrafficBytes
-                        if let previous = oldLoopback[pid], previous.name == snapshot.name {
-                            delta = snapshot.total.difference(from: previous.total)
-                        } else {
-                            delta = snapshot.total
-                        }
-                        guard delta.total > 0 else { continue }
-
-                        let share = Double(snapshot.flowProxied) / Double(snapshot.flowTotal)
-                        let received = UInt64(Double(delta.received) * share)
-                        let sent = UInt64(Double(delta.sent) * share)
-                        guard received + sent > 0 else { continue }
-
-                        let mappedName = pidMapping[pid]?.name ?? snapshot.name
-                        // 代理进程自身不回填，避免自计数
-                        if Self.checkIsRelay(name: mappedName, displayName: mappedName) { continue }
-
-                        var existing = proxiedDeltas[mappedName] ?? TrafficBytes()
-                        existing.add(TrafficBytes(received: received, sent: sent))
-                        proxiedDeltas[mappedName] = existing
-                    }
-
-                    // 硬约束：回填总量不得超过代理进程本窗口的物理转发量（下载/上传分别裁剪），
-                    // 保证「进程排行上传/下载合计」永不大于整机口径
-                    var relayReceived: UInt64 = 0
-                    var relaySent: UInt64 = 0
-                    for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
-                        relayReceived += delta.received
-                        relaySent += delta.sent
-                    }
-                    let attributedReceived = proxiedDeltas.values.reduce(0) { $0 + $1.received }
-                    let attributedSent = proxiedDeltas.values.reduce(0) { $0 + $1.sent }
-                    let scaleReceived = attributedReceived > relayReceived
-                        ? Double(relayReceived) / Double(attributedReceived) : 1
-                    let scaleSent = attributedSent > relaySent
-                        ? Double(relaySent) / Double(attributedSent) : 1
-
-                    if scaleReceived < 1 || scaleSent < 1 {
-                        for (name, value) in proxiedDeltas {
-                            proxiedDeltas[name] = TrafficBytes(
-                                received: UInt64(Double(value.received) * scaleReceived),
-                                sent: UInt64(Double(value.sent) * scaleSent)
-                            )
-                        }
-                    }
-                }
-
-                // 归属就地写入进程增量：客户端行加上回填量，代理行扣掉已归属量（逐窗口扣减，保证累计单调不倒挂）
-                if !proxiedDeltas.isEmpty {
-                    let attributedReceived = proxiedDeltas.values.reduce(0) { $0 + $1.received }
-                    let attributedSent = proxiedDeltas.values.reduce(0) { $0 + $1.sent }
-                    var relayTotalReceived: UInt64 = 0
-                    var relayTotalSent: UInt64 = 0
-                    for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
-                        relayTotalReceived += delta.received
-                        relayTotalSent += delta.sent
-                    }
-
-                    for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
-                        let shareReceived = relayTotalReceived > 0 ? Double(delta.received) / Double(relayTotalReceived) : 0
-                        let shareSent = relayTotalSent > 0 ? Double(delta.sent) / Double(relayTotalSent) : 0
-                        let cutReceived = UInt64(Double(attributedReceived) * shareReceived)
-                        let cutSent = UInt64(Double(attributedSent) * shareSent)
-                        processDeltas[name] = TrafficBytes(
-                            received: delta.received > cutReceived ? delta.received - cutReceived : 0,
-                            sent: delta.sent > cutSent ? delta.sent - cutSent : 0
-                        )
-                    }
-
-                    for (name, value) in proxiedDeltas {
-                        var current = processDeltas[name] ?? TrafficBytes()
-                        current.add(value)
-                        processDeltas[name] = current
-                    }
-                }
-
-                let dayKey = TrafficDateKeys.day(now)
-                let currentHour = Calendar.current.component(.hour, from: now)
-
-                // 1. All networks aggregate
-                ledger.add(
-                    day: dayKey,
-                    hour: currentHour,
-                    physical: physical,
-                    processes: processDeltas,
-                    seconds: interval,
-                    network: .all,
-                    proxiedClients: proxiedDeltas
-                )
-
-                // 2. Wi-Fi network stream
-                let wifiDominant = wifiBytes.total >= ethernetBytes.total
-                if wifiBytes.total > 0 {
-                    let wifiCtx = TrafficNetworkContext(
-                        key: network.key.hasPrefix("wifi:") ? network.key : "wifi:Wi-Fi",
-                        name: network.key.hasPrefix("wifi:") ? network.name : "Wi-Fi (无线网络)",
-                        type: .wifi,
-                        identified: true
-                    )
-                    ledger.add(
-                        day: dayKey,
-                        hour: currentHour,
-                        physical: wifiBytes,
-                        processes: wifiDominant ? processDeltas : [:],
-                        seconds: interval,
-                        network: wifiCtx,
-                        proxiedClients: wifiDominant ? proxiedDeltas : [:]
-                    )
-                }
-
-                // 3. Wired Ethernet stream
-                if ethernetBytes.total > 0 {
-                    let ethCtx = TrafficNetworkContext(
-                        key: "ethernet:wired",
-                        name: "有线网卡 (以太网)",
-                        type: .ethernet,
-                        identified: true
-                    )
-                    ledger.add(
-                        day: dayKey,
-                        hour: currentHour,
-                        physical: ethernetBytes,
-                        processes: wifiDominant ? [:] : processDeltas,
-                        seconds: interval,
-                        network: ethCtx,
-                        proxiedClients: wifiDominant ? [:] : proxiedDeltas
-                    )
-                }
-
+                // Live rates always use the 3 s interface diff; the ledger is
+                // written on the slower process cadence so physical and process
+                // bytes always cover the same window.
                 currentDownloadRate = Double(physical.received) / interval
                 currentUploadRate = Double(physical.sent) / interval
+
+                pendingPhysical.add(physical)
+                pendingWiFi.add(wifiBytes)
+                pendingEthernet.add(ethernetBytes)
+                pendingInterval += interval
+
+                if processSampled {
+                    var processDeltas: [String: TrafficBytes] = [:]
+                    for (key, val) in parsedProcesses {
+                        guard let oldVal = oldProcesses[key], oldVal.name == val.name else { continue }
+                        let delta = val.bytes.difference(from: oldVal.bytes)
+                        guard delta.total > 0 else { continue }
+
+                        let pidString = key.split(separator: ".").last.map(String.init) ?? ""
+                        let mappedName = pidMapping[pidString]?.name ?? val.name
+                        if let pidNum = pid_t(pidString) {
+                            activePIDs[mappedName] = pidNum
+                        }
+                        var existing = processDeltas[mappedName] ?? TrafficBytes()
+                        existing.add(delta)
+                        processDeltas[mappedName] = existing
+                    }
+
+                    // 经本机代理转发、按回环归属回填到真实客户端应用名下的字节。
+                    // 体量取「进程回环累计差分」（单调、可信），再乘以「对端为代理端口的 flow 占比」剥离本地 RPC。
+                    var proxiedDeltas: [String: TrafficBytes] = [:]
+                    let relayPresent = processDeltas.keys.contains { Self.checkIsRelay(name: $0, displayName: $0) }
+                    if !proxyPortSet.isEmpty, relayPresent, !parsedLoopback.isEmpty {
+                        for (pid, snapshot) in parsedLoopback {
+                            guard snapshot.flowProxied > 0, snapshot.flowTotal > 0 else { continue }
+
+                            // 新出现的进程（或 PID 被复用）：其生命周期计数即为本窗口增量；老进程走差分
+                            let delta: TrafficBytes
+                            if let previous = oldLoopback[pid], previous.name == snapshot.name {
+                                delta = snapshot.total.difference(from: previous.total)
+                            } else {
+                                delta = snapshot.total
+                            }
+                            guard delta.total > 0 else { continue }
+
+                            let share = Double(snapshot.flowProxied) / Double(snapshot.flowTotal)
+                            let received = UInt64(Double(delta.received) * share)
+                            let sent = UInt64(Double(delta.sent) * share)
+                            guard received + sent > 0 else { continue }
+
+                            let mappedName = pidMapping[pid]?.name ?? snapshot.name
+                            // 代理进程自身不回填，避免自计数
+                            if Self.checkIsRelay(name: mappedName, displayName: mappedName) { continue }
+
+                            var existing = proxiedDeltas[mappedName] ?? TrafficBytes()
+                            existing.add(TrafficBytes(received: received, sent: sent))
+                            proxiedDeltas[mappedName] = existing
+                        }
+
+                        // 硬约束：回填总量不得超过代理进程本窗口的物理转发量（下载/上传分别裁剪），
+                        // 保证「进程排行上传/下载合计」永不大于整机口径
+                        var relayReceived: UInt64 = 0
+                        var relaySent: UInt64 = 0
+                        for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
+                            relayReceived += delta.received
+                            relaySent += delta.sent
+                        }
+                        let attributedReceived = proxiedDeltas.values.reduce(0) { $0 + $1.received }
+                        let attributedSent = proxiedDeltas.values.reduce(0) { $0 + $1.sent }
+                        let scaleReceived = attributedReceived > relayReceived
+                            ? Double(relayReceived) / Double(attributedReceived) : 1
+                        let scaleSent = attributedSent > relaySent
+                            ? Double(relaySent) / Double(attributedSent) : 1
+
+                        if scaleReceived < 1 || scaleSent < 1 {
+                            for (name, value) in proxiedDeltas {
+                                proxiedDeltas[name] = TrafficBytes(
+                                    received: UInt64(Double(value.received) * scaleReceived),
+                                    sent: UInt64(Double(value.sent) * scaleSent)
+                                )
+                            }
+                        }
+                    }
+
+                    // 归属就地写入进程增量：客户端行加上回填量，代理行扣掉已归属量（逐窗口扣减，保证累计单调不倒挂）
+                    if !proxiedDeltas.isEmpty {
+                        let attributedReceived = proxiedDeltas.values.reduce(0) { $0 + $1.received }
+                        let attributedSent = proxiedDeltas.values.reduce(0) { $0 + $1.sent }
+                        var relayTotalReceived: UInt64 = 0
+                        var relayTotalSent: UInt64 = 0
+                        for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
+                            relayTotalReceived += delta.received
+                            relayTotalSent += delta.sent
+                        }
+
+                        for (name, delta) in processDeltas where Self.checkIsRelay(name: name, displayName: name) {
+                            let shareReceived = relayTotalReceived > 0 ? Double(delta.received) / Double(relayTotalReceived) : 0
+                            let shareSent = relayTotalSent > 0 ? Double(delta.sent) / Double(relayTotalSent) : 0
+                            let cutReceived = UInt64(Double(attributedReceived) * shareReceived)
+                            let cutSent = UInt64(Double(attributedSent) * shareSent)
+                            processDeltas[name] = TrafficBytes(
+                                received: delta.received > cutReceived ? delta.received - cutReceived : 0,
+                                sent: delta.sent > cutSent ? delta.sent - cutSent : 0
+                            )
+                        }
+
+                        for (name, value) in proxiedDeltas {
+                            var current = processDeltas[name] ?? TrafficBytes()
+                            current.add(value)
+                            processDeltas[name] = current
+                        }
+                    }
+
+                    // A failed nettop run keeps the window open so the next
+                    // successful sample still matches physical bytes. After a
+                    // minute, write physical-only and reset the process baseline.
+                    let canWriteLedger = proc.success || pendingInterval >= 60
+                    if canWriteLedger {
+                        let dayKey = TrafficDateKeys.day(now)
+                        let currentHour = Calendar.current.component(.hour, from: now)
+                        let ledgerProcesses = proc.success ? processDeltas : [:]
+                        let ledgerProxied = proc.success ? proxiedDeltas : [:]
+                        let wifiDominant = pendingWiFi.total >= pendingEthernet.total
+
+                        // 1. All networks aggregate
+                        ledger.add(
+                            day: dayKey,
+                            hour: currentHour,
+                            physical: pendingPhysical,
+                            processes: ledgerProcesses,
+                            seconds: pendingInterval,
+                            network: .all,
+                            proxiedClients: ledgerProxied
+                        )
+
+                        // 2. Wi-Fi network stream
+                        if pendingWiFi.total > 0 {
+                            let wifiCtx = TrafficNetworkContext(
+                                key: network.key.hasPrefix("wifi:") ? network.key : "wifi:Wi-Fi",
+                                name: network.key.hasPrefix("wifi:") ? network.name : "Wi-Fi (无线网络)",
+                                type: .wifi,
+                                identified: true
+                            )
+                            ledger.add(
+                                day: dayKey,
+                                hour: currentHour,
+                                physical: pendingWiFi,
+                                processes: wifiDominant ? ledgerProcesses : [:],
+                                seconds: pendingInterval,
+                                network: wifiCtx,
+                                proxiedClients: wifiDominant ? ledgerProxied : [:]
+                            )
+                        }
+
+                        // 3. Wired Ethernet stream
+                        if pendingEthernet.total > 0 {
+                            let ethCtx = TrafficNetworkContext(
+                                key: "ethernet:wired",
+                                name: "有线网卡 (以太网)",
+                                type: .ethernet,
+                                identified: true
+                            )
+                            ledger.add(
+                                day: dayKey,
+                                hour: currentHour,
+                                physical: pendingEthernet,
+                                processes: wifiDominant ? [:] : ledgerProcesses,
+                                seconds: pendingInterval,
+                                network: ethCtx,
+                                proxiedClients: wifiDominant ? [:] : ledgerProxied
+                            )
+                        }
+
+                        clearPendingSampleWindow()
+                        if !proc.success {
+                            // Physical was written without a process counterpart;
+                            // start the next process diff from a clean baseline.
+                            oldProcesses.removeAll()
+                            oldLoopback.removeAll()
+                        }
+                    }
+                }
 
                 if now.timeIntervalSince(lastSaved) >= 60 {
                     save()
@@ -719,11 +870,20 @@ public final class TrafficMonitorService: ObservableObject {
             } else {
                 currentDownloadRate = 0
                 currentUploadRate = 0
+                // The gap is too large to trust; drop the partial window and
+                // re-baseline process counters on the next successful sample.
+                clearPendingSampleWindow()
+                oldProcesses.removeAll()
+                oldLoopback.removeAll()
             }
         }
 
-        oldProcesses = parsedProcesses
-        oldLoopback = parsedLoopback
+        // Process counters are only re-baselined on a successful sample; a failed
+        // nettop run must keep the old baseline so the next diff stays exact.
+        if processSampled && proc.success {
+            oldProcesses = parsedProcesses
+            oldLoopback = parsedLoopback
+        }
         oldInterfaces = parsedInterfaces
         oldTime = now
         lastSampleTime = now
@@ -806,6 +966,7 @@ public final class TrafficMonitorService: ObservableObject {
                 try data.write(to: fileURL, options: .atomic)
             } catch {
                 let message = "历史数据写入异常: \(error.localizedDescription)"
+                AppLog.traffic.error("ledger save failed: \(error.localizedDescription, privacy: .public)")
                 Task { @MainActor [weak self] in
                     self?.statusMessage = message
                 }
@@ -825,10 +986,9 @@ public final class TrafficMonitorService: ObservableObject {
 
         for key in ledger.days.keys.sorted() {
             guard let d = ledger.days[key] else { continue }
-            csv += "\(key),全部网络,整机汇总,\(d.physical.received),\(d.physical.sent),\(d.physical.total),\(Int(d.monitoredSeconds))\n"
+            csv += CSVField.row([key, "全部网络", "整机汇总", "\(d.physical.received)", "\(d.physical.sent)", "\(d.physical.total)", "\(Int(d.monitoredSeconds))"]) + "\n"
             for (name, b) in d.processes.sorted(by: { $0.value.total > $1.value.total }) {
-                let escaped = name.replacingOccurrences(of: "\"", with: "\"\"")
-                csv += "\(key),全部网络,\"\(escaped)\",\(b.received),\(b.sent),\(b.total),\n"
+                csv += CSVField.row([key, "全部网络", name, "\(b.received)", "\(b.sent)", "\(b.total)", ""]) + "\n"
             }
         }
 
@@ -836,11 +996,9 @@ public final class TrafficMonitorService: ObservableObject {
             let netType = history.type ?? "自定义网络"
             for key in history.days.keys.sorted() {
                 guard let d = history.days[key] else { continue }
-                let netEscaped = history.name.replacingOccurrences(of: "\"", with: "\"\"")
-                csv += "\(key),\"\(netType)\",\"\(netEscaped)\",\(d.physical.received),\(d.physical.sent),\(d.physical.total),\(Int(d.monitoredSeconds))\n"
+                csv += CSVField.row([key, netType, history.name, "\(d.physical.received)", "\(d.physical.sent)", "\(d.physical.total)", "\(Int(d.monitoredSeconds))"]) + "\n"
                 for (name, b) in d.processes.sorted(by: { $0.value.total > $1.value.total }) {
-                    let escaped = name.replacingOccurrences(of: "\"", with: "\"\"")
-                    csv += "\(key),\"\(netEscaped)\",\"\(escaped)\",\(b.received),\(b.sent),\(b.total),\n"
+                    csv += CSVField.row([key, history.name, name, "\(b.received)", "\(b.sent)", "\(b.total)", ""]) + "\n"
                 }
             }
         }
@@ -871,6 +1029,8 @@ public final class TrafficMonitorService: ObservableObject {
 
         let netContext = detectCurrentNetwork()
         self.currentNetwork = netContext
+        self.cachedNetworkContextValue = netContext
+        self.cachedNetworkContextAt = Date()
         self.isHotspotActive = netContext.isHotspot || expensive
         self.hotspotName = self.isHotspotActive ? netContext.name : nil
     }
@@ -909,7 +1069,7 @@ public final class TrafficMonitorService: ObservableObject {
 
     // MARK: - Relay / Proxy Detection
 
-    private static func checkIsRelay(name: String, displayName: String) -> Bool {
+    nonisolated private static func checkIsRelay(name: String, displayName: String) -> Bool {
         let relays = [
             "clash", "surge", "sing-box", "mihomo", "shadowrocket", "v2ray",
             "xray", "trojan", "quantumult", "tailscale", "wireguard", "openvpn",
@@ -922,59 +1082,14 @@ public final class TrafficMonitorService: ObservableObject {
 
     // MARK: - Shell Command Execution
 
-    private static func runCommand(_ path: String, _ arguments: [String]) -> (text: String, success: Bool) {
-        let process = Process()
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        var env = ProcessInfo.processInfo.environment
-        env["LC_ALL"] = "C"
-        process.environment = env
-
-        do {
-            try process.run()
-        } catch {
-            return ("", false)
-        }
-
-        let group = DispatchGroup()
-        var stdoutData = Data()
-        var stderrData = Data()
-
-        group.enter()
-        DispatchQueue.global().async {
-            stdoutData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-
-        group.enter()
-        DispatchQueue.global().async {
-            stderrData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-
-        let deadline = Date().addingTimeInterval(8)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-
-        if process.isRunning {
-            process.terminate()
-        }
-
-        process.waitUntilExit()
-        group.wait()
-
-        let outputText = String(decoding: stdoutData, as: UTF8.self)
-        return (outputText, process.terminationStatus == 0)
+    nonisolated private static func runCommand(_ path: String, _ arguments: [String]) -> (text: String, success: Bool) {
+        let result = SubprocessRunner.run(path, arguments, timeout: 8.0, forceCLocale: true)
+        return (result.output, result.succeeded)
     }
 
     // MARK: - Parsers
 
-    private static func parseProcesses(_ text: String) -> [String: TrafficProcessCounter] {
+    nonisolated private static func parseProcesses(_ text: String) -> [String: TrafficProcessCounter] {
         var result: [String: TrafficProcessCounter] = [:]
         for line in text.split(separator: "\n") {
             let values = line.split(separator: ",", omittingEmptySubsequences: false)
@@ -993,22 +1108,72 @@ public final class TrafficMonitorService: ObservableObject {
         return result
     }
 
-    private static func parseInterfaces(_ text: String) -> [String: TrafficBytes] {
+    /// Reads 64-bit per-interface counters straight from the kernel.
+    ///
+    /// `netstat -ibn` was a subprocess every 3 s. `getifaddrs` is cheaper but
+    /// exposes 32-bit `if_data` counters that wrap at 4 GB, so use
+    /// `NET_RT_IFLIST2`, which carries `if_data64`.
+    nonisolated private static func readInterfaceCounters() -> [String: TrafficBytes] {
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var buffer = [UInt8]()
+        var length: size_t = 0
+        var readSucceeded = false
+
+        // The interface list can grow between the sizing call and the read, so
+        // retry a couple of times instead of silently dropping the sample.
+        for _ in 0..<3 {
+            guard sysctl(&mib, u_int(mib.count), nil, &length, nil, 0) == 0, length > 0 else {
+                return [:]
+            }
+            buffer = [UInt8](repeating: 0, count: length)
+            if sysctl(&mib, u_int(mib.count), &buffer, &length, nil, 0) == 0 {
+                readSucceeded = true
+                break
+            }
+        }
+        guard readSucceeded, length > 0, !buffer.isEmpty else { return [:] }
+
         var result: [String: TrafficBytes] = [:]
-        for line in text.split(separator: "\n") {
-            let values = line.split(whereSeparator: { $0.isWhitespace })
-            guard values.count >= 10,
-                  values[0].hasPrefix("en"),
-                  values[2].hasPrefix("<Link#"),
-                  let received = UInt64(values[6]),
-                  let sent = UInt64(values[9]) else { continue }
-            let ifName = String(values[0])
-            result[ifName] = TrafficBytes(received: received, sent: sent)
+        buffer.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var offset = 0
+            while offset + MemoryLayout<if_msghdr2>.size <= Int(length) {
+                let header = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr2.self)
+                let messageLength = Int(header.pointee.ifm_msglen)
+                guard messageLength > 0, offset + messageLength <= Int(length) else { break }
+
+                if Int32(header.pointee.ifm_type) == RTM_IFINFO2 {
+                    // The interface name lives in the sockaddr_dl immediately
+                    // after the fixed header; sdl_data starts at byte 8.
+                    let nameOffset = offset + MemoryLayout<if_msghdr2>.size
+                    if nameOffset + MemoryLayout<sockaddr_dl>.size <= offset + messageLength {
+                        let link = base.advanced(by: nameOffset).assumingMemoryBound(to: sockaddr_dl.self)
+                        let nameLength = Int(link.pointee.sdl_nlen)
+                        if nameLength > 0, nameLength <= Int(link.pointee.sdl_len) - 8 {
+                            let namePointer = UnsafeRawPointer(link)
+                                .advanced(by: 8)
+                                .assumingMemoryBound(to: UInt8.self)
+                            let name = String(
+                                bytes: UnsafeBufferPointer(start: namePointer, count: nameLength),
+                                encoding: .utf8
+                            ) ?? ""
+                            if name.hasPrefix("en") {
+                                let data = header.pointee.ifm_data
+                                result[name] = TrafficBytes(
+                                    received: data.ifi_ibytes,
+                                    sent: data.ifi_obytes
+                                )
+                            }
+                        }
+                    }
+                }
+                offset += messageLength
+            }
         }
         return result
     }
 
-    private static func parseProcessPaths(_ text: String) -> [String: (name: String, path: String)] {
+    nonisolated private static func parseProcessPaths(_ text: String) -> [String: (name: String, path: String)] {
         var result: [String: (name: String, path: String)] = [:]
         for line in text.split(separator: "\n") {
             let parts = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })

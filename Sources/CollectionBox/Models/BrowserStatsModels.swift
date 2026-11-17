@@ -171,6 +171,7 @@ public struct BrowserStatsData: Sendable {
     public let topDomains: [BrowserDomainStat]
     public let hourlyStats: [BrowserHourlyStat]
     public let frequentPages: [BrowserFrequentPage]
+    public let allTimeFrequentPages: [BrowserFrequentPage]
     public let activeProfiles: [BrowserProfileInfo]
     public let faviconsByDomain: [String: Data]
 
@@ -187,6 +188,7 @@ public struct BrowserStatsData: Sendable {
         topDomains: [BrowserDomainStat],
         hourlyStats: [BrowserHourlyStat],
         frequentPages: [BrowserFrequentPage],
+        allTimeFrequentPages: [BrowserFrequentPage],
         activeProfiles: [BrowserProfileInfo],
         faviconsByDomain: [String: Data]
     ) {
@@ -202,6 +204,7 @@ public struct BrowserStatsData: Sendable {
         self.topDomains = topDomains
         self.hourlyStats = hourlyStats
         self.frequentPages = frequentPages
+        self.allTimeFrequentPages = allTimeFrequentPages
         self.activeProfiles = activeProfiles
         self.faviconsByDomain = faviconsByDomain
     }

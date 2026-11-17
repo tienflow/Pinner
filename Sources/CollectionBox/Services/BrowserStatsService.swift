@@ -13,7 +13,7 @@ public final class BrowserStatsService: ObservableObject {
     @Published public private(set) var lastRefreshTime: Date?
     @Published public private(set) var ignoredFrequentURLs: Set<String>
 
-    @Published public var selectedRange: BrowserTimeRange = .days7 {
+    @Published public var selectedRange: BrowserTimeRange = .today {
         didSet {
             if oldValue != selectedRange {
                 refresh()
@@ -207,6 +207,42 @@ public final class BrowserStatsService: ObservableObject {
             var browser: BrowserKind
         }
         var pageMap: [String: PageAgg] = [:]
+        var allTimePageMap: [String: PageAgg] = [:]
+
+        func mergePage(
+            into map: inout [String: PageAgg],
+            rawUrl: String,
+            title: String,
+            domain: String,
+            count: Int,
+            durationSec: Double,
+            lastVisitUs: Int64,
+            browser: BrowserKind
+        ) {
+            let normURL = normalizePageURL(rawUrl)
+            if var existing = map[normURL] {
+                existing.count += count
+                existing.durationSec += durationSec
+                if lastVisitUs >= existing.lastVisitUs {
+                    existing.lastVisitUs = lastVisitUs
+                    if !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        existing.title = title
+                    }
+                    existing.browser = browser
+                }
+                map[normURL] = existing
+            } else {
+                map[normURL] = PageAgg(
+                    url: normURL,
+                    title: title,
+                    domain: domain,
+                    count: count,
+                    durationSec: durationSec,
+                    lastVisitUs: lastVisitUs,
+                    browser: browser
+                )
+            }
+        }
 
         // Keep track of which favicon DBs exist for later lookup
         var faviconPaths: [String] = []
@@ -308,31 +344,56 @@ public final class BrowserStatsService: ObservableObject {
                     dAgg.durationSec += cappedDurSec
                     domainMap[domain] = dAgg
 
-                    let normURL = normalizePageURL(rawUrl)
-                    if var existing = pageMap[normURL] {
-                        existing.count += 1
-                        existing.durationSec += cappedDurSec
-                        if visitTimeUs >= existing.lastVisitUs {
-                            existing.lastVisitUs = visitTimeUs
-                            if !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                existing.title = title
-                            }
-                            existing.browser = profile.browser
-                        }
-                        pageMap[normURL] = existing
-                    } else {
-                        pageMap[normURL] = PageAgg(
-                            url: normURL,
+                    mergePage(
+                        into: &pageMap,
+                        rawUrl: rawUrl,
+                        title: title,
+                        domain: domain,
+                        count: 1,
+                        durationSec: cappedDurSec,
+                        lastVisitUs: visitTimeUs,
+                        browser: profile.browser
+                    )
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            // 3. All-time frequent pages (only needed when a time range filter is active)
+            if rangeStartUs != nil {
+                let allTimeSql = """
+                SELECT u.url, u.title, COUNT(*) AS cnt, COALESCE(SUM(MIN(MAX(v.visit_duration, 0), ?)), 0) AS dur, MAX(v.visit_time) AS last_visit
+                FROM visits v
+                JOIN urls u ON v.url = u.id
+                WHERE (u.url LIKE 'http://%' OR u.url LIKE 'https://%')
+                GROUP BY u.id
+                ORDER BY cnt DESC
+                LIMIT 1000
+                """
+                var allStmt: OpaquePointer?
+                if sqlite3_prepare_v2(db, allTimeSql, -1, &allStmt, nil) == SQLITE_OK, let allStmt = allStmt {
+                    sqlite3_bind_int64(allStmt, 1, maxVisitDurationMicros)
+                    while sqlite3_step(allStmt) == SQLITE_ROW {
+                        guard let urlPtr = sqlite3_column_text(allStmt, 0) else { continue }
+                        let rawUrl = String(cString: urlPtr)
+                        guard let domain = extractDomain(from: rawUrl) else { continue }
+                        let title = sqlite3_column_text(allStmt, 1).map { String(cString: $0) } ?? ""
+                        let cnt = Int(sqlite3_column_int64(allStmt, 2))
+                        let durSec = Double(sqlite3_column_int64(allStmt, 3)) / 1_000_000.0
+                        let lastVisitUs = sqlite3_column_int64(allStmt, 4)
+
+                        mergePage(
+                            into: &allTimePageMap,
+                            rawUrl: rawUrl,
                             title: title,
                             domain: domain,
-                            count: 1,
-                            durationSec: cappedDurSec,
-                            lastVisitUs: visitTimeUs,
+                            count: cnt,
+                            durationSec: durSec,
+                            lastVisitUs: lastVisitUs,
                             browser: profile.browser
                         )
                     }
+                    sqlite3_finalize(allStmt)
                 }
-                sqlite3_finalize(stmt)
             }
         }
 
@@ -372,29 +433,37 @@ public final class BrowserStatsService: ObservableObject {
             )
         }
 
-        let frequentPages = pageMap.values
-            .filter { $0.count >= 2 }
-            .sorted {
-                if $0.count != $1.count { return $0.count > $1.count }
-                return $0.lastVisitUs > $1.lastVisitUs
-            }
-            .prefix(40)
-            .map { agg in
-                BrowserFrequentPage(
-                    id: agg.url,
-                    url: agg.url,
-                    title: agg.title.isEmpty ? agg.url : agg.title,
-                    domain: agg.domain,
-                    visitCount: agg.count,
-                    totalDurationSeconds: agg.durationSec,
-                    lastVisitDate: date(fromChromeMicros: agg.lastVisitUs),
-                    browser: agg.browser
-                )
-            }
+        func buildFrequentPages(from map: [String: PageAgg]) -> [BrowserFrequentPage] {
+            map.values
+                .filter { $0.count >= 2 }
+                .sorted {
+                    if $0.count != $1.count { return $0.count > $1.count }
+                    return $0.lastVisitUs > $1.lastVisitUs
+                }
+                .prefix(40)
+                .map { agg in
+                    BrowserFrequentPage(
+                        id: agg.url,
+                        url: agg.url,
+                        title: agg.title.isEmpty ? agg.url : agg.title,
+                        domain: agg.domain,
+                        visitCount: agg.count,
+                        totalDurationSeconds: agg.durationSec,
+                        lastVisitDate: date(fromChromeMicros: agg.lastVisitUs),
+                        browser: agg.browser
+                    )
+                }
+        }
+
+        let frequentPages = buildFrequentPages(from: pageMap)
+        let allTimeFrequentPages = rangeStartUs == nil ? frequentPages : buildFrequentPages(from: allTimePageMap)
 
         // Resolve favicons for visible domains
         var neededDomains = Set(topDomains.map(\.domain))
         for page in frequentPages.prefix(16) {
+            neededDomains.insert(page.domain)
+        }
+        for page in allTimeFrequentPages.prefix(16) {
             neededDomains.insert(page.domain)
         }
         let faviconsByDomain = loadFavicons(for: neededDomains, from: faviconPaths)
@@ -412,6 +481,7 @@ public final class BrowserStatsService: ObservableObject {
             topDomains: topDomains,
             hourlyStats: hourlyStats,
             frequentPages: frequentPages,
+            allTimeFrequentPages: allTimeFrequentPages,
             activeProfiles: profiles,
             faviconsByDomain: faviconsByDomain
         )
