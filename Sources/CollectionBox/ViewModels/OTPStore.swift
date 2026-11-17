@@ -24,7 +24,13 @@ public final class OTPStore {
 
     /// Generate the current TOTP code for an account.
     public func code(for account: OTPAccount, at date: Date = Date()) -> String? {
-        OTPService.generateCode(secret: account.secret, at: date)
+        OTPService.generateCode(
+            secret: account.secret,
+            algorithm: account.algorithm,
+            digits: account.digits,
+            period: account.period,
+            at: date
+        )
     }
 
     // MARK: - Persistence

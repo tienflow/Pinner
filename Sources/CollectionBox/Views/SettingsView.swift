@@ -380,7 +380,7 @@ public struct SettingsView: View {
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
                             .background(Capsule().fill(Color.secondary.opacity(Design.slotAlpha)))
                             .foregroundColor(.secondary)
-                            .help("自动剥除该后缀：xxx\(suffix) 与 xxx 视为同一模型")
+                            .help("自动剥除该后缀：xxx\(suffix) 与 xxx 视为同一模型").accessibilityLabel("自动剥除该后缀：xxx\(suffix) 与 xxx 视为同一模型")
                     }
                 }
             }
@@ -428,7 +428,7 @@ public struct SettingsView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(.tertiary)
-                            .help("删除该别名")
+                            .help("删除该别名").accessibilityLabel("删除该别名")
                         }
                     }
                 }
@@ -457,7 +457,7 @@ public struct SettingsView: View {
                 .buttonStyle(.plain)
                 .disabled(newAliasRaw.trimmingCharacters(in: .whitespaces).isEmpty
                           || newAliasCanonical.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("添加别名")
+                .help("添加别名").accessibilityLabel("添加别名")
             }
             .controlSize(.small)
         }
@@ -834,7 +834,7 @@ public struct SettingsView: View {
     private var aiConfigTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                sectionCard(title: "Jev 语义路由 (闪念投递)", icon: "arrow.triangle.branch") {
+                sectionCard(title: "决策模型", icon: "arrow.triangle.branch") {
                     JevSettingsView()
                 }
 

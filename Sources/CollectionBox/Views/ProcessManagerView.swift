@@ -191,7 +191,7 @@ public struct ProcessManagerView: View {
                 .cornerRadius(Design.radiusS)
             }
             .buttonStyle(.plain)
-            .help("利用 AI 诊断当前系统高负载与卡顿原因")
+            .help("利用 AI 诊断当前系统高负载与卡顿原因").accessibilityLabel("利用 AI 诊断当前系统高负载与卡顿原因")
 
             PanelRefreshButton(isLoading: service.isLoading, helpText: "立即刷新系统诊断数据") {
                 Task {
@@ -556,7 +556,7 @@ public struct ProcessManagerView: View {
                         .cornerRadius(Design.radiusS)
                 }
                 .buttonStyle(.plain)
-                .help("使用 AI 深度诊断该进程 (PID \(proc.pid))")
+                .help("使用 AI 深度诊断该进程 (PID \(proc.pid))").accessibilityLabel("使用 AI 深度诊断该进程 (PID \(proc.pid))")
 
                 // Pause / Resume Toggle Button
                 Button {
@@ -576,7 +576,7 @@ public struct ProcessManagerView: View {
                     .cornerRadius(Design.radiusS)
                 }
                 .buttonStyle(.plain)
-                .help(proc.isSuspended ? "恢复进程执行 (SIGCONT)" : "临时冻结进程让出 CPU/内存 (SIGSTOP)")
+                .help(proc.isSuspended ? "恢复进程执行 (SIGCONT)" : "临时冻结进程让出 CPU/内存 (SIGSTOP)").accessibilityLabel(proc.isSuspended ? "恢复进程执行 (SIGCONT)" : "临时冻结进程让出 CPU/内存 (SIGSTOP)")
 
                 // Terminate Button
                 Button {
@@ -597,7 +597,7 @@ public struct ProcessManagerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isTerminating)
-                .help(isTerminating ? "正在终止中…" : "终止此进程 (SIGKILL)")
+                .help(isTerminating ? "正在终止中…" : "终止此进程 (SIGKILL)").accessibilityLabel(isTerminating ? "正在终止中…" : "终止此进程 (SIGKILL)")
             }
             .frame(width: 140, alignment: .trailing)
         }

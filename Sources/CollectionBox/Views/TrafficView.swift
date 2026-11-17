@@ -354,7 +354,7 @@ public struct TrafficView: View {
                                 .font(.system(size: 9))
                         }
                         .buttonStyle(.plain)
-                        .help("清除小时筛选")
+                        .help("清除小时筛选").accessibilityLabel("清除小时筛选")
                     }
                     .foregroundColor(.accentColor)
                     .padding(.horizontal, 6)
@@ -453,7 +453,7 @@ public struct TrafficView: View {
                                 .onHover { over in
                                     hoveredHour = over ? b.hour : nil
                                 }
-                                .help(String(format: "%02d:00%@ · 点击穿透查看进程排行 (总计 %@)", b.hour, isPeak ? " (高峰)" : "", TrafficBytes.format(total)))
+                                .help(String(format: "%02d:00%@ · 点击穿透查看进程排行 (总计 %@)", b.hour, isPeak ? " (高峰)" : "", TrafficBytes.format(total))).accessibilityLabel(String(format: "%02d:00%@ · 点击穿透查看进程排行 (总计 %@)", b.hour, isPeak ? " (高峰)" : "", TrafficBytes.format(total)))
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -836,7 +836,7 @@ public struct TrafficView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isExpanded.wrappedValue ? "收起卡片" : "展开卡片")
+        .help(isExpanded.wrappedValue ? "收起卡片" : "展开卡片").accessibilityLabel(isExpanded.wrappedValue ? "收起卡片" : "展开卡片")
     }
 
     // MARK: - Search & Filter Bar (支持 Wi-Fi 与有线网卡区分)
@@ -1098,7 +1098,7 @@ public struct TrafficView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .help("该部分流量已计入整机总量，但对应连接在两次采样之间关闭，无法归属到具体进程")
+            .help("该部分流量已计入整机总量，但对应连接在两次采样之间关闭，无法归属到具体进程").accessibilityLabel("该部分流量已计入整机总量，但对应连接在两次采样之间关闭，无法归属到具体进程")
 
             Text(TrafficBytes.format(residual.received))
                 .font(.system(size: 11, design: .monospaced))
@@ -1164,7 +1164,7 @@ public struct TrafficView: View {
                                 .padding(.vertical, 1)
                                 .background(Color.orange.opacity(0.12))
                                 .cornerRadius(Design.radiusS)
-                                .help("该进程在转发其他应用的流量：已按回环计量回填到对应应用名下，这里仅显示未归属余量")
+                                .help("该进程在转发其他应用的流量：已按回环计量回填到对应应用名下，这里仅显示未归属余量").accessibilityLabel("该进程在转发其他应用的流量：已按回环计量回填到对应应用名下，这里仅显示未归属余量")
                         }
 
                         if !item.isRelay && item.proxied.total > 0 {
@@ -1175,7 +1175,7 @@ public struct TrafficView: View {
                                 .padding(.vertical, 1)
                                 .background(Color.teal.opacity(0.12))
                                 .cornerRadius(Design.radiusS)
-                                .help("其中 \(TrafficBytes.format(item.proxied.total)) 经本地代理转发，已按回环计量回填到本应用")
+                                .help("其中 \(TrafficBytes.format(item.proxied.total)) 经本地代理转发，已按回环计量回填到本应用").accessibilityLabel("其中 \(TrafficBytes.format(item.proxied.total)) 经本地代理转发，已按回环计量回填到本应用")
                         }
 
                         if service.isHotspotActive && item.bytes.total >= 30 * 1024 * 1024 {
@@ -1190,7 +1190,7 @@ public struct TrafficView: View {
                             .padding(.vertical, 1)
                             .background(Color.orange.opacity(0.15))
                             .cornerRadius(Design.radiusS)
-                            .help("当前处于移动热点环境，该应用已消耗超过 30MB 流量")
+                            .help("当前处于移动热点环境，该应用已消耗超过 30MB 流量").accessibilityLabel("当前处于移动热点环境，该应用已消耗超过 30MB 流量")
                         }
                     }
 

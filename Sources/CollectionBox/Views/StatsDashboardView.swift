@@ -124,22 +124,11 @@ struct StatsDashboardView: View {
         let goldenWindowText: String?
     }
 
+    // MARK: - View-local UI state (range, tabs, sorting, hovers)
+
     @State private var range: DashRange = .today
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @State private var customEnd = Date()
-    @State private var allRecords: [UnifiedUsageRecord] = []   // one full scan; all views slice in memory
-    @State private var allSkillRecords: [SkillRecord] = []
-    @State private var installedSkills: Set<String> = []
-    @State private var loadedAgents: Set<StatsAgent> = []
-    @State private var lastUpdated: Date?
-    @State private var isRefreshing = false
-    @State private var refreshProgress = 0
-    @State private var refreshTotal = 0
-    @State private var refreshingAgents: Set<StatsAgent> = []
-    @State private var refreshToken = 0
-    @State private var pendingPublishToken: Int?
-    @State private var dimStaleData = false
-    @State private var staleDimTask: Task<Void, Never>?
     @State private var detailTab: Int = 0
     @State private var listSearchText: String = ""
     @FocusState private var isSearchFocused: Bool
@@ -155,24 +144,58 @@ struct StatsDashboardView: View {
     @State private var trendHoverText: String?
     @State private var hourlyHoverText: String?
     @State private var isHourlyExpanded: Bool = true
-    @State private var snapshot: DashboardSnapshot?
-    @State private var snapshotTask: Task<Void, Never>?
     @State private var selectedAgentFilter: StatsAgent? = nil
     @State private var lockedDay: Date? = nil
     @State private var copiedModelName: String? = nil
-
     @State private var showingWeeklyInsight: Bool = false
-    @State private var weeklyInsight: AgentWeeklyInsight? = nil
-    @State private var weeklyInsightSnapshot: DashboardSnapshot? = nil
-    @State private var weeklyWorkflowDigest: WorkflowObservationDigest? = nil
-    @State private var isGeneratingInsight: Bool = false
-    @State private var weeklyInsightError: String? = nil
+
+    // MARK: - Data plane
+
+    /// Records, scan orchestration, snapshot and the weekly-insight runner live
+    /// in the view model; this view only renders them.
+    @StateObject private var viewModel = StatsDashboardViewModel()
 
     @ObservedObject private var agentSelection = StatsAgentSelection.shared
     @ObservedObject private var aliasService = ModelAliasService.shared
     private let autoRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     private var enabledAgents: Set<StatsAgent> { agentSelection.enabledAgents }
-    private let service = StatsDashboardService.shared
+
+    // Read-through accessors keep the layout code below unchanged while the
+    // mutable truth lives in the view model.
+    private var allRecords: [UnifiedUsageRecord] { viewModel.allRecords }
+    private var allSkillRecords: [SkillRecord] { viewModel.allSkillRecords }
+    private var installedSkills: Set<String> { viewModel.installedSkills }
+    private var loadedAgents: Set<StatsAgent> { viewModel.loadedAgents }
+    private var lastUpdated: Date? { viewModel.lastUpdated }
+    private var isRefreshing: Bool { viewModel.isRefreshing }
+    private var refreshProgress: Int { viewModel.refreshProgress }
+    private var refreshTotal: Int { viewModel.refreshTotal }
+    private var refreshingAgents: Set<StatsAgent> { viewModel.refreshingAgents }
+    private var dimStaleData: Bool { viewModel.dimStaleData }
+    private var snapshot: DashboardSnapshot? { viewModel.snapshot }
+    private var weeklyInsight: AgentWeeklyInsight? { viewModel.weeklyInsight }
+    private var weeklyInsightSnapshot: DashboardSnapshot? { viewModel.weeklyInsightSnapshot }
+    private var weeklyWorkflowDigest: WorkflowObservationDigest? { viewModel.weeklyWorkflowDigest }
+    private var isGeneratingInsight: Bool { viewModel.isGeneratingInsight }
+    private var weeklyInsightError: String? { viewModel.weeklyInsightError }
+
+    /// Everything the snapshot build needs from this view's UI state.
+    private var query: StatsDashboardViewModel.Query {
+        StatsDashboardViewModel.Query(
+            sinceMs: effectiveSinceMs,
+            untilMs: effectiveUntilMs,
+            isDayLocked: lockedDay != nil,
+            selectedAgentFilter: selectedAgentFilter,
+            sessionSortKey: sessionSortKey,
+            sessionSortAsc: sessionSortAsc
+        )
+    }
+
+    /// True when the on-screen range already is the 7-day window, so the weekly
+    /// insight can reuse the visible snapshot instead of rebuilding one.
+    private var rangeIsBareWeek: Bool {
+        range == .week && lockedDay == nil && selectedAgentFilter == nil
+    }
 
     private let agentColor: [StatsAgent: Color] = [
         .codex: .purple, .gemini: .blue, .workbuddy: .green, .zcode: .orange, .dsh: .teal
@@ -372,7 +395,7 @@ struct StatsDashboardView: View {
                         Text(row.name)
                             .font(.system(size: Design.caption))
                             .lineLimit(1).truncationMode(.middle)
-                            .help("\(row.name)：\(WorkBuddyStats.formatTokens(row.tokens)) tokens（\(String(format: "%.1f", row.share))%）")
+                            .help("\(row.name)：\(WorkBuddyStats.formatTokens(row.tokens)) tokens（\(String(format: "%.1f", row.share))%）").accessibilityLabel("\(row.name)：\(WorkBuddyStats.formatTokens(row.tokens)) tokens（\(String(format: "%.1f", row.share))%）")
                         copyButton(for: row.name)
                         Spacer()
                         Text(WorkBuddyStats.formatTokens(row.tokens))
@@ -513,7 +536,7 @@ struct StatsDashboardView: View {
                                             )
                                             .scaleEffect(isLocked ? 1.15 : 1.0)
                                             .contentShape(Rectangle())
-                                            .help(isLocked ? "点击取消锁定 \(dayFormatter.string(from: day))" : "\(hoverText) · 点击锁定下钻该日")
+                                            .help(isLocked ? "点击取消锁定 \(dayFormatter.string(from: day))" : "\(hoverText) · 点击锁定下钻该日").accessibilityLabel(isLocked ? "点击取消锁定 \(dayFormatter.string(from: day))" : "\(hoverText) · 点击锁定下钻该日")
                                             .onHover { hovering in
                                                 if hovering {
                                                     heatHoverText = hoverText
@@ -614,7 +637,7 @@ struct StatsDashboardView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .bottom)
                         .contentShape(Rectangle())
-                        .help(isLocked ? "点击取消锁定 \(df.string(from: day))" : "\(hoverText) · 点击锁定下钻该日")
+                        .help(isLocked ? "点击取消锁定 \(df.string(from: day))" : "\(hoverText) · 点击锁定下钻该日").accessibilityLabel(isLocked ? "点击取消锁定 \(df.string(from: day))" : "\(hoverText) · 点击锁定下钻该日")
                         .onHover { hovering in
                             if hovering {
                                 trendHoverText = hoverText
@@ -737,7 +760,7 @@ struct StatsDashboardView: View {
                     .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(.plain)
-                .help("基于当前多 Agent 账本与心流节律生成周度智能复盘报告")
+                .help("基于当前多 Agent 账本与心流节律生成周度智能复盘报告").accessibilityLabel("基于当前多 Agent 账本与心流节律生成周度智能复盘报告")
 
                 PanelRefreshButton(isLoading: isRefreshing, helpText: "刷新总览 (⌘R)") {
                     reload(force: true)
@@ -831,7 +854,7 @@ struct StatsDashboardView: View {
                     .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
-                .help("点击取消单日锁定，恢复时间范围筛选 (⎋)")
+                .help("点击取消单日锁定，恢复时间范围筛选 (⎋)").accessibilityLabel("点击取消单日锁定，恢复时间范围筛选 (⎋)")
             } else {
                 Text("TOKEN 总量").font(.system(size: Design.caption, weight: .medium)).foregroundStyle(.secondary)
                     .tracking(2)
@@ -852,7 +875,7 @@ struct StatsDashboardView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(0.08)))
-                .help("当前时间范围内未命中缓存、全价计费的首次输入 Token 总量")
+                .help("当前时间范围内未命中缓存、全价计费的首次输入 Token 总量").accessibilityLabel("当前时间范围内未命中缓存、全价计费的首次输入 Token 总量")
 
                 HStack(spacing: 4) {
                     Text("模型输出")
@@ -865,7 +888,7 @@ struct StatsDashboardView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.secondary.opacity(0.08)))
-                .help("当前时间范围内模型生成的 Output Token 总量")
+                .help("当前时间范围内模型生成的 Output Token 总量").accessibilityLabel("当前时间范围内模型生成的 Output Token 总量")
 
                 HStack(spacing: 4) {
                     Text("缓存命中")
@@ -878,7 +901,7 @@ struct StatsDashboardView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.green.opacity(0.1)))
-                .help("上下文缓存 (Prompt Cache) 命中比例，命中率越高越节省开销")
+                .help("上下文缓存 (Prompt Cache) 命中比例，命中率越高越节省开销").accessibilityLabel("上下文缓存 (Prompt Cache) 命中比例，命中率越高越节省开销")
 
                 if let avgTPS = snapshot?.avgTPS {
                     HStack(spacing: 4) {
@@ -892,7 +915,7 @@ struct StatsDashboardView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(RoundedRectangle(cornerRadius: Design.radiusS).fill(Color.cyan.opacity(0.1)))
-                    .help("当前时间范围内具备耗时统计的调用之加权平均生成速度 (TPS)")
+                    .help("当前时间范围内具备耗时统计的调用之加权平均生成速度 (TPS)").accessibilityLabel("当前时间范围内具备耗时统计的调用之加权平均生成速度 (TPS)")
                 }
             }
             if hasNotice {
@@ -994,7 +1017,7 @@ struct StatsDashboardView: View {
                         updateSnapshot()
                     }
                 }
-                .help(isFiltered ? "点击取消聚焦 \(agent.label)" : "点击聚焦筛选 \(agent.label) 的明细与排行")
+                .help(isFiltered ? "点击取消聚焦 \(agent.label)" : "点击聚焦筛选 \(agent.label) 的明细与排行").accessibilityLabel(isFiltered ? "点击取消聚焦 \(agent.label)" : "点击聚焦筛选 \(agent.label) 的明细与排行")
             }
         }
     }
@@ -1073,7 +1096,7 @@ struct StatsDashboardView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(isHourlyExpanded ? "折叠心流图表" : "展开心流图表")
+                .help(isHourlyExpanded ? "折叠心流图表" : "展开心流图表").accessibilityLabel(isHourlyExpanded ? "折叠心流图表" : "展开心流图表")
             }
 
             if isHourlyExpanded {
@@ -1113,7 +1136,7 @@ struct StatsDashboardView: View {
                                         .fill(barColor)
                                         .frame(width: barWidth, height: barH)
                                         .contentShape(Rectangle().size(width: barWidth, height: chartHeight))
-                                        .help(hoverMsg)
+                                        .help(hoverMsg).accessibilityLabel(hoverMsg)
                                         .onHover { hovering in
                                             if hovering {
                                                 hourlyHoverText = hoverMsg
@@ -1199,7 +1222,7 @@ struct StatsDashboardView: View {
                         .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
-                    .help("点击取消单日锁定")
+                    .help("点击取消单日锁定").accessibilityLabel("点击取消单日锁定")
                 }
 
                 if let filter = selectedAgentFilter {
@@ -1224,7 +1247,7 @@ struct StatsDashboardView: View {
                         .foregroundStyle(agentColor[filter] ?? Color.accentColor)
                     }
                     .buttonStyle(.plain)
-                    .help("点击取消聚焦，查看全部 Agent")
+                    .help("点击取消聚焦，查看全部 Agent").accessibilityLabel("点击取消聚焦，查看全部 Agent")
                 }
 
                 Spacer()
@@ -1271,7 +1294,7 @@ struct StatsDashboardView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help(detailTab == 3 ? "将 Skill 排行导出为 CSV" : "将每日明细导出为 CSV")
+                    .help(detailTab == 3 ? "将 Skill 排行导出为 CSV" : "将每日明细导出为 CSV").accessibilityLabel(detailTab == 3 ? "将 Skill 排行导出为 CSV" : "将每日明细导出为 CSV")
                 } else if detailTab == 2 {
                     Button {
                         SettingsWindowController.shared.show(tab: .modules, targetAnchor: "modelAliasEditor")
@@ -1281,7 +1304,7 @@ struct StatsDashboardView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("直达偏好设置中的模型别名与合并规则")
+                    .help("直达偏好设置中的模型别名与合并规则").accessibilityLabel("直达偏好设置中的模型别名与合并规则")
                 }
             }
 
@@ -1400,14 +1423,14 @@ struct StatsDashboardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             sortHeader("合计", key: "total", current: dailySortKey, ascending: dailySortAsc, width: 105, action: { toggleDailySort("total") })
             sortHeader("净输入", key: "fresh", current: dailySortKey, ascending: dailySortAsc, width: 95, action: { toggleDailySort("fresh") })
-                .help("未命中缓存的首次输入 Tokens (Codex 本地库仅提供总量)")
+                .help("未命中缓存的首次输入 Tokens (Codex 本地库仅提供总量)").accessibilityLabel("未命中缓存的首次输入 Tokens (Codex 本地库仅提供总量)")
             sortHeader("输出", key: "output", current: dailySortKey, ascending: dailySortAsc, width: 95, action: { toggleDailySort("output") })
-                .help("模型生成的 Output Tokens (Codex 本地库仅提供总量)")
+                .help("模型生成的 Output Tokens (Codex 本地库仅提供总量)").accessibilityLabel("模型生成的 Output Tokens (Codex 本地库仅提供总量)")
             sortHeader("缓存", key: "cached", current: dailySortKey, ascending: dailySortAsc, width: 110, action: { toggleDailySort("cached") })
-                .help("命中的上下文缓存 Tokens (Codex 本地库仅提供总量)")
+                .help("命中的上下文缓存 Tokens (Codex 本地库仅提供总量)").accessibilityLabel("命中的上下文缓存 Tokens (Codex 本地库仅提供总量)")
             sortHeader("会话", key: "sessions", current: dailySortKey, ascending: dailySortAsc, width: 55, action: { toggleDailySort("sessions") })
             sortHeader("TPS", key: "tps", current: dailySortKey, ascending: dailySortAsc, width: 75, action: { toggleDailySort("tps") })
-                .help("该日期的加权平均输出速度 (Tokens Per Second)")
+                .help("该日期的加权平均输出速度 (Tokens Per Second)").accessibilityLabel("该日期的加权平均输出速度 (Tokens Per Second)")
         }
         .padding(.vertical, 4)
     }
@@ -1440,7 +1463,7 @@ struct StatsDashboardView: View {
                 sortHeader("Tokens", key: "tokens", current: sessionSortKey, ascending: sessionSortAsc, width: 105, action: { toggleSessionSort("tokens") })
                 sortHeader("轮次", key: "turns", current: sessionSortKey, ascending: sessionSortAsc, width: 55, action: { toggleSessionSort("turns") })
                 sortHeader("TPS", key: "tps", current: sessionSortKey, ascending: sessionSortAsc, width: 75, action: { toggleSessionSort("tps") })
-                    .help("该会话模型生成的平均每秒 Token 数")
+                    .help("该会话模型生成的平均每秒 Token 数").accessibilityLabel("该会话模型生成的平均每秒 Token 数")
             }
             .padding(.vertical, 4)
             Divider()
@@ -1577,7 +1600,7 @@ struct StatsDashboardView: View {
                 sortHeader("Tokens", key: "tokens", current: modelSortKey, ascending: modelSortAsc, width: 100, action: { toggleModelSort("tokens") })
                 sortHeader("会话", key: "sessions", current: modelSortKey, ascending: modelSortAsc, width: 55, action: { toggleModelSort("sessions") })
                 sortHeader("TPS", key: "tps", current: modelSortKey, ascending: modelSortAsc, width: 70, action: { toggleModelSort("tps") })
-                    .help("该模型的平均输出速度 (Tokens Per Second)")
+                    .help("该模型的平均输出速度 (Tokens Per Second)").accessibilityLabel("该模型的平均输出速度 (Tokens Per Second)")
                 Text("占比").font(.system(size: Design.caption, weight: .semibold)).frame(width: 50, alignment: .trailing)
             }
             .padding(.vertical, 4)
@@ -1596,7 +1619,7 @@ struct StatsDashboardView: View {
                                     Image(systemName: "arrow.triangle.merge")
                                         .font(.system(size: Design.micro))
                                         .foregroundStyle(.tertiary)
-                                        .help("已合并 \(row.mergedFrom.count) 个原始 ID：\(row.mergedFrom.joined(separator: "、"))")
+                                        .help("已合并 \(row.mergedFrom.count) 个原始 ID：\(row.mergedFrom.joined(separator: "、"))").accessibilityLabel("已合并 \(row.mergedFrom.count) 个原始 ID：\(row.mergedFrom.joined(separator: "、"))")
                                 }
                                 copyButton(for: row.name)
                             }
@@ -1607,7 +1630,7 @@ struct StatsDashboardView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .frame(width: 120, alignment: .leading)
-                                .help(row.provider ?? "未指定供应商")
+                                .help(row.provider ?? "未指定供应商").accessibilityLabel(row.provider ?? "未指定供应商")
                             Text(row.agents).font(.system(size: Design.caption)).foregroundStyle(.secondary)
                                 .frame(width: 85, alignment: .leading)
                             GeometryReader { geo in
@@ -1651,7 +1674,7 @@ struct StatsDashboardView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isCopied ? "已复制" : "复制模型名称「\(name)」")
+        .help(isCopied ? "已复制" : "复制模型名称「\(name)」").accessibilityLabel(isCopied ? "已复制" : "复制模型名称「\(name)」")
     }
 
     private func copyModelName(_ name: String) {
@@ -1697,7 +1720,7 @@ struct StatsDashboardView: View {
         for r in rows {
             let lastUsedStr = r.lastUsedMs.map { df.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)) } ?? ""
             let agentsStr = r.agents.map(\.label).joined(separator: " / ")
-            csv += "\(r.rank),\"\(r.name)\",\(r.count),\"\(agentsStr)\",\"\(lastUsedStr)\",\(Int(r.share))%\n"
+            csv += CSVField.row(["\(r.rank)", r.name, "\(r.count)", agentsStr, lastUsedStr, "\(Int(r.share))%"]) + "\n"
         }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
@@ -1772,7 +1795,7 @@ struct StatsDashboardView: View {
                                     Image(systemName: ag.symbolName)
                                         .font(.system(size: 9))
                                         .foregroundStyle(agentColor[ag] ?? .secondary)
-                                        .help(ag.label)
+                                        .help(ag.label).accessibilityLabel(ag.label)
                                 }
                             }
                             .frame(width: 110, alignment: .leading)
@@ -1812,136 +1835,11 @@ struct StatsDashboardView: View {
     // MARK: - Loading
 
     private func reload(force: Bool = false, supersede: Bool = false) {
-        let agentsToScan = visibleAgents
-        guard !agentsToScan.isEmpty else {
-            loadedAgents = Set(visibleAgents)
-            return
-        }
-
-        // A scan is already running: a second pass would only duplicate work,
-        // and whichever finishes last wins — a cached result could land on top
-        // of a fresh one.
-        if isRefreshing && !force && !supersede { return }
-
-        if force {
-            loadedAgents = []
-        }
-
-        refreshToken &+= 1
-        let token = refreshToken
-        isRefreshing = true
-        refreshProgress = 0
-        refreshTotal = agentsToScan.count
-        refreshingAgents = Set(agentsToScan)
-        scheduleStaleDim()
-
-        let keep = Set(agentsToScan)
-        allRecords.removeAll { !keep.contains($0.agent) }
-
-        let service = self.service
-
-        Task.detached(priority: .userInitiated) {
-            async let skillsTask = SkillStatsService.shared.collectAll(force: force)
-            let collected = await withTaskGroup(of: (StatsAgent, [UnifiedUsageRecord]).self) { group -> [(StatsAgent, [UnifiedUsageRecord])] in
-                for agent in agentsToScan {
-                    group.addTask {
-                        let agentRecords = service.collect(agent: agent, sinceMs: 0, force: force)
-                        return (agent, agentRecords)
-                    }
-                }
-                var items: [(StatsAgent, [UnifiedUsageRecord])] = []
-                for await item in group {
-                    items.append(item)
-                    await MainActor.run {
-                        // A superseded scan must not touch the shared progress state.
-                        guard token == refreshToken else { return }
-                        refreshingAgents.remove(item.0)
-                        refreshProgress += 1
-                    }
-                }
-                return items
-            }
-            let (skills, installed) = await skillsTask
-            await MainActor.run {
-                // A newer refresh superseded this one; its result is the current truth.
-                guard token == refreshToken else { return }
-                for (agent, recs) in collected {
-                    allRecords.removeAll { $0.agent == agent }
-                    allRecords.append(contentsOf: recs)
-                    loadedAgents.insert(agent)
-                }
-                self.allSkillRecords = skills
-                self.installedSkills = installed
-                pendingPublishToken = token
-                updateSnapshot()
-            }
-        }
-    }
-
-    /// Fast refreshes (cache hits) finish in milliseconds; dimming the data
-    /// area for that long would just flicker every auto-refresh tick.
-    private func scheduleStaleDim() {
-        staleDimTask?.cancel()
-        staleDimTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 400_000_000)
-            guard !Task.isCancelled else { return }
-            dimStaleData = true
-        }
-    }
-
-    private func cancelStaleDim() {
-        staleDimTask?.cancel()
-        staleDimTask = nil
-        dimStaleData = false
+        viewModel.reload(force: force, supersede: supersede, query: query)
     }
 
     private func updateSnapshot() {
-        snapshotTask?.cancel()
-        let records = allRecords
-        let skillRecords = allSkillRecords
-        let installed = installedSkills
-        let enabled = enabledAgents
-        let visible = visibleAgents
-        let selectedFilter = selectedAgentFilter
-        let sinceMs = effectiveSinceMs
-        let untilMs = effectiveUntilMs
-        let dayLocked = lockedDay != nil
-        let sessionKey = sessionSortKey
-        let sessionAsc = sessionSortAsc
-        // Snapshot the alias rules on the main actor: the detached task below
-        // must not read observable state.
-        let table = aliasService.table
-
-        snapshotTask = Task.detached(priority: .userInitiated) {
-            let snap = Self.buildSnapshot(
-                records: records,
-                skillRecords: skillRecords,
-                installedSkills: installed,
-                enabledAgents: enabled,
-                visibleAgents: visible,
-                selectedAgentFilter: selectedFilter,
-                effectiveSinceMs: sinceMs,
-                effectiveUntilMs: untilMs,
-                isDayLocked: dayLocked,
-                sessionSortKey: sessionKey,
-                sessionSortAsc: sessionAsc,
-                aliasTable: table
-            )
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self.snapshot = snap
-                // The refresh is only "done" once the new numbers are on screen:
-                // the snapshot build is asynchronous, so announcing it earlier
-                // would claim fresh data while the old one is still showing.
-                guard let pending = self.pendingPublishToken, pending == self.refreshToken else { return }
-                self.pendingPublishToken = nil
-                self.lastUpdated = Date()
-                self.isRefreshing = false
-                self.refreshingAgents = []
-                self.refreshProgress = self.refreshTotal
-                self.cancelStaleDim()
-            }
-        }
+        viewModel.updateSnapshot(query: query)
     }
 
     nonisolated static func buildSnapshot(
@@ -2368,168 +2266,17 @@ struct StatsDashboardView: View {
 
     // MARK: - AI Weekly Insight Runner
 
-    private func buildWeeklyInsightSnapshot() -> DashboardSnapshot? {
-        if range == .week && lockedDay == nil && selectedAgentFilter == nil, let snap = snapshot {
-            return snap
-        }
-        guard !allRecords.isEmpty || snapshot != nil else { return nil }
-        let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
-        return Self.buildSnapshot(
-            records: allRecords,
-            skillRecords: allSkillRecords,
-            installedSkills: installedSkills,
-            enabledAgents: enabledAgents,
-            visibleAgents: visibleAgents,
-            selectedAgentFilter: nil,
-            effectiveSinceMs: d7SinceMs,
-            effectiveUntilMs: Int64.max,
-            isDayLocked: false,
-            sessionSortKey: "tokens",
-            sessionSortAsc: false,
-            aliasTable: aliasService.table
-        )
-    }
-
+    /// Insight generation lives in the view model; this only owns the sheet.
     private func openWeeklyInsight() {
-        let isFirstOpenInSession = (weeklyInsight == nil)
-        weeklyInsightError = nil
-        if isFirstOpenInSession {
-            isGeneratingInsight = true
-        }
         showingWeeklyInsight = true
-
-        if let cached = AgentWeeklyInsightService.shared.getCachedInsight(),
-           Date().timeIntervalSince(cached.createdAt) < 1800 {
-            if isFirstOpenInSession {
-                let records = allRecords
-                let skillRecords = allSkillRecords
-                let installed = installedSkills
-                let enabled = enabledAgents
-                let visible = visibleAgents
-                let table = aliasService.table
-                let fallbackSnap = snapshot
-                Task {
-                    async let digestTask = WorkflowDigestService.shared.collect7DayDigest()
-                    let built = await Task.detached(priority: .userInitiated) { () -> DashboardSnapshot? in
-                        guard !records.isEmpty else { return nil }
-                        let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
-                        return Self.buildSnapshot(
-                            records: records,
-                            skillRecords: skillRecords,
-                            installedSkills: installed,
-                            enabledAgents: enabled,
-                            visibleAgents: visible,
-                            selectedAgentFilter: nil,
-                            effectiveSinceMs: d7SinceMs,
-                            effectiveUntilMs: Int64.max,
-                            isDayLocked: false,
-                            sessionSortKey: "tokens",
-                            sessionSortAsc: false,
-                            aliasTable: table
-                        )
-                    }.value
-                    let digest = await digestTask
-                    await MainActor.run {
-                        self.weeklyInsightSnapshot = built ?? fallbackSnap
-                        self.weeklyWorkflowDigest = digest
-                        self.weeklyInsight = cached
-                        self.isGeneratingInsight = false
-                    }
-                }
-            } else {
-                if weeklyInsightSnapshot == nil {
-                    weeklyInsightSnapshot = buildWeeklyInsightSnapshot() ?? snapshot
-                }
-                if weeklyWorkflowDigest == nil {
-                    Task {
-                        let digest = await WorkflowDigestService.shared.collect7DayDigest()
-                        await MainActor.run { self.weeklyWorkflowDigest = digest }
-                    }
-                }
-                weeklyInsight = cached
-                isGeneratingInsight = false
-            }
-        } else {
-            generateWeeklyInsight(forceRefresh: true)
-        }
+        viewModel.openWeeklyInsight(preferCurrentSnapshot: rangeIsBareWeek)
     }
 
     private func generateWeeklyInsight(forceRefresh: Bool) {
-        if forceRefresh {
-            weeklyInsight = nil
-        }
-        isGeneratingInsight = true
-        weeklyInsightError = nil
-
-        let records = allRecords
-        let skillRecords = allSkillRecords
-        let installed = installedSkills
-        let enabled = enabledAgents
-        let visible = visibleAgents
-        let table = aliasService.table
-        let fallbackSnap = snapshot
-
-        Task {
-            let startTime = Date()
-            async let digestTask = WorkflowDigestService.shared.collect7DayDigest()
-            let builtSnap = await Task.detached(priority: .userInitiated) { () -> DashboardSnapshot? in
-                guard !records.isEmpty else { return nil }
-                let d7SinceMs = Int64((Date().timeIntervalSince1970 - 7 * 86400) * 1000)
-                return Self.buildSnapshot(
-                    records: records,
-                    skillRecords: skillRecords,
-                    installedSkills: installed,
-                    enabledAgents: enabled,
-                    visibleAgents: visible,
-                    selectedAgentFilter: nil,
-                    effectiveSinceMs: d7SinceMs,
-                    effectiveUntilMs: Int64.max,
-                    isDayLocked: false,
-                    sessionSortKey: "tokens",
-                    sessionSortAsc: false,
-                    aliasTable: table
-                )
-            }.value
-
-            let digest = await digestTask
-
-            guard let snap = builtSnap ?? fallbackSnap else {
-                await MainActor.run {
-                    self.weeklyInsightError = "账本数据正在加载中，请稍后重试"
-                    self.isGeneratingInsight = false
-                }
-                return
-            }
-
-            await MainActor.run {
-                self.weeklyInsightSnapshot = snap
-                self.weeklyWorkflowDigest = digest
-            }
-
-            do {
-                let insight = try await AgentWeeklyInsightService.shared.generateInsight(
-                    snapshot: snap,
-                    workflowDigest: digest,
-                    forceRefresh: forceRefresh
-                )
-                let elapsed = Date().timeIntervalSince(startTime)
-                if elapsed < 1.1 {
-                    let remainNs = UInt64((1.1 - elapsed) * 1_000_000_000)
-                    try? await Task.sleep(nanoseconds: remainNs)
-                }
-                await MainActor.run {
-                    self.weeklyInsight = insight
-                    self.isGeneratingInsight = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.weeklyInsightError = error.localizedDescription
-                    self.isGeneratingInsight = false
-                }
-            }
-        }
+        viewModel.generateWeeklyInsight(forceRefresh: forceRefresh, preferCurrentSnapshot: rangeIsBareWeek)
     }
 }
+
 
 /// Header chip that tells where the numbers on screen came from: a cached
 /// snapshot while a scan is in flight, scan progress, or a fresh result.
@@ -2575,7 +2322,7 @@ private struct RefreshStatusChip: View {
         .font(.system(size: Design.micro))
         .lineLimit(1)
         .fixedSize()
-        .help(helpText)
+        .help(helpText).accessibilityLabel(helpText)
     }
 
     private func label(for date: Date, now: Date) -> String {
@@ -2654,7 +2401,7 @@ private struct DormantSkillsCard: View {
                                 .cornerRadius(Design.radiusS)
                         }
                         .buttonStyle(.plain)
-                        .help("点击复制技能名：\(name)")
+                        .help("点击复制技能名：\(name)").accessibilityLabel("点击复制技能名：\(name)")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

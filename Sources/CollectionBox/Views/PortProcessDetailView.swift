@@ -241,7 +241,7 @@ public struct PortProcessDetailView: View {
                             .padding(.vertical, 1)
                             .background(Color.primary.opacity(Design.slotAlpha))
                             .cornerRadius(3)
-                            .help("全部端口: \(process.portsDisplayString)")
+                            .help("全部端口: \(process.portsDisplayString)").accessibilityLabel("全部端口: \(process.portsDisplayString)")
                     }
 
                     Spacer(minLength: 2)
@@ -258,7 +258,7 @@ public struct PortProcessDetailView: View {
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
-                        .help("在浏览器打开 (http://localhost:\(firstPort))")
+                        .help("在浏览器打开 (http://localhost:\(firstPort))").accessibilityLabel("在浏览器打开 (http://localhost:\(firstPort))")
                     }
                 }
             }
@@ -329,7 +329,7 @@ public struct PortProcessDetailView: View {
                         .cornerRadius(Design.radiusS)
                     }
                     .buttonStyle(.plain)
-                    .help("在默认浏览器中打开 http://localhost:\(firstPort)")
+                    .help("在默认浏览器中打开 http://localhost:\(firstPort)").accessibilityLabel("在默认浏览器中打开 http://localhost:\(firstPort)")
 
                     ForEach(Array(process.ports.dropFirst().prefix(2)), id: \.self) { port in
                         Button {
@@ -349,7 +349,7 @@ public struct PortProcessDetailView: View {
                             .cornerRadius(Design.radiusS)
                         }
                         .buttonStyle(.plain)
-                        .help("在默认浏览器中打开 http://localhost:\(port)")
+                        .help("在默认浏览器中打开 http://localhost:\(port)").accessibilityLabel("在默认浏览器中打开 http://localhost:\(port)")
                     }
                 }
             }
@@ -399,7 +399,7 @@ public struct PortProcessDetailView: View {
                             .cornerRadius(4)
                         }
                         .buttonStyle(.plain)
-                        .help("在 Finder 中打开该进程所在工作目录")
+                        .help("在 Finder 中打开该进程所在工作目录").accessibilityLabel("在 Finder 中打开该进程所在工作目录")
 
                         Button {
                             service.openInTerminal(path: cwd)
@@ -417,7 +417,7 @@ public struct PortProcessDetailView: View {
                             .cornerRadius(4)
                         }
                         .buttonStyle(.plain)
-                        .help("在终端中打开此工作目录")
+                        .help("在终端中打开此工作目录").accessibilityLabel("在终端中打开此工作目录")
                     }
 
                     Button {
@@ -440,7 +440,7 @@ public struct PortProcessDetailView: View {
                             .cornerRadius(Design.radiusS)
                     }
                     .buttonStyle(.plain)
-                    .help("点击拷贝工作目录路径")
+                    .help("点击拷贝工作目录路径").accessibilityLabel("点击拷贝工作目录路径")
                 }
             }
 
@@ -506,7 +506,7 @@ public struct PortProcessDetailView: View {
                         .cornerRadius(Design.radiusS)
                 }
                 .buttonStyle(.plain)
-                .help("点击拷贝完整路径")
+                .help("点击拷贝完整路径").accessibilityLabel("点击拷贝完整路径")
             }
 
             // Command Line if available

@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Configuration form for TypeSafe Jev (System One) semantic routing in fleeting thoughts.
+/// Configuration form for the decision model (Jev System One protocol) used by fleeting routing.
 public struct JevSettingsView: View {
     @State private var baseURL: String = ""
     @State private var apiKey: String = ""
@@ -18,24 +18,24 @@ public struct JevSettingsView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("专用于「闪念投递」的高精度语义路由。毫秒级判定备忘录分类与已有笔记，零幻觉精准匹配。")
+            Text("专用于「闪念投递」的高精度决策模型。毫秒级判定备忘录分类与已有笔记，零幻觉精准匹配。")
                 .font(.system(size: Design.caption))
                 .foregroundStyle(.secondary)
 
             field(label: "Base URL") {
-                TextField("https://api.typesafe.ai/v1", text: $baseURL)
+                TextField(TypeSafeJevClient.defaultBaseURL, text: $baseURL)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: Design.body))
             }
 
             field(label: "API Key") {
-                SecureField("ts_...", text: $apiKey)
+                SecureField("sk-...", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: Design.body))
             }
 
             field(label: "模型名") {
-                TextField("jev-latest", text: $model)
+                TextField(TypeSafeJevClient.defaultModel, text: $model)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: Design.body))
             }
@@ -94,15 +94,15 @@ public struct JevSettingsView: View {
 
         if !udKey.isEmpty {
             apiKey = udKey
-            baseURL = udURL.isEmpty ? "https://api.typesafe.ai/v1" : udURL
-            model = udModel.isEmpty ? "jev-latest" : udModel
+            baseURL = udURL.isEmpty ? TypeSafeJevClient.defaultBaseURL : udURL
+            model = udModel.isEmpty ? TypeSafeJevClient.defaultModel : udModel
         } else if let resolved = TypeSafeJevClient.resolveConfig() {
             apiKey = resolved.apiKey
             baseURL = resolved.baseURL
             model = resolved.model
         } else {
-            baseURL = "https://api.typesafe.ai/v1"
-            model = "jev-latest"
+            baseURL = TypeSafeJevClient.defaultBaseURL
+            model = TypeSafeJevClient.defaultModel
         }
     }
 
@@ -112,8 +112,8 @@ public struct JevSettingsView: View {
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
 
         UserDefaults.standard.set(trimmedKey, forKey: "TypeSafe.apiKey")
-        UserDefaults.standard.set(trimmedURL.isEmpty ? "https://api.typesafe.ai/v1" : trimmedURL, forKey: "TypeSafe.baseURL")
-        UserDefaults.standard.set(trimmedModel.isEmpty ? "jev-latest" : trimmedModel, forKey: "TypeSafe.model")
+        UserDefaults.standard.set(trimmedURL.isEmpty ? TypeSafeJevClient.defaultBaseURL : trimmedURL, forKey: "TypeSafe.baseURL")
+        UserDefaults.standard.set(trimmedModel.isEmpty ? TypeSafeJevClient.defaultModel : trimmedModel, forKey: "TypeSafe.model")
         testResult = .success("Jev 配置已保存")
     }
 
@@ -134,9 +134,9 @@ public struct JevSettingsView: View {
             defer { isTesting = false }
             do {
                 let msg = try await TypeSafeJevClient.testConnection(
-                    baseURL: trimmedURL.isEmpty ? "https://api.typesafe.ai/v1" : trimmedURL,
+                    baseURL: trimmedURL.isEmpty ? TypeSafeJevClient.defaultBaseURL : trimmedURL,
                     apiKey: trimmedKey,
-                    model: trimmedModel.isEmpty ? "jev-latest" : trimmedModel
+                    model: trimmedModel.isEmpty ? TypeSafeJevClient.defaultModel : trimmedModel
                 )
                 testResult = .success(msg)
             } catch {

@@ -151,11 +151,11 @@ public struct PortManagerView: View {
                 color: .green
             )
 
-            // Card 3: CPU 占用
+            // Card 3: CPU 占用（整机占比；副标题给多核累计，避免「超过 100%」的误解）
             overviewCard(
                 title: "总 CPU 占用",
                 value: service.stats.cpuDisplayString,
-                sub: "所有监听服务总计",
+                sub: service.stats.cpuBreakdownString,
                 icon: "cpu",
                 color: .orange
             )
@@ -183,7 +183,7 @@ public struct PortManagerView: View {
                 )
             }
             .buttonStyle(.plain)
-            .help(service.selectedFilter == .exposed ? "点击取消筛选，查看全部端口" : "点击一键筛选外部暴露（局域网可访问）的端口")
+            .help(service.selectedFilter == .exposed ? "点击取消筛选，查看全部端口" : "点击一键筛选外部暴露（局域网可访问）的端口").accessibilityLabel(service.selectedFilter == .exposed ? "点击取消筛选，查看全部端口" : "点击一键筛选外部暴露（局域网可访问）的端口")
         }
     }
 
@@ -461,7 +461,7 @@ public struct PortManagerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("按\(title)\(sortField == field ? (sortAscending ? "降序" : "升序") : "排序")")
+        .help("按\(title)\(sortField == field ? (sortAscending ? "降序" : "升序") : "排序")").accessibilityLabel("按\(title)\(sortField == field ? (sortAscending ? "降序" : "升序") : "排序")")
 
         if let width = width {
             button.frame(width: width, alignment: alignment)
@@ -517,7 +517,7 @@ public struct PortManagerView: View {
                                 .foregroundColor(.accentColor.opacity(0.9))
                             }
                             .buttonStyle(.plain)
-                            .help("打开项目目录: \(cwd)")
+                            .help("打开项目目录: \(cwd)").accessibilityLabel("打开项目目录: \(cwd)")
                         }
                     }
                 }
@@ -541,7 +541,7 @@ public struct PortManagerView: View {
                             .foregroundColor(proc.category == .devServer ? .blue : .primary)
                     }
                     .buttonStyle(.plain)
-                    .help("在浏览器打开 http://localhost:\(firstPort)")
+                    .help("在浏览器打开 http://localhost:\(firstPort)").accessibilityLabel("在浏览器打开 http://localhost:\(firstPort)")
                 } else {
                     Text("--")
                         .font(.system(size: Design.ui, weight: .bold, design: .monospaced))
@@ -574,7 +574,7 @@ public struct PortManagerView: View {
                     .padding(.vertical, 1)
                     .background(Color.teal.opacity(0.14))
                     .cornerRadius(3)
-                    .help("此服务绑定 0.0.0.0/*，局域网/公网可直接访问")
+                    .help("此服务绑定 0.0.0.0/*，局域网/公网可直接访问").accessibilityLabel("此服务绑定 0.0.0.0/*，局域网/公网可直接访问")
                 } else {
                     HStack(spacing: 2) {
                         Image(systemName: "lock.fill")
@@ -587,7 +587,7 @@ public struct PortManagerView: View {
                     .padding(.vertical, 1)
                     .background(Color.primary.opacity(0.04))
                     .cornerRadius(3)
-                    .help("此服务绑定 127.0.0.1，仅限本机访问")
+                    .help("此服务绑定 127.0.0.1，仅限本机访问").accessibilityLabel("此服务绑定 127.0.0.1，仅限本机访问")
                 }
             }
             .frame(width: 135, alignment: .leading)
@@ -635,7 +635,7 @@ public struct PortManagerView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("在浏览器打开 http://localhost:\(firstPort)")
+                    .help("在浏览器打开 http://localhost:\(firstPort)").accessibilityLabel("在浏览器打开 http://localhost:\(firstPort)")
                 }
 
                 // Detail Button
@@ -650,7 +650,7 @@ public struct PortManagerView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("查看进程详情")
+                .help("查看进程详情").accessibilityLabel("查看进程详情")
 
                 // Terminate Button
                 Button {
@@ -664,7 +664,7 @@ public struct PortManagerView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("终止此进程")
+                .help("终止此进程").accessibilityLabel("终止此进程")
             }
             .frame(width: 84, alignment: .center)
         }

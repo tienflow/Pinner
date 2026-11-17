@@ -156,7 +156,7 @@ public struct FleetingCaptureView: View {
                     .cornerRadius(5)
                 }
                 .buttonStyle(.plain)
-                .help("取消当前锁定的目标笔记")
+                .help("取消当前锁定的目标笔记").accessibilityLabel("取消当前锁定的目标笔记")
             }
         }
     }
@@ -178,7 +178,7 @@ public struct FleetingCaptureView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("从历史选择中删除《\(target.note)》")
+            .help("从历史选择中删除《\(target.note)》").accessibilityLabel("从历史选择中删除《\(target.note)》")
         }
         .padding(.leading, 8)
         .padding(.trailing, 4)
@@ -261,7 +261,7 @@ public struct FleetingCaptureView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isPolishing || isParsing)
-                .help("AI 润色：修正错别字与语病，提升语句流畅度，保真原意")
+                .help("AI 润色：修正错别字与语病，提升语句流畅度，保真原意").accessibilityLabel("AI 润色：修正错别字与语病，提升语句流畅度，保真原意")
 
                 Button(action: { Task { await analyzeInput() } }) {
                     HStack(spacing: 4) {

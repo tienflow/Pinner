@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let otpCancelInlineAdd = Notification.Name("Pinner.otpCancelInlineAdd")
+}
+
 private final class OTPEscDismissablePanel: EscDismissablePanel {
     var onEscape: (() -> Bool)?
 
@@ -76,6 +80,11 @@ final class OTPWindowController: NSObject {
         p.isMovableByWindowBackground = true
         p.delegate = self
         p.isReleasedWhenClosed = false
+        p.onEscape = { [weak self] in
+            guard let self, self.isAdding else { return false }
+            NotificationCenter.default.post(name: .otpCancelInlineAdd, object: nil)
+            return true
+        }
 
         let hv = NSHostingView(rootView: OTPView(
             store: store,

@@ -5,9 +5,16 @@ public struct ClipboardStatsView: View {
     @ObservedObject private var service: ClipboardStatsService
     var onClose: () -> Void
 
+    private enum RepeatedTabScope: String, CaseIterable, Identifiable {
+        case selectedRange
+        case allTime
+        var id: String { rawValue }
+    }
+
     @State private var hoveredHour: Int? = nil
     @State private var copiedItemId: Int64? = nil
     @State private var isRepeatedExpanded: Bool = true
+    @State private var repeatedScope: RepeatedTabScope = .selectedRange
 
     @MainActor
     public init(service: ClipboardStatsService, onClose: @escaping () -> Void) {
@@ -192,7 +199,7 @@ public struct ClipboardStatsView: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(t.type.tintColor)
                                 .frame(width: max(4, geo.size.width * CGFloat(t.percentage)))
-                                .help("\(t.type.rawValue): \(t.count) 条 (\(Int(t.percentage * 100))%)")
+                                .help("\(t.type.rawValue): \(t.count) 条 (\(Int(t.percentage * 100))%)").accessibilityLabel("\(t.type.rawValue): \(t.count) 条 (\(Int(t.percentage * 100))%)")
                         }
                     }
                 }
@@ -357,8 +364,9 @@ public struct ClipboardStatsView: View {
     // MARK: - Top Repeated Assets
 
     private func repeatedAssetsCard(stats: ClipboardStatsData) -> some View {
+        let sourceItems = repeatedScope == .selectedRange ? stats.topRepeated : stats.allTimeTopRepeated
         let visibleItems = Array(
-            stats.topRepeated
+            sourceItems
                 .filter { !service.ignoredRepeatedIDs.contains($0.id) }
                 .prefix(8)
         )
@@ -367,6 +375,34 @@ public struct ClipboardStatsView: View {
             HStack(spacing: 8) {
                 Text("高频复用资产")
                     .font(.system(size: 12, weight: .bold))
+
+                HStack(spacing: 2) {
+                    ForEach(RepeatedTabScope.allCases) { scope in
+                        let isSelected = repeatedScope == scope
+                        let label = scope == .selectedRange
+                            ? (service.selectedRange == .all ? "当前" : service.selectedRange.rawValue)
+                            : "全部"
+                        Button(action: {
+                            Haptics.light()
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                repeatedScope = scope
+                            }
+                        }) {
+                            Text(label)
+                                .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                                .foregroundColor(isSelected ? .primary : .secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? Color.primary.opacity(0.12) : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(2)
+                .background(Capsule().fill(Color.primary.opacity(0.05)))
 
                 Spacer()
 
@@ -386,7 +422,7 @@ public struct ClipboardStatsView: View {
                         .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("恢复已从榜单移除的条目")
+                    .help("恢复已从榜单移除的条目").accessibilityLabel("恢复已从榜单移除的条目")
                 }
 
                 Button(action: {
@@ -464,7 +500,7 @@ public struct ClipboardStatsView: View {
                                     .background(Capsule().fill(Color.primary.opacity(0.06)))
                                 }
                                 .buttonStyle(.plain)
-                                .help("复制到剪贴板")
+                                .help("复制到剪贴板").accessibilityLabel("复制到剪贴板")
 
                                 // Remove from leaderboard button
                                 Button(action: {
@@ -481,7 +517,7 @@ public struct ClipboardStatsView: View {
                                         .contentShape(Circle())
                                 }
                                 .buttonStyle(.plain)
-                                .help("从榜单移除")
+                                .help("从榜单移除").accessibilityLabel("从榜单移除")
                             }
                             .padding(.vertical, 4)
                             .padding(.horizontal, 6)
@@ -559,7 +595,7 @@ public struct ClipboardStatsView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
-                .help(dbPath)
+                .help(dbPath).accessibilityLabel(dbPath)
             }
 
             Spacer()

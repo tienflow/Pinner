@@ -83,7 +83,7 @@ struct AgentStatsView: View {
                     .frame(maxWidth: .infinity)
                     .background(Color.secondary.opacity(Design.slotAlpha))
                     .clipShape(Capsule())
-                    .help("Token 明细：\n净输入: \(formatExact(stats.inputTokens))\n缓存命中: \(formatExact(stats.cacheReadTokens)) (\(String(format: "%.1f%%", stats.cacheHitRate)))\n模型生成: \(formatExact(stats.outputTokens))\n上下文吞吐: \(formatExact(stats.currentTokens))")
+                    .help("Token 明细：\n净输入: \(formatExact(stats.inputTokens))\n缓存命中: \(formatExact(stats.cacheReadTokens)) (\(String(format: "%.1f%%", stats.cacheHitRate)))\n模型生成: \(formatExact(stats.outputTokens))\n上下文吞吐: \(formatExact(stats.currentTokens))").accessibilityLabel("Token 明细：\n净输入: \(formatExact(stats.inputTokens))\n缓存命中: \(formatExact(stats.cacheReadTokens)) (\(String(format: "%.1f%%", stats.cacheHitRate)))\n模型生成: \(formatExact(stats.outputTokens))\n上下文吞吐: \(formatExact(stats.currentTokens))")
                 }
             }
             .padding(.horizontal, 12)
@@ -306,7 +306,7 @@ struct AgentStatsView: View {
                 Image(systemName: "arrow.clockwise").font(.system(size: 10))
             }
             .buttonStyle(.plain)
-            .help("刷新数据")
+            .help("刷新数据").accessibilityLabel("刷新数据")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)

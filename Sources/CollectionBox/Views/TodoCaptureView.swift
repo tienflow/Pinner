@@ -288,7 +288,7 @@ struct TodoCaptureView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("移除此项")
+                            .help("移除此项").accessibilityLabel("移除此项")
                         }
                         .padding(.vertical, 2)
                     }
@@ -339,7 +339,7 @@ struct TodoCaptureView: View {
                     .animation(isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: isRefreshing)
             }
             .buttonStyle(.plain)
-            .help("刷新提醒事项")
+            .help("刷新提醒事项").accessibilityLabel("刷新提醒事项")
 
             Button {
                 SettingsWindowController.shared.show(tab: .aiConfig)
@@ -349,7 +349,7 @@ struct TodoCaptureView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("待办偏好与 AI 设置")
+            .help("待办偏好与 AI 设置").accessibilityLabel("待办偏好与 AI 设置")
 
             Text("\(items.count)").font(.system(size: Design.caption)).foregroundStyle(.secondary)
         }.padding(.horizontal, 12).padding(.vertical, 6)
@@ -461,7 +461,7 @@ struct TodoCaptureView: View {
                     .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("将今日已完成任务复制为 Markdown 格式")
+                .help("将今日已完成任务复制为 Markdown 格式").accessibilityLabel("将今日已完成任务复制为 Markdown 格式")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
@@ -491,7 +491,7 @@ struct TodoCaptureView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("反选恢复为未完成")
+            .help("反选恢复为未完成").accessibilityLabel("反选恢复为未完成")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
@@ -1087,7 +1087,7 @@ private struct TodoHoverSnoozeButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("推迟到明天 \(timeText) (⌘T)")
+        .help("推迟到明天 \(timeText) (⌘T)").accessibilityLabel("推迟到明天 \(timeText) (⌘T)")
         .onHover { hovering in
             isHovering = hovering
         }
@@ -1106,7 +1106,7 @@ private struct TodoHoverDeleteButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("删除待办 (⌘⌫)")
+        .help("删除待办 (⌘⌫)").accessibilityLabel("删除待办 (⌘⌫)")
         .onHover { hovering in
             isHovering = hovering
         }

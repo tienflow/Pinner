@@ -1131,6 +1131,9 @@ public struct InputStatsView: View {
         .help(isSelected
             ? "当前按应用名称\(selectedAppSortAscending ? "A-Z" : "Z-A")排序，点击切换"
             : "按应用名称排序")
+        .accessibilityLabel(isSelected
+            ? "当前按应用名称\(selectedAppSortAscending ? "A-Z" : "Z-A")排序，点击切换"
+            : "按应用名称排序")
     }
 
     private func appSortHeaderButton(title: String, metric: AppSortMetric, color: Color) -> some View {
@@ -1167,6 +1170,9 @@ public struct InputStatsView: View {
         }
         .buttonStyle(.plain)
         .help(isSelected
+            ? "当前按\(title)\(selectedAppSortAscending ? "升序" : "降序")，点击切换"
+            : "按\(title)降序排列")
+        .accessibilityLabel(isSelected
             ? "当前按\(title)\(selectedAppSortAscending ? "升序" : "降序")，点击切换"
             : "按\(title)降序排列")
     }
@@ -1242,7 +1248,7 @@ public struct InputStatsView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isExpanded.wrappedValue ? "收起卡片" : "展开卡片")
+        .help(isExpanded.wrappedValue ? "收起卡片" : "展开卡片").accessibilityLabel(isExpanded.wrappedValue ? "收起卡片" : "展开卡片")
     }
 
     private func isShortcutKey(_ keyName: String) -> Bool {
@@ -1295,7 +1301,7 @@ public struct InputStatsView: View {
                     .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("重置今日统计数据")
+                .help("重置今日统计数据").accessibilityLabel("重置今日统计数据")
             }
         }
         .padding(.horizontal, 16)

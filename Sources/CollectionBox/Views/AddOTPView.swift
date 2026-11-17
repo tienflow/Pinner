@@ -92,20 +92,34 @@ struct AddOTPView: View {
     private func addAccount() {
         let trimmed = uriInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parsed = OTPService.parseOTPAuthURI(trimmed) else {
-            errorMessage = "无法解析 URI，请检查格式"
+            errorMessage = "无法解析 URI 或密钥非合法 Base32 格式"
             return
         }
-        onAdd(OTPAccount(name: parsed.name, secret: parsed.secret, issuer: parsed.issuer))
+        onAdd(OTPAccount(
+            name: parsed.name,
+            secret: parsed.secret,
+            issuer: parsed.issuer,
+            algorithm: parsed.algorithm,
+            digits: parsed.digits,
+            period: parsed.period
+        ))
         isPresented = false
     }
 
     private func handleScannedURI(_ uri: String) {
         guard let parsed = OTPService.parseOTPAuthURI(uri) else {
-            errorMessage = "图片中的二维码不是有效的 otpauth:// URI"
+            errorMessage = "图片中的二维码不是有效的 otpauth:// URI 或密钥无效"
             mode = .uri
             return
         }
-        onAdd(OTPAccount(name: parsed.name, secret: parsed.secret, issuer: parsed.issuer))
+        onAdd(OTPAccount(
+            name: parsed.name,
+            secret: parsed.secret,
+            issuer: parsed.issuer,
+            algorithm: parsed.algorithm,
+            digits: parsed.digits,
+            period: parsed.period
+        ))
         isPresented = false
     }
 }

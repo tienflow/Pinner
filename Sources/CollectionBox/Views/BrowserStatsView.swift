@@ -5,9 +5,16 @@ public struct BrowserStatsView: View {
     @ObservedObject private var service: BrowserStatsService
     var onClose: () -> Void
 
+    private enum FrequentTabScope: String, CaseIterable, Identifiable {
+        case selectedRange
+        case allTime
+        var id: String { rawValue }
+    }
+
     @State private var hoveredHour: Int? = nil
     @State private var copiedId: String? = nil
     @State private var isFrequentExpanded: Bool = true
+    @State private var frequentScope: FrequentTabScope = .selectedRange
 
     @MainActor
     public init(service: BrowserStatsService, onClose: @escaping () -> Void) {
@@ -343,8 +350,9 @@ public struct BrowserStatsView: View {
     // MARK: - Frequent Pages
 
     private func frequentPagesCard(stats: BrowserStatsData) -> some View {
+        let sourcePages = frequentScope == .selectedRange ? stats.frequentPages : stats.allTimeFrequentPages
         let visiblePages = Array(
-            stats.frequentPages
+            sourcePages
                 .filter { !service.ignoredFrequentURLs.contains($0.url) }
                 .prefix(8)
         )
@@ -353,6 +361,34 @@ public struct BrowserStatsView: View {
             HStack(spacing: 8) {
                 Text("高频回访页面")
                     .font(.system(size: 12, weight: .bold))
+
+                HStack(spacing: 2) {
+                    ForEach(FrequentTabScope.allCases) { scope in
+                        let isSelected = frequentScope == scope
+                        let label = scope == .selectedRange
+                            ? (service.selectedRange == .all ? "当前" : service.selectedRange.rawValue)
+                            : "全部"
+                        Button(action: {
+                            Haptics.light()
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                frequentScope = scope
+                            }
+                        }) {
+                            Text(label)
+                                .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                                .foregroundColor(isSelected ? .primary : .secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? Color.primary.opacity(0.12) : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(2)
+                .background(Capsule().fill(Color.primary.opacity(0.05)))
 
                 Spacer()
 
@@ -372,7 +408,7 @@ public struct BrowserStatsView: View {
                         .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("恢复已从榜单移除的页面")
+                    .help("恢复已从榜单移除的页面").accessibilityLabel("恢复已从榜单移除的页面")
                 }
 
                 Button(action: {
@@ -424,7 +460,7 @@ public struct BrowserStatsView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .buttonStyle(.plain)
-                                .help("在浏览器中打开：\(page.url)")
+                                .help("在浏览器中打开：\(page.url)").accessibilityLabel("在浏览器中打开：\(page.url)")
 
                                 // Copy URL button
                                 Button(action: {
@@ -452,7 +488,7 @@ public struct BrowserStatsView: View {
                                     .background(Capsule().fill(Color.primary.opacity(0.06)))
                                 }
                                 .buttonStyle(.plain)
-                                .help("复制链接")
+                                .help("复制链接").accessibilityLabel("复制链接")
 
                                 // Ignore button
                                 Button(action: {
@@ -469,7 +505,7 @@ public struct BrowserStatsView: View {
                                         .contentShape(Circle())
                                 }
                                 .buttonStyle(.plain)
-                                .help("从榜单移除")
+                                .help("从榜单移除").accessibilityLabel("从榜单移除")
                             }
                             .padding(.vertical, 4)
                             .padding(.horizontal, 6)
@@ -576,7 +612,7 @@ public struct BrowserStatsView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
-                .help(service.detectedProfiles.map(\.historyPath).joined(separator: "\n"))
+                .help(service.detectedProfiles.map(\.historyPath).joined(separator: "\n")).accessibilityLabel(service.detectedProfiles.map(\.historyPath).joined(separator: "\n"))
             }
 
             Spacer()

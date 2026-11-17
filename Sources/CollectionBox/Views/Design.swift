@@ -25,21 +25,15 @@ enum Design {
 }
 
 /// Style option mapping to macOS 26 `NSGlassEffectView.Style`.
-enum LiquidGlassStyle: Sendable {
-    case regular
-    case clear
-
-    @available(macOS 26.0, *)
-    var systemStyle: NSGlassEffectView.Style {
-        switch self {
-        case .regular: return .regular
-        case .clear: return .clear
-        }
-    }
+enum LiquidGlassStyle: Int, Sendable {
+    case regular = 0
+    case clear = 1
 }
 
-/// Native macOS 26 Liquid Glass backdrop powered by AppKit's `NSGlassEffectView`.
-/// Falls back gracefully to `NSVisualEffectView` on older macOS versions.
+/// Native macOS 26 Liquid Glass backdrop powered by AppKit's `NSGlassEffectView`
+/// resolved dynamically at runtime so the package also compiles on Xcode 15/16
+/// (macOS 14/15 SDK) CI runners. Falls back gracefully to `NSVisualEffectView`
+/// on older macOS versions.
 struct GlassEffectBackground: NSViewRepresentable {
     var style: LiquidGlassStyle
     var cornerRadius: CGFloat
@@ -58,15 +52,30 @@ struct GlassEffectBackground: NSViewRepresentable {
         self.enableScrim = enableScrim
     }
 
+    private static let glassEffectViewClass: NSView.Type? = {
+        guard #available(macOS 26.0, *) else { return nil }
+        return NSClassFromString("NSGlassEffectView") as? NSView.Type
+    }()
+
+    private func configureGlassView(_ glass: NSView) {
+        if glass.responds(to: NSSelectorFromString("setStyle:")) {
+            glass.setValue(style.rawValue, forKey: "style")
+        }
+        if glass.responds(to: NSSelectorFromString("setCornerRadius:")) {
+            glass.setValue(cornerRadius, forKey: "cornerRadius")
+        }
+        if glass.responds(to: NSSelectorFromString("setTintColor:")) {
+            glass.setValue(tintColor, forKey: "tintColor")
+        }
+        if enableScrim, glass.responds(to: NSSelectorFromString("set_scrimState:")) {
+            glass.setValue(1, forKey: "_scrimState")
+        }
+    }
+
     func makeNSView(context: Context) -> NSView {
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = style.systemStyle
-            glass.cornerRadius = cornerRadius
-            glass.tintColor = tintColor
-            if enableScrim, glass.responds(to: NSSelectorFromString("set_scrimState:")) {
-                glass.setValue(1, forKey: "_scrimState")
-            }
+        if let glassClass = Self.glassEffectViewClass {
+            let glass = glassClass.init()
+            configureGlassView(glass)
             return glass
         } else {
             let view = NSVisualEffectView()
@@ -83,13 +92,8 @@ struct GlassEffectBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if #available(macOS 26.0, *), let glass = nsView as? NSGlassEffectView {
-            glass.style = style.systemStyle
-            glass.cornerRadius = cornerRadius
-            glass.tintColor = tintColor
-            if enableScrim, glass.responds(to: NSSelectorFromString("set_scrimState:")) {
-                glass.setValue(1, forKey: "_scrimState")
-            }
+        if let glassClass = Self.glassEffectViewClass, nsView.isKind(of: glassClass) {
+            configureGlassView(nsView)
         } else if let view = nsView as? NSVisualEffectView {
             if cornerRadius > 0 {
                 view.layer?.cornerRadius = cornerRadius
@@ -198,7 +202,7 @@ public struct PanelCloseButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help(helpText)
+        .help(helpText).accessibilityLabel(helpText)
     }
 }
 

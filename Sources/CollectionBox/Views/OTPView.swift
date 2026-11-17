@@ -42,6 +42,13 @@ struct OTPView: View {
         .onChange(of: isAddingAccount) { _, newValue in
             onAddingStateChanged?(newValue)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .otpCancelInlineAdd)) { _ in
+            if isAddingAccount {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isAddingAccount = false
+                }
+            }
+        }
         .onAppear {
             if autoCopyOnAppear, let first = store.accounts.first,
                let code = store.code(for: first, at: Date()) {
@@ -68,7 +75,7 @@ struct OTPView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("返回验证码列表")
+                .help("返回验证码列表").accessibilityLabel("返回验证码列表")
             }
 
             Image(systemName: "key.2")
@@ -95,7 +102,7 @@ struct OTPView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("添加验证码")
+                .help("添加验证码").accessibilityLabel("添加验证码")
             }
 
             PanelCloseButton(helpText: "关闭面板 (⎋)") {
@@ -122,9 +129,9 @@ struct OTPView: View {
 
     private func accountRow(_ account: OTPAccount) -> some View {
         let code = store.code(for: account, at: now) ?? "------"
-        let remaining = OTPService.timeRemaining(at: now)
+        let remaining = OTPService.timeRemaining(period: account.period, at: now)
         let countdown = remaining
-        let progress = Double(countdown) / 30.0
+        let progress = Double(countdown) / Double(max(1, account.period))
         let isCopied = copiedID == account.id
         let isUrgent = countdown <= 10
 
@@ -150,6 +157,9 @@ struct OTPView: View {
                     .padding(.vertical, 4)
                     .background(Color.secondary.opacity(isCopied ? 0.15 : 0.08), in: RoundedRectangle(cornerRadius: 6))
                 }.buttonStyle(.plain)
+                    .help("复制验证码")
+                    .accessibilityLabel(isCopied ? "\(account.name) 验证码已复制" : "复制 \(account.name) 的验证码")
+                    .accessibilityValue(code)
             }
             HStack(spacing: 6) {
                 Text("\(countdown)s").font(.system(size: Design.micro, weight: .medium)).foregroundStyle(.secondary)

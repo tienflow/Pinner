@@ -86,9 +86,10 @@ public final class TrafficWindowController: NSObject, NSWindowDelegate {
         self.panel = p
         self.isShowing = true
 
-        // Ensure active monitoring and sampling
+        // Ensure active monitoring and sampling; opening the panel should not
+        // wait for the throttled process-ranking cadence.
         service.startMonitoring()
-        service.sample()
+        service.sample(forceProcessSample: true)
 
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
             guard let self, let p = self.panel else { return }
