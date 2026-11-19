@@ -115,7 +115,7 @@ final class GeminiStatsService: Sendable {
 
     /// Parse-rule version. Part of the cache filename so a bump starts a fresh
     /// file: mtime/size alone cannot detect a change in how steps are parsed.
-    static let scannerVersion = 2
+    static let scannerVersion = 3
 
     static let cacheFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
@@ -432,43 +432,75 @@ final class GeminiStatsService: Sendable {
         sqlite3_close(db)
     }
 
-    /// Generation steps (step_type = 15) paired with their model name.
-    /// `gen_metadata` rows line up by position with the step_type=15 rows
-    /// (its idx is the Nth-generation sequence, steps.idx interleaves other
-    /// step types).
-    private func queryStepsWithModels(from dbPath: String) -> [StepTokenUsage] {
-        // The two tables pair by position. On a live DB a step can land
-        // between the two queries and leave the tail unpaired — those
-        // records used to surface as phantom "未知" models. Retry the plain
-        // read a few times (the writer settles quickly); on persistent
-        // mismatch pair the aligned prefix — the unpaired tail is the
-        // newest, still-being-written turn.
-        for attempt in 0..<3 {
-            var payloads: [Data] = []
-            var models: [String?] = []
-            readStepPayloads(dbPath: dbPath, into: &payloads)
-            readGenModels(dbPath: dbPath, into: &models)
-            if payloads.count == models.count {
-                return pairSteps(payloads, with: models)
-            }
-            if attempt < 2 { Thread.sleep(forTimeInterval: 0.15) }
-        }
-        var payloads: [Data] = []
-        var models: [String?] = []
-        readStepPayloads(dbPath: dbPath, into: &payloads)
-        readGenModels(dbPath: dbPath, into: &models)
-        let n = min(payloads.count, models.count)
-        return pairSteps(Array(payloads.prefix(n)), with: Array(models.prefix(n)))
+    /// One `gen_metadata` row: the model it names and the generation step it
+    /// belongs to (`last_step_index` + 1, when the row carries that entry).
+    private struct GenRow {
+        let model: String?
+        let stepIndex: Int?
     }
 
-    private func pairSteps(_ payloads: [Data], with models: [String?]) -> [StepTokenUsage] {
+    /// Generation steps (step_type = 15) paired with their model name.
+    ///
+    /// The two tables do not line up by position. A generation that fails
+    /// (network error, user cancel) still writes a `gen_metadata` row but no
+    /// token step, so a positional zip drifts out of sync from the first
+    /// failure on: the step that lands on a failed row becomes a phantom
+    /// "未知" model, and every later step is labelled with the neighbouring
+    /// generation's model. `gen_metadata` names the step it owns via
+    /// `last_step_index`, so pair on that identity instead.
+    private func queryStepsWithModels(from dbPath: String) -> [StepTokenUsage] {
+        for attempt in 0..<3 {
+            var steps: [(idx: Int, payload: Data)] = []
+            var gens: [GenRow] = []
+            readStepsWithPayloads(dbPath: dbPath, into: &steps)
+            readGenRows(dbPath: dbPath, into: &gens)
+            let paired = pairSteps(steps, with: gens)
+            // A live DB can hold a step whose gen_metadata row is not written
+            // yet; the writer settles quickly, so retry briefly, then accept
+            // whatever paired (the unpaired tail is the newest turn).
+            if paired.unpaired == 0 { return paired.usages }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.15) }
+        }
+        var steps: [(idx: Int, payload: Data)] = []
+        var gens: [GenRow] = []
+        readStepsWithPayloads(dbPath: dbPath, into: &steps)
+        readGenRows(dbPath: dbPath, into: &gens)
+        return pairSteps(steps, with: gens).usages
+    }
+
+    /// - Returns: usages plus how many steps found no `gen_metadata` row at
+    ///   all, which the caller retries. Rows without `last_step_index` (older
+    ///   databases) fall back to positional pairing so long-lived files keep
+    ///   working.
+    private func pairSteps(_ steps: [(idx: Int, payload: Data)], with gens: [GenRow]) -> (usages: [StepTokenUsage], unpaired: Int) {
+        var modelByStep: [Int: String?] = [:]
+        var legacyModels: [String?] = []
+        for gen in gens {
+            if let stepIndex = gen.stepIndex {
+                modelByStep[stepIndex] = gen.model
+            } else {
+                legacyModels.append(gen.model)
+            }
+        }
+        let usesIdentity = !modelByStep.isEmpty
+        var legacyCursor = 0
+        var unpaired = 0
         var usages: [StepTokenUsage] = []
-        for (i, payload) in payloads.enumerated() {
-            guard let parsed = payload.withUnsafeBytes({ ptr -> StepTokenUsage? in
+        for step in steps {
+            guard let parsed = step.payload.withUnsafeBytes({ ptr -> StepTokenUsage? in
                 guard let base = ptr.baseAddress else { return nil }
                 return parseProtobufStep(UnsafeBufferPointer(start: base.assumingMemoryBound(to: UInt8.self), count: ptr.count))
             }) else { continue }
-            let model = i < models.count ? models[i] : nil
+            let model: String?
+            if let byIdentity = modelByStep[step.idx] {
+                model = byIdentity
+            } else if legacyCursor < legacyModels.count {
+                model = legacyModels[legacyCursor]
+                legacyCursor += 1
+            } else {
+                model = nil
+                if usesIdentity { unpaired += 1 }
+            }
             usages.append(StepTokenUsage(
                 timestamp: parsed.timestamp,
                 inputTokens: parsed.inputTokens,
@@ -478,28 +510,29 @@ final class GeminiStatsService: Sendable {
                 durationMs: parsed.durationMs
             ))
         }
-        return usages
+        return (usages, unpaired)
     }
 
-    private func readStepPayloads(dbPath: String, into payloads: inout [Data]) {
+    private func readStepsWithPayloads(dbPath: String, into steps: inout [(idx: Int, payload: Data)]) {
         queryReadOnly(path: dbPath,
-                      sql: "SELECT step_payload FROM steps WHERE step_type = 15 ORDER BY idx") { stmt in
-            if let blob = sqlite3_column_blob(stmt, 0) {
-                payloads.append(Data(bytes: blob, count: Int(sqlite3_column_bytes(stmt, 0))))
+                      sql: "SELECT idx, step_payload FROM steps WHERE step_type = 15 ORDER BY idx") { stmt in
+            let idx = Int(sqlite3_column_int64(stmt, 0))
+            if let blob = sqlite3_column_blob(stmt, 1) {
+                steps.append((idx, Data(bytes: blob, count: Int(sqlite3_column_bytes(stmt, 1)))))
             } else {
-                payloads.append(Data())
+                steps.append((idx, Data()))
             }
         }
     }
 
-    private func readGenModels(dbPath: String, into models: inout [String?]) {
+    private func readGenRows(dbPath: String, into gens: inout [GenRow]) {
         queryReadOnly(path: dbPath,
                       sql: "SELECT data FROM gen_metadata ORDER BY idx") { stmt in
             if let blob = sqlite3_column_blob(stmt, 0) {
                 let buffer = UnsafeBufferPointer(start: blob.assumingMemoryBound(to: UInt8.self), count: Int(sqlite3_column_bytes(stmt, 0)))
-                models.append(parseGenModel(buffer))
+                gens.append(GenRow(model: parseGenModel(buffer), stepIndex: parseGenStepIndex(buffer)))
             } else {
-                models.append(nil)
+                gens.append(GenRow(model: nil, stepIndex: nil))
             }
         }
     }
@@ -549,9 +582,93 @@ final class GeminiStatsService: Sendable {
         return nil
     }
 
+    /// Step index a gen_metadata row belongs to. The row's metadata entries
+    /// are key/value protobuf messages nested a couple of levels down; the
+    /// one keyed `last_step_index` holds the cascade index just before the
+    /// generation step, so the owned step is that value + 1. Returns nil on
+    /// rows written before that entry existed.
+    private func parseGenStepIndex<C: Collection>(_ bytes: C) -> Int? where C.Element == UInt8, C.Index == Int {
+        genStepIndexWalk(bytes, depth: 0).map { $0 + 1 }
+    }
+
+    private func genStepIndexWalk<C: Collection>(_ bytes: C, depth: Int) -> Int? where C.Element == UInt8, C.Index == Int {
+        guard depth < 4 else { return nil }
+        var i = bytes.startIndex
+        let n = bytes.endIndex
+        while i < n {
+            guard let (k, newI) = readVarint(bytes, from: i) else { break }
+            i = newI
+            let wtype = k & 7
+            if wtype == 0 {
+                guard let (_, nextI) = readVarint(bytes, from: i) else { break }
+                i = nextI
+            } else if wtype == 1 {
+                i += 8
+            } else if wtype == 5 {
+                i += 4
+            } else if wtype == 2 {
+                guard let (len, nextI) = readVarint(bytes, from: i) else { break }
+                i = nextI
+                let length = Int(len)
+                guard i + length <= n else { break }
+                let slice = bytes[i..<(i + length)]
+                if let pair = parseKeyValuePair(slice), pair.key == "last_step_index", let index = Int(pair.value) {
+                    return index
+                }
+                if let nested = genStepIndexWalk(slice, depth: depth + 1) {
+                    return nested
+                }
+                i += length
+            } else {
+                break
+            }
+        }
+        return nil
+    }
+
+    /// Two-string protobuf message (field 1 = key, field 2 = value), the shape
+    /// of every entry in gen_metadata's metadata map.
+    private func parseKeyValuePair<C: Collection>(_ bytes: C) -> (key: String, value: String)? where C.Element == UInt8, C.Index == Int {
+        var i = bytes.startIndex
+        let n = bytes.endIndex
+        var key: String?
+        var value: String?
+        while i < n {
+            guard let (k, newI) = readVarint(bytes, from: i) else { return nil }
+            i = newI
+            let fnum = Int(k >> 3)
+            let wtype = k & 7
+            if wtype == 0 {
+                guard let (_, nextI) = readVarint(bytes, from: i) else { return nil }
+                i = nextI
+            } else if wtype == 1 {
+                i += 8
+            } else if wtype == 5 {
+                i += 4
+            } else if wtype == 2 {
+                guard let (len, nextI) = readVarint(bytes, from: i) else { return nil }
+                i = nextI
+                let length = Int(len)
+                guard i + length <= n, length <= 64 else { return nil }
+                let text = String(bytes: bytes[i..<(i + length)], encoding: .utf8)
+                if fnum == 1 { key = text } else if fnum == 2 { value = text }
+                i += length
+            } else {
+                return nil
+            }
+        }
+        guard let key, let value else { return nil }
+        return (key, value)
+    }
+
+    /// Model identifiers reach this as bare names (`gemini-3.8-flash-n`) or
+    /// provider-prefixed ones (`ai-studio/gemini-4-hydrogen:medium`), so `/`
+    /// and `:` are valid characters — rejecting them silently dropped every
+    /// non-Gemini session into the per-agent "unknown" bucket. Anything with
+    /// whitespace or punctuation beyond this set is prose, not an id.
     private func looksLikeModelName(_ text: String) -> Bool {
         !text.isEmpty && text.allSatisfy { c in
-            (c.isASCII && (c.isLetter || c.isNumber || c == "-" || c == "." || c == "_"))
+            (c.isASCII && (c.isLetter || c.isNumber || c == "-" || c == "." || c == "_" || c == "/" || c == ":"))
         }
     }
 
